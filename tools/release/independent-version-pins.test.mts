@@ -1,9 +1,36 @@
+import { test } from 'bun:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { test } from 'bun:test';
-
+import { renderReleaseCargoToml } from '../../src/native/sdks/rust/tools/prepare-rust-release-source.mts';
+import { assertWasixNapiCarrierManifest } from '../../src/wasix/node-addon/tools/check-release-assets.mts';
+import {
+  resolvedAdapterRuntimeContract,
+  workspaceCarrierManifest,
+  workspaceRuntimeVersion,
+} from '../../src/wasix/node-addon/tools/workspace-runtime-contract.mts';
+import { prepareWasixToolsTypescriptPackage } from '../../src/wasix/postgres-tools/ts/tools/wasix-tools-typescript-package.mts';
+import { renderOliphauntWasixReleaseCargoToml } from '../../src/wasix/sdks/rust/tools/prepare-rust-release-source.mts';
+import { workspaceBindingManifest } from '../../src/wasix/sdks/ts/tools/integration/packed-node-fixture.mts';
+import { prepareWasixTypescriptPackage } from '../../src/wasix/sdks/ts/tools/package.mts';
+import { assertWasixTypescriptManifest } from '../../src/wasix/sdks/ts/tools/wasix-typescript-package.mts';
+import { preparePackagedCargoTestClosure } from '../packaging/cargo-package-test-closure.mts';
+import {
+  packagedCargoManifestText,
+  packageGeneratedCargoSource,
+} from '../packaging/cargo-source-package.mts';
+import {
+  prepareSourceOnlyNpmPackage,
+  SOURCE_ONLY_NPM_PROFILES,
+} from '../packaging/source-only-sdk-package.mts';
+import { validateCarrierCoverage } from './check_artifact_targets.mts';
+import { requireMatchingWasixRuntime } from './compatibility-version-policy.mts';
+import { loadPublicationCatalog } from './publication-catalog.mts';
+import {
+  allArtifactTargets,
+  nativeToolsOptionalPackageProducts,
+} from './release-artifact-targets.mts';
 import {
   compatibilityVersionEntries,
   compatibilityVersionValue,
@@ -12,33 +39,6 @@ import {
   productDependencyCompatibilityVersion,
   ROOT,
 } from './release-graph.mts';
-import {
-  prepareSourceOnlyNpmPackage,
-  SOURCE_ONLY_NPM_PROFILES,
-} from '../packaging/source-only-sdk-package.mts';
-import {
-  packagedCargoManifestText,
-  packageGeneratedCargoSource,
-} from '../packaging/cargo-source-package.mts';
-import { preparePackagedCargoTestClosure } from '../packaging/cargo-package-test-closure.mts';
-import { renderReleaseCargoToml } from '../../src/native/sdks/rust/tools/prepare-rust-release-source.mts';
-import { renderOliphauntWasixReleaseCargoToml } from '../../src/wasix/sdks/rust/tools/prepare-rust-release-source.mts';
-import { prepareWasixTypescriptPackage } from '../../src/wasix/sdks/ts/tools/package.mts';
-import { assertWasixTypescriptManifest } from '../../src/wasix/sdks/ts/tools/wasix-typescript-package.mts';
-import {
-  workspaceCarrierManifest,
-  workspaceRuntimeVersion,
-} from '../../src/wasix/node-addon/tools/workspace-runtime-contract.mts';
-import { assertWasixNapiCarrierManifest } from '../../src/wasix/node-addon/tools/check-release-assets.mts';
-import { requireMatchingWasixRuntime } from './compatibility-version-policy.mts';
-import { workspaceBindingManifest } from '../../src/wasix/sdks/ts/tools/integration/packed-node-fixture.mts';
-import { prepareWasixToolsTypescriptPackage } from '../../src/wasix/postgres-tools/ts/tools/wasix-tools-typescript-package.mts';
-import { validateCarrierCoverage } from './check_artifact_targets.mts';
-import { loadPublicationCatalog } from './publication-catalog.mts';
-import {
-  allArtifactTargets,
-  nativeToolsOptionalPackageProducts,
-} from './release-artifact-targets.mts';
 
 if (process.env.OLIPHAUNT_INDEPENDENT_VERSION_TEST !== '1' || existsSync(path.join(ROOT, '.git'))) {
   throw new Error('Run bash tools/release/independent-version-pins.test.sh');
@@ -68,6 +68,8 @@ for (const [index, product] of [...new Set(sdkPins.map((entry) => entry.sourcePr
       write(file, read(file).replace(/^version = "[^"]+"/mu, `version = "${version}"`));
     } else if (path.basename(file) === 'gradle.properties') {
       write(file, read(file).replace(/^VERSION_NAME=.+/mu, `VERSION_NAME=${version}`));
+    } else if (file.endsWith('.podspec')) {
+      write(file, read(file).replace(/(s\.version\s*=\s*)'[^']+'/u, `$1'${version}'`));
     } else if (path.basename(file) === 'liboliphaunt_native.c') {
       write(
         file,
@@ -91,11 +93,7 @@ function stageManifest(name, source) {
 test('every SDK retains its declared compatibility pins after independent dependency releases', () => {
   assert.ok(sdkPins.length > 0);
   for (const entry of sdkPins) {
-    assert.equal(
-      productCompatibilityVersion(entry.product, entry.sourceProduct),
-      entry.value,
-      entry.id,
-    );
+    assert.equal(compatibilityVersionValue(entry), entry.value, entry.id);
     const source = products[entry.sourceProduct];
     if (source.version !== manifest[source.path]) {
       assert.notEqual(entry.value, manifest[source.path], entry.id);
@@ -142,7 +140,7 @@ test('React Native resolves the runtime through its pinned Swift release after S
       'liboliphaunt-native',
       'independent-version-pins',
       {
-        readCompatibility(product, source, prefix, { ref }) {
+        readCompatibility(product, source, _prefix, { ref }) {
           assert.equal(product, 'oliphaunt-swift');
           assert.equal(source, 'liboliphaunt-native');
           assert.equal(ref, `${products[product].tag_prefix}${swiftPin}`);
@@ -209,51 +207,112 @@ test('WASIX tools staging retains its explicit SDK pin after that SDK advances',
   }
 });
 
-test('WASIX addon qualification identifies the compiled workspace runtime without changing release pins', () => {
+test('WASIX addon qualification requires aligned local sources after producers advance', () => {
   const product = json('src/wasix/node-addon/package.json');
   const original = json('src/wasix/node-addon/packages/linux-x64-gnu/package.json');
-  const staged = workspaceCarrierManifest(original, product.oliphaunt);
-  assert.equal(staged.oliphaunt.runtimeVersion, workspaceRuntimeVersion());
-  assert.notEqual(staged.oliphaunt.runtimeVersion, original.oliphaunt.runtimeVersion);
-  assert.equal(staged.oliphaunt.qualificationOnly, true);
-  const currentRust = Bun.TOML.parse(read('src/wasix/sdks/rust/Cargo.toml')).package.version;
-  const currentContract = {
-    runtimeVersion: workspaceRuntimeVersion(),
-    rustBindingVersion: currentRust,
-  };
-  const aligned = workspaceCarrierManifest(original, currentContract);
-  assert.equal(Object.hasOwn(aligned.oliphaunt, 'qualificationOnly'), false);
-  const rustOnly = workspaceCarrierManifest(original, {
-    ...currentContract,
-    rustBindingVersion: '0.0.0',
-  });
-  assert.equal(rustOnly.oliphaunt.qualificationOnly, true);
-  assert.deepEqual(json('src/wasix/node-addon/packages/linux-x64-gnu/package.json'), original);
-  const target = {
-    target: 'linux-x64-gnu',
-    npmPackage: original.name,
-    npmOs: 'linux',
-    npmCpu: 'x64',
-    npmLibc: 'glibc',
-  };
-  assert.doesNotThrow(() =>
-    assertWasixNapiCarrierManifest(staged, target, original.version, 'workspace', staged.oliphaunt),
-  );
-  assert.throws(
-    () => assertWasixNapiCarrierManifest(staged, target, original.version),
-    /runtime\/ABI\/profile metadata/u,
-  );
-  const result = spawnSync(
-    process.execPath,
-    [
-      'src/wasix/node-addon/tools/native-build-data.mts',
-      'metadata',
-      'src/wasix/node-addon/package.json',
-    ],
-    { cwd: ROOT, encoding: 'utf8' },
-  );
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout.split('\t')[0], staged.oliphaunt.runtimeVersion);
+  assert.throws(() => resolvedAdapterRuntimeContract(), /must resolve local/u);
+  const files = [
+    'Cargo.toml',
+    'Cargo.lock',
+    'src/wasix/node-addon/Cargo.toml',
+    'src/wasix/runtime/crates/assets/Cargo.toml',
+  ];
+  const sources = new Map(files.map((file) => [file, read(file)]));
+  try {
+    const runtimeVersion = workspaceRuntimeVersion();
+    const sdkVersion = Bun.TOML.parse(read('src/wasix/sdks/rust/Cargo.toml')).package.version;
+    write(
+      'Cargo.toml',
+      sources
+        .get('Cargo.toml')
+        .replace(/^(oliphaunt-wasix = \{[^\n]*version = ")[^"]+/mu, `$1${sdkVersion}`),
+    );
+    write(
+      'src/wasix/node-addon/Cargo.toml',
+      sources
+        .get('src/wasix/node-addon/Cargo.toml')
+        .replace(
+          /^(liboliphaunt-wasix-portable = \{[^\n]*version = ")[^"]+/mu,
+          `$1=${runtimeVersion}`,
+        ),
+    );
+    write(
+      'src/wasix/runtime/crates/assets/Cargo.toml',
+      sources
+        .get('src/wasix/runtime/crates/assets/Cargo.toml')
+        .replace(/^version = "[^"]+"/mu, `version = "${runtimeVersion}"`),
+    );
+    let lockText = sources.get('Cargo.lock');
+    const lock = Bun.TOML.parse(lockText);
+    for (const [name, version] of [
+      ['oliphaunt-wasix', sdkVersion],
+      ['liboliphaunt-wasix-portable', runtimeVersion],
+    ]) {
+      const rows = lock.package.filter((pkg) => pkg.name === name && !pkg.source);
+      assert.equal(rows.length, 1);
+      lockText = lockText.replace(
+        `name = "${name}"\nversion = "${rows[0].version}"`,
+        `name = "${name}"\nversion = "${version}"`,
+      );
+    }
+    write('Cargo.lock', lockText);
+    const resolved = resolvedAdapterRuntimeContract();
+    assert.deepEqual(resolved, { runtimeVersion, rustBindingVersion: sdkVersion });
+    const staged = workspaceCarrierManifest(original, product.oliphaunt);
+    assert.equal(staged.oliphaunt.runtimeVersion, runtimeVersion);
+    assert.equal(staged.oliphaunt.rustBindingVersion, sdkVersion);
+    assert.notEqual(staged.oliphaunt.runtimeVersion, original.oliphaunt.runtimeVersion);
+    assert.equal(staged.oliphaunt.qualificationOnly, true);
+    assert.deepEqual(json('src/wasix/node-addon/packages/linux-x64-gnu/package.json'), original);
+    assert.deepEqual(json('src/wasix/node-addon/package.json'), product);
+    const target = {
+      target: 'linux-x64-gnu',
+      npmPackage: original.name,
+      npmOs: 'linux',
+      npmCpu: 'x64',
+      npmLibc: 'glibc',
+    };
+    assert.doesNotThrow(() =>
+      assertWasixNapiCarrierManifest(
+        staged,
+        target,
+        original.version,
+        'workspace',
+        staged.oliphaunt,
+      ),
+    );
+    assert.throws(
+      () => assertWasixNapiCarrierManifest(staged, target, original.version),
+      /runtime\/ABI\/profile metadata/u,
+    );
+    const result = spawnSync(
+      process.execPath,
+      [
+        'src/wasix/node-addon/tools/native-build-data.mts',
+        'metadata',
+        'src/wasix/node-addon/package.json',
+      ],
+      { cwd: ROOT, encoding: 'utf8' },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.split('\t')[0], runtimeVersion);
+    const runtimeRow = `name = "liboliphaunt-wasix-portable"\nversion = "${runtimeVersion}"`;
+    write(
+      'Cargo.lock',
+      lockText.replace(
+        runtimeRow,
+        `${runtimeRow}\nsource = "registry+https://github.com/rust-lang/crates.io-index"`,
+      ),
+    );
+    assert.throws(() => resolvedAdapterRuntimeContract(), /must resolve local/u);
+    write(
+      'Cargo.lock',
+      lockText.replace(runtimeRow, 'name = "liboliphaunt-wasix-portable"\nversion = "0.0.0"'),
+    );
+    assert.throws(() => resolvedAdapterRuntimeContract(), /must resolve local/u);
+  } finally {
+    for (const [file, source] of sources) write(file, source);
+  }
 });
 
 test('WASIX SDK release requires the same portable and addon runtime', () => {
@@ -295,7 +354,9 @@ test('WASIX workspace consumer uses current producers while its release package 
 test('native Rust source generation uses its native runtime and broker pins', () => {
   const source = read('src/native/sdks/rust/Cargo.toml');
   const original = Bun.TOML.parse(source);
-  const staged = Bun.TOML.parse(packagedCargoManifestText(renderReleaseCargoToml(source)));
+  const staged = Bun.TOML.parse(
+    packagedCargoManifestText(renderReleaseCargoToml(source), read('Cargo.toml')),
+  );
   assert.equal(
     staged.dependencies['oliphaunt-query'].version,
     original.dependencies['oliphaunt-query'].version,
@@ -317,7 +378,7 @@ test('native Rust source generation uses its native runtime and broker pins', ()
   }
 });
 
-test('WASIX Rust source generation retains its runtime and explicit query pins', () => {
+test('WASIX Rust source generation retains runtime, query, tools and ICU pins', () => {
   const source = read('src/wasix/sdks/rust/Cargo.toml');
   const original = Bun.TOML.parse(source);
   const staged = Bun.TOML.parse(renderOliphauntWasixReleaseCargoToml(source));
@@ -325,14 +386,58 @@ test('WASIX Rust source generation retains its runtime and explicit query pins',
   assert.equal(staged.dependencies['liboliphaunt-wasix-portable'].version, runtimeVersion);
   assert.equal(
     staged.dependencies['oliphaunt-query'].version,
-    `=${original.dependencies['oliphaunt-query'].version}`,
+    original.dependencies['oliphaunt-query'].version,
+  );
+  const toolsVersion = `=${original.package.metadata.oliphaunt['tools-version']}`;
+  assert.equal(staged.dependencies['oliphaunt-wasix-tools'].version, toolsVersion);
+  assert.equal(
+    staged.dependencies['oliphaunt-icu'].version,
+    `=${original.package.metadata.oliphaunt['icu-version']}`,
   );
   for (const { dependencies } of Object.values(staged.target)) {
     for (const [name, dependency] of Object.entries(dependencies)) {
       if (name.startsWith('liboliphaunt-wasix-aot-'))
         assert.equal(dependency.version, runtimeVersion);
+      if (name.startsWith('oliphaunt-wasix-tools-aot-'))
+        assert.equal(dependency.version, toolsVersion);
     }
   }
+});
+
+test('WASIX optional public requirements change only when the SDK explicitly retargets them', () => {
+  const source = read('src/wasix/sdks/rust/Cargo.toml');
+  const original = Bun.TOML.parse(renderOliphauntWasixReleaseCargoToml(source));
+  for (const [field, product, packagePrefix] of [
+    ['tools-version', 'postgres-tools-wasix', 'oliphaunt-wasix-tools'],
+    ['icu-version', 'database-resources', 'oliphaunt-icu'],
+  ]) {
+    const retargeted = Bun.TOML.parse(
+      renderOliphauntWasixReleaseCargoToml(
+        source.replace(new RegExp(`^${field} = "[^"]+"`, 'mu'), `${field} = "99.0.0"`),
+      ),
+    );
+    assert.equal(retargeted.dependencies[packagePrefix].version, '=99.0.0', product);
+    for (const [section, changedSection] of [
+      [original, retargeted],
+      ...Object.keys(original.target).map((key) => [original.target[key], retargeted.target[key]]),
+    ]) {
+      for (const [name, dependency] of Object.entries(section.dependencies)) {
+        assert.equal(
+          changedSection.dependencies[name].version,
+          name.startsWith(packagePrefix) ? '=99.0.0' : dependency.version,
+          name,
+        );
+      }
+    }
+  }
+  assert.throws(
+    () => renderOliphauntWasixReleaseCargoToml(source.replace(/^tools-version = .+\n/mu, '')),
+    /Missing installed compatibility pin for oliphaunt-wasix-tools/u,
+  );
+  assert.throws(
+    () => renderOliphauntWasixReleaseCargoToml(source.replace(/^icu-version = .+\n/mu, '')),
+    /Missing installed compatibility pin for oliphaunt-icu/u,
+  );
 });
 
 test('WASIX Rust package qualification does not patch older pins with newer workspace sources', () => {

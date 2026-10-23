@@ -97,16 +97,89 @@ export function renderUnsupportedNativeGuard(product, nativeTargets, nativeCfgs)
   });
 }
 
-export function writeFacadeSource(product, outputRoot, { dependencyPaths = {} } = {}) {
-  if (!exactExtensionProducts('package-extension-cargo-facades').includes(product)) {
-    fail(`${product} is not an exact extension product`);
+export interface ExtensionCargoFacadeMetadata {
+  nativeOwner: string;
+  wasixOwner: string;
+  version: string;
+  sqlNames: string[];
+  targets: { nativeCargoTargets: string[]; includeWasixAot: boolean };
+  sdkVersion: string;
+  bindingVersion: string;
+  wasixSdkVersion?: string;
+  compatibility: { nativeRuntimeVersion: string; wasixRuntimeVersion: string };
+}
+
+export function writeFacadeSource(
+  product,
+  outputRoot,
+  {
+    dependencyPaths = {},
+    metadata = undefined,
+  }: {
+    dependencyPaths?: Record<string, string>;
+    metadata?: ExtensionCargoFacadeMetadata;
+  } = {},
+) {
+  if (metadata === undefined) {
+    if (!exactExtensionProducts('package-extension-cargo-facades').includes(product)) {
+      fail(`${product} is not an exact extension product`);
+    }
+    metadata = {
+      nativeOwner: extensionReleaseProduct(product, 'native', 'package-extension-cargo-facades'),
+      wasixOwner: extensionReleaseProduct(product, 'wasix', 'package-extension-cargo-facades'),
+      version: extensionReleaseVersion(product, 'native', 'package-extension-cargo-facades'),
+      sqlNames: extensionSqlNames(product, 'package-extension-cargo-facades'),
+      targets: extensionRegistryPackageTargetSets(product, 'package-extension-cargo-facades'),
+      sdkVersion: currentProductVersionSync('oliphaunt-rust'),
+      bindingVersion: currentProductVersionSync('liboliphaunt-native-bindings'),
+      compatibility: extensionMetadata(product).compatibility,
+    };
+    if (metadata.nativeOwner === metadata.wasixOwner) {
+      metadata.wasixSdkVersion = currentProductVersionSync('oliphaunt-wasix-rust');
+    }
   }
-  const nativeOwner = extensionReleaseProduct(product, 'native', 'package-extension-cargo-facades');
-  const wasixOwner = extensionReleaseProduct(product, 'wasix', 'package-extension-cargo-facades');
+  if (metadata === null || Array.isArray(metadata) || typeof metadata !== 'object') {
+    fail(`${product} facade metadata must be an object`);
+  }
+  const {
+    nativeOwner,
+    wasixOwner,
+    version,
+    sqlNames,
+    targets,
+    sdkVersion,
+    bindingVersion,
+    wasixSdkVersion,
+    compatibility,
+  } = metadata;
   const nativeOnly = nativeOwner !== wasixOwner;
-  const version = extensionReleaseVersion(product, 'native', 'package-extension-cargo-facades');
-  const sqlNames = extensionSqlNames(product, 'package-extension-cargo-facades');
-  const targets = extensionRegistryPackageTargetSets(product, 'package-extension-cargo-facades');
+  const uniqueStrings = (values) =>
+    Array.isArray(values) &&
+    values.length > 0 &&
+    values.every((value) => typeof value === 'string' && /^[A-Za-z0-9_-]+$/u.test(value)) &&
+    new Set(values).size === values.length;
+  const stableVersion = (value) =>
+    typeof value === 'string' &&
+    /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/u.test(value);
+  if (
+    typeof product !== 'string' ||
+    !/^oliphaunt-extension-[A-Za-z0-9_-]+$/u.test(product) ||
+    ![nativeOwner, wasixOwner].every((owner) => typeof owner === 'string' && owner.length > 0) ||
+    !uniqueStrings(sqlNames) ||
+    !uniqueStrings(targets?.nativeCargoTargets) ||
+    typeof targets.includeWasixAot !== 'boolean' ||
+    ![
+      version,
+      sdkVersion,
+      bindingVersion,
+      compatibility?.nativeRuntimeVersion,
+      compatibility?.wasixRuntimeVersion,
+      ...(nativeOnly ? [] : [wasixSdkVersion]),
+    ].every(stableVersion)
+  ) {
+    fail(`${product} facade metadata must declare exact owners, members, targets and versions`);
+  }
+  for (const target of targets.nativeCargoTargets) rustNativeTargetCfg(target);
   const wasixAotTargets =
     !nativeOnly && targets.includeWasixAot ? expectedExtensionAotTargets() : [];
   const sourceDir = path.join(outputRoot, 'sources', product);
@@ -159,25 +232,18 @@ export function writeFacadeSource(product, outputRoot, { dependencyPaths = {} } 
     if (existing < 0) targetDependencies.push(`${header}\n${row}`);
     else targetDependencies[existing] += `\n${row}`;
   }
-  const sdkVersion = currentProductVersionSync('oliphaunt-rust');
-  const bindingVersion = currentProductVersionSync('liboliphaunt-native-bindings');
   const optionalDependencies = [
     dependency('liboliphaunt-native-bindings', bindingVersion, false),
     ...(wasixName === null
       ? []
       : [
           dependency(wasixName, version),
-          dependency(
-            'oliphaunt-wasix',
-            currentProductVersionSync('oliphaunt-wasix-rust'),
-            false,
-          ).replace(
+          dependency('oliphaunt-wasix', wasixSdkVersion, false).replace(
             'default-features = false',
             'default-features = false, features = ["extensions"]',
           ),
         ]),
   ].join('\n');
-  const compatibility = extensionMetadata(product).compatibility;
   const unsupportedNativeGuard = renderUnsupportedNativeGuard(
     product,
     targets.nativeCargoTargets,
@@ -291,16 +357,39 @@ pub use wasix::*;
   return { product, releaseProduct: nativeOwner, version, sourceDir };
 }
 
-export function packageExtensionCargoFacades(products, outputRoot) {
+export function packageExtensionCargoFacades(
+  products,
+  outputRoot,
+  { metadataByProduct }: { metadataByProduct?: Record<string, ExtensionCargoFacadeMetadata> } = {},
+) {
   const selected = [...new Set(products)].sort(compareText);
   if (selected.length !== products.length || selected.length === 0) {
     fail('products must be a non-empty duplicate-free list');
+  }
+  if (metadataByProduct !== undefined) {
+    if (
+      metadataByProduct === null ||
+      Array.isArray(metadataByProduct) ||
+      typeof metadataByProduct !== 'object' ||
+      JSON.stringify(Object.keys(metadataByProduct).sort(compareText)) !==
+        JSON.stringify(selected) ||
+      selected.some(
+        (product) =>
+          metadataByProduct[product] === null ||
+          Array.isArray(metadataByProduct[product]) ||
+          typeof metadataByProduct[product] !== 'object',
+      )
+    ) {
+      fail('declared facade metadata must exactly match the selected products');
+    }
   }
   rmSync(outputRoot, { recursive: true, force: true });
   mkdirSync(path.join(outputRoot, 'crates'), { recursive: true });
   const packages = [];
   for (const product of selected) {
-    const source = writeFacadeSource(product, outputRoot);
+    const source = writeFacadeSource(product, outputRoot, {
+      metadata: metadataByProduct?.[product],
+    });
     const cratePath = packageGeneratedCargoSource(
       path.join(source.sourceDir, 'Cargo.toml'),
       path.join(outputRoot, 'crates'),

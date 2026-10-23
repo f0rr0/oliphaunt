@@ -7,8 +7,8 @@ import {
   copyFileSync,
   lstatSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   rmSync,
 } from 'node:fs';
 import path from 'node:path';
@@ -19,6 +19,7 @@ import { requireSafeDirectoryChain as requireReleaseDirectoryChain } from './rel
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const PREFIX = 'release-notices.mts';
+const OLIPHAUNT_LICENSE_SPDX = 'MIT';
 
 export const RELEASE_NOTICE_PRODUCTS = Object.freeze(['native', 'wasix']);
 export const RELEASE_LICENSE_COMPONENTS = Object.freeze(['postgresql', 'icu', 'openssl']);
@@ -431,13 +432,44 @@ function unexpectedNamespaceEntry(namespaceEntry, expectedMembers) {
   return true;
 }
 
+/** Names and license identifiers are delivery declarations, independently of
+ * the current checkout's notice contents. Historical byte inputs stay intact. */
+export function releaseNoticeDeclaration(profile) {
+  const selection = releaseCarrierProfile(profile);
+  return Object.freeze({
+    members: Object.freeze(
+      [
+        ...BASE_ROWS.map(({ member }) => member),
+        ...selection.products.map((product) => PRODUCT_NOTICE_ROWS[product].member),
+        ...selection.components.map((component) => LICENSE_COMPONENT_ROWS[component].member),
+      ].sort(compareText),
+    ),
+    spdx: [
+      OLIPHAUNT_LICENSE_SPDX,
+      ...selection.components.map((component) => LICENSE_COMPONENT_ROWS[component].spdx),
+    ].join(' AND '),
+  });
+}
+
 export function releaseNoticeRows(options = {}) {
   const selection = checkedSelection(options);
+  const sourceRoot = options.sourceRoot;
+  if (sourceRoot !== undefined && (!sourceRoot || !path.isAbsolute(sourceRoot)))
+    throw new Error('Release notice source root must be an absolute directory');
+  const located = (row) => {
+    if (sourceRoot === undefined) return row;
+    const source = (file) => path.join(sourceRoot, path.relative(ROOT, file));
+    return {
+      ...row,
+      source: source(row.source),
+      ...(row.sourceManifest ? { sourceManifest: source(row.sourceManifest) } : {}),
+    };
+  };
   const rows = [
-    ...BASE_ROWS,
-    ...selection.products.map((product) => PRODUCT_NOTICE_ROWS[product]),
+    ...BASE_ROWS.map(located),
+    ...selection.products.map((product) => located(PRODUCT_NOTICE_ROWS[product])),
     ...selection.components.map((component) =>
-      validateRuntimeLicenseSource(LICENSE_COMPONENT_ROWS[component]),
+      validateRuntimeLicenseSource(located(LICENSE_COMPONENT_ROWS[component])),
     ),
   ];
   return Object.freeze(rows.map((row) => Object.freeze({ ...row })));
@@ -449,27 +481,35 @@ export function releaseNoticeInputPaths(
   return Object.freeze(releaseNoticeRows(options).map((row) => row.source));
 }
 
-export function releaseLicenseComponents(ids) {
+export function releaseLicenseComponents(ids, { sourceRoot } = {}) {
+  if (sourceRoot !== undefined)
+    return Object.freeze(
+      releaseNoticeRows({ components: ids, sourceRoot }).filter((row) => row.id),
+    );
   return Object.freeze(
     checkedComponents(ids).map((id) => validateRuntimeLicenseSource(LICENSE_COMPONENT_ROWS[id])),
   );
 }
 
-export function releasePackageLicense({ components = [], includeOliphaunt = true } = {}) {
+export function releasePackageLicense({
+  components = [],
+  includeOliphaunt = true,
+  sourceRoot,
+} = {}) {
   const entries = [];
   if (includeOliphaunt) {
     entries.push(
       Object.freeze({
         id: 'oliphaunt',
-        spdx: 'MIT',
+        spdx: OLIPHAUNT_LICENSE_SPDX,
         name: 'MIT License (Oliphaunt)',
         member: 'LICENSE',
-        source: path.join(ROOT, 'LICENSE'),
+        source: path.join(sourceRoot ?? ROOT, 'LICENSE'),
         licenseUrl: 'https://github.com/f0rr0/oliphaunt/blob/main/LICENSE',
       }),
     );
   }
-  entries.push(...releaseLicenseComponents(components));
+  entries.push(...releaseLicenseComponents(components, { sourceRoot }));
   return Object.freeze({
     spdx: entries.map((entry) => entry.spdx).join(' AND '),
     entries: Object.freeze(entries),
@@ -481,6 +521,7 @@ export function releaseProfilePackageLicense(profile, options = {}) {
   return releasePackageLicense({
     components: selection.components,
     includeOliphaunt: options.includeOliphaunt ?? true,
+    sourceRoot: options.sourceRoot,
   });
 }
 
@@ -489,6 +530,7 @@ export function releaseMavenLicenses({
   version,
   components = [],
   includeOliphaunt = true,
+  sourceRoot,
 } = {}) {
   if (typeof product !== 'string' || !/^[a-z0-9][a-z0-9-]*$/u.test(product)) {
     throw new Error('release Maven licenses require a canonical product id');
@@ -497,7 +539,7 @@ export function releaseMavenLicenses({
     throw new Error('release Maven licenses require a portable package version');
   }
   return Object.freeze(
-    releasePackageLicense({ components, includeOliphaunt }).entries.map((entry) =>
+    releasePackageLicense({ components, includeOliphaunt, sourceRoot }).entries.map((entry) =>
       Object.freeze({
         name: entry.name,
         url:
@@ -512,7 +554,7 @@ export function releaseMavenLicenses({
 
 export function releaseProfileMavenLicenses(
   profile,
-  { product, version, includeOliphaunt = true } = {},
+  { product, version, includeOliphaunt = true, sourceRoot } = {},
 ) {
   const selection = releaseCarrierProfile(profile);
   return releaseMavenLicenses({
@@ -520,6 +562,7 @@ export function releaseProfileMavenLicenses(
     version,
     components: selection.components,
     includeOliphaunt,
+    sourceRoot,
   });
 }
 

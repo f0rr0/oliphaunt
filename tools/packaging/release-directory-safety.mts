@@ -1,4 +1,4 @@
-import { lstatSync, mkdirSync, statSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 const DARWIN_ROOT_DIRECTORY_ALIASES = Object.freeze(
@@ -116,4 +116,29 @@ export function requireSafeDirectoryChain(
     inspect(cursor, { allowCreate: create });
   }
   return resolved;
+}
+
+/** Remove only a caller-owned real directory; captured source modes stay untouched. */
+export function removeOwnedDirectory(directory: string) {
+  const resolved = canonicalSystemDirectoryPath(directory);
+  if (resolved === path.parse(resolved).root)
+    throw new Error('owned directory cleanup must not remove a filesystem root');
+  requireSafeDirectoryChain(path.dirname(resolved), { label: 'owned directory cleanup' });
+  try {
+    lstatSync(resolved);
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw cause;
+  }
+  const makeWritable = (directory: string) => {
+    const metadata = lstatSync(directory);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink())
+      throw new Error('owned directory cleanup requires a real directory');
+    chmodSync(directory, (metadata.mode & 0o777) | 0o700);
+    for (const entry of readdirSync(directory, { withFileTypes: true }))
+      if (entry.isDirectory()) makeWritable(path.join(directory, entry.name));
+  };
+  makeWritable(resolved);
+  // Recursive removal unlinks nested symlinks; neither traversal nor chmod follows them.
+  rmSync(resolved, { recursive: true, force: true });
 }

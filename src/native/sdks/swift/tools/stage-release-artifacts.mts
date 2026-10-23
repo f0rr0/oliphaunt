@@ -1,33 +1,36 @@
-import { renderSwiftpmReleasePackage } from './render_swiftpm_release_package.mts';
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { createDeterministicZip } from '../../../../../tools/packaging/archive-directory.mts';
 import {
   bundleJavaScript,
   emitJavaScript,
 } from '../../../../../tools/packaging/emit-javascript.mts';
-import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
-import { createDeterministicZip } from '../../../../../tools/packaging/archive-directory.mts';
 import { extractPortableArchiveTree } from '../../../../../tools/packaging/portable-archive.mts';
-
-import { IOS_CARRIER_FILENAME, buildIosCarrierManifest } from './ios-carrier-manifest.mts';
 import {
   assertReleaseNoticesInArchive,
   assertReleaseNoticesInDirectory,
   stageReleaseNotices,
 } from '../../../../../tools/packaging/release-notices.mts';
-import { productCompatibilityVersion } from '../../../../../tools/release/release-graph.mts';
-import { validateSwiftSourceReleaseContract } from './swift-source-carrier-contract.mts';
-import { pinnedNativeCarrierDirectory } from './pinned-native-carrier.mts';
 import {
-  ROOT,
   copyDirContents,
   fail,
+  ROOT,
   rel,
   requireFile,
 } from '../../../../../tools/packaging/staging.mts';
+import { productCompatibilityVersion } from '../../../../../tools/release/release-graph.mts';
+import { buildIosCarrierManifest, IOS_CARRIER_FILENAME } from './ios-carrier-manifest.mts';
+import { pinnedNativeCarrierDirectory } from './pinned-native-carrier.mts';
+import { renderSwiftpmReleasePackage } from './render_swiftpm_release_package.mts';
+import { validateSwiftSourceReleaseContract } from './swift-source-carrier-contract.mts';
 
 const PREFIX = 'swift stage-release-artifacts.mts';
 
-export async function stageArtifacts(artifactRoot, workRoot) {
+export async function stageArtifacts(
+  artifactRoot,
+  workRoot,
+  { nativeSourceBasis = undefined } = {},
+) {
   const swiftSourceArchive = path.join(
     ROOT,
     'target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive/Oliphaunt-source.zip',
@@ -48,6 +51,7 @@ export async function stageArtifacts(artifactRoot, workRoot) {
     version: nativeVersion,
     assetDir: producerAssetDir,
     workRoot,
+    sourceBasis: nativeSourceBasis,
   });
   await renderSwiftpmReleasePackage([
     '--asset-dir',
@@ -66,6 +70,7 @@ export async function stageArtifacts(artifactRoot, workRoot) {
     baseAssetDir: assetDir,
     baseRuntimeVersion: nativeVersion,
     extensionManifests: [],
+    baseSourceBasis: nativeSourceBasis,
   });
   const carrierFile = path.join(releaseTree, 'src/sdks/swift/Carriers', IOS_CARRIER_FILENAME);
   mkdirSync(path.dirname(carrierFile), { recursive: true });
@@ -111,6 +116,7 @@ export async function stageArtifacts(artifactRoot, workRoot) {
       expectedNativeVersion: nativeVersion,
       label: `${rel(artifactRoot)} source release`,
       manifestText: manifest,
+      sourceBasis: nativeSourceBasis,
     });
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
@@ -140,4 +146,5 @@ export async function stageArtifacts(artifactRoot, workRoot) {
 }
 
 import { stageSdkArtifacts } from '../../../../../tools/packaging/staging.mts';
+
 if (import.meta.main) await stageSdkArtifacts('oliphaunt-swift', stageArtifacts);

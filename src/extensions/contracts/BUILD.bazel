@@ -1,0 +1,12 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/extensions:compile_data.bzl", "extension_compile_data")
+
+package(default_visibility = ["//visibility:public"])
+
+extension_compile_data(name = "archive_policy_compile_data", src = "extension-artifact-archive-policy.properties")
+
+exports_files(["extension-target-profiles.mts", "extension-target-profiles.toml"])
+exports_files(["wasix-extension-install.mts"])
+exports_files(["extension-artifact-archive-policy.properties"])
+
+source_quality_files()

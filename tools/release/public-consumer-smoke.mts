@@ -16,7 +16,11 @@ import path from 'node:path';
 import process from 'node:process';
 import { EXTENSION_PORTABLE_TARGET } from '../../src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import { assertWasixTypescriptNativeCarrier } from '../../src/wasix/sdks/ts/tools/wasix-typescript-package.mts';
-import { DEFAULT_PUBLICATION_LOCK, loadPublicationLock } from './publication-lock.mts';
+import {
+  DEFAULT_PUBLICATION_LOCK,
+  loadPublicationLock,
+  packageDependencyMatchesCarrier,
+} from './publication-lock.mts';
 import { registryRetryDelaySeconds, registryStatusRetryable } from './registry-http-retry.mts';
 import { validateRegistryReceiptEvidence } from './registry-integrity.mts';
 import { DESKTOP_TARGETS } from './release-artifact-targets.mts';
@@ -180,17 +184,12 @@ function consumerDependencyIds(carrier, selectedCarrierIds, byId) {
     ...new Set(
       carrier.packageDependencies
         .filter((dependency) => scopes.has(dependency.scope))
-        .filter((dependency) => {
-          const candidate = byId.get(`${dependency.ecosystem}:${dependency.name}`);
-          if (!candidate) return false;
-          let requirement = dependency.requirement;
-          if (dependency.ecosystem === 'maven') return requirement === candidate.version;
-          if (dependency.ecosystem === 'cargo') {
-            if (/^\d+(?:\.\d+){0,2}$/u.test(requirement)) requirement = `^${requirement}`;
-            requirement = requirement.replaceAll(',', ' ');
-          }
-          return Bun.semver.satisfies(candidate.version, requirement);
-        })
+        .filter((dependency) =>
+          packageDependencyMatchesCarrier(
+            dependency,
+            byId.get(`${dependency.ecosystem}:${dependency.name}`),
+          ),
+        )
         .map((dependency) => `${dependency.ecosystem}:${dependency.name}`)
         .filter((id) => selectedCarrierIds.has(id)),
     ),

@@ -141,6 +141,7 @@ tasks:
       - /tools/dev/bun.sh
       - "/tools/packaging/*.{mts,sh}"
       - "/tools/release/*.{mjs,mts}"
+      - /build_defs/extensions/windows_source_portability.mts
     options:
       cache: true
       runFromWorkspaceRoot: true

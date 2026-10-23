@@ -73,11 +73,16 @@ version = providers.gradleProperty("VERSION_NAME").orElse("0.0.0").get()
 spotless {
     kotlin {
         target("src/**/*.kt", "../tests/public-api-consumer/src/**/*.kt")
-        ktlint().editorConfigOverride(mapOf("ktlint_standard_property-naming" to "disabled"))
+        ktlint(libs.versions.ktlint.get()).editorConfigOverride(
+            mapOf(
+                "ktlint_standard_property-naming" to "disabled",
+                "ktlint_code_style" to "intellij_idea",
+            ),
+        )
     }
     kotlinGradle {
         target("*.gradle.kts", "../*.gradle.kts", "../tests/public-api-consumer/*.gradle.kts")
-        ktlint()
+        ktlint(libs.versions.ktlint.get())
     }
 }
 
@@ -735,21 +740,21 @@ kotlin {
         androidMain {
             kotlin.srcDir(generateNativeBindings.map { mobileBindingsRoot.dir("generated/dev") })
             dependencies {
-                implementation("net.java.dev.jna:jna:5.14.0@aar")
+                implementation("net.java.dev.jna:jna:${libs.versions.jna.get()}@aar")
             }
         }
         commonMain.dependencies {
-            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+            implementation(libs.kotlinx.coroutines.core)
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
-            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+            implementation(libs.kotlinx.coroutines.test)
             implementation(libs.kotlinx.serialization.json)
         }
         androidUnitTest.dependencies {
-            implementation("net.java.dev.jna:jna:5.14.0")
+            implementation(libs.jna)
             // Android's SDK jar contains only throwing org.json stubs on the host JVM.
-            implementation("org.json:json:20240303")
+            implementation(libs.org.json)
         }
     }
 }

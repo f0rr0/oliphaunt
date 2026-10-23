@@ -3,7 +3,6 @@ set -euo pipefail
 
 PREK_VERSION="${PREK_VERSION:-0.4.3}"
 CARGO_NEXTEST_VERSION="${CARGO_NEXTEST_VERSION:-0.9.137}"
-ZIZMOR_VERSION="${ZIZMOR_VERSION:-1.25.2}"
 
 case "${1:-}" in
   ""|--workflows) ;;
@@ -118,6 +117,7 @@ if [ "${1:-}" != --workflows ]; then
   install_cargo_tool prek prek "$PREK_VERSION"
   install_cargo_tool cargo-nextest cargo-nextest "$CARGO_NEXTEST_VERSION"
 fi
+ZIZMOR_VERSION="$("$script_dir/install-pinned-maintainer-tool.sh" zizmor --print-version)"
 install_cargo_tool zizmor zizmor "$ZIZMOR_VERSION"
 "$script_dir/install-actionlint.sh"
 

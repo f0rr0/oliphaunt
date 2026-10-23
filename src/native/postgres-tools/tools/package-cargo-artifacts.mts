@@ -38,21 +38,27 @@ export function renderUnsupportedToolsTargetGuard(nativeTargets, nativeCfgs) {
   });
 }
 
-function writeToolsFacadeCrate(sourceRoot, { version, toolsTargets }) {
+export function writeToolsFacadeCrate(
+  sourceRoot,
+  {
+    version,
+    toolsTargets,
+    templateRoot = TOOLS_FACADE_TEMPLATE,
+    fixture = path.join(ROOT, 'src/test-fixtures/postgres/logical-tools.json'),
+    noticeSourceRoot,
+  },
+) {
   const crateDir = path.join(sourceRoot, TOOLS_PRODUCT);
   if (existsSync(crateDir)) {
     fail(`duplicate generated ${TOOLS_PRODUCT} source crate: ${rel(crateDir)}`);
   }
-  cpSync(TOOLS_FACADE_TEMPLATE, crateDir, {
+  cpSync(templateRoot, crateDir, {
     recursive: true,
     filter: (source) =>
-      path.basename(source) !== 'target' && source !== path.join(TOOLS_FACADE_TEMPLATE, 'tests'),
+      path.basename(source) !== 'target' && source !== path.join(templateRoot, 'tests'),
   });
   mkdirSync(path.join(crateDir, 'testdata'), { recursive: true });
-  copyFileSync(
-    path.join(ROOT, 'src/test-fixtures/postgres/logical-tools.json'),
-    path.join(crateDir, 'testdata/logical-tools.json'),
-  );
+  copyFileSync(fixture, path.join(crateDir, 'testdata/logical-tools.json'));
   const cargoToml = path.join(crateDir, 'Cargo.toml');
   let text = readFileSync(cargoToml, 'utf8');
   text = text
@@ -90,8 +96,11 @@ function writeToolsFacadeCrate(sourceRoot, { version, toolsTargets }) {
     libRs,
     `${readFileSync(libRs, 'utf8').trimEnd()}\n\n// Generated release-only native target guard.\n${releaseOnlyGuard}\n`,
   );
-  stageReleaseNotices(crateDir, { profile: 'code-facade' });
-  assertReleaseNoticesInDirectory(crateDir, { profile: 'code-facade' });
+  stageReleaseNotices(crateDir, { profile: 'code-facade', sourceRoot: noticeSourceRoot });
+  assertReleaseNoticesInDirectory(crateDir, {
+    profile: 'code-facade',
+    sourceRoot: noticeSourceRoot,
+  });
   return {
     name: TOOLS_PRODUCT,
     version,

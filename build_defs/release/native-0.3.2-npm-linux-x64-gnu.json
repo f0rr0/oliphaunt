@@ -1,0 +1,92 @@
+{
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "bugs": {
+    "url": "https://github.com/f0rr0/oliphaunt/issues"
+  },
+  "dist": {
+    "shasum": "4442cbd22105697113e2de471582911eaf4c09c5",
+    "tarball": "https://registry.npmjs.org/@oliphaunt/liboliphaunt-linux-x64-gnu/-/liboliphaunt-linux-x64-gnu-0.3.2.tgz",
+    "fileCount": 737,
+    "integrity": "sha512-Sgv63U8zCISFCCYWYbWmSkQFNyQpWvjJPSDgGXfucLsque4YLenjXr49nIjA5iSXmX3/sPtRw+pP5IBg0cUzrw==",
+    "signatures": [
+      {
+        "sig": "MEUCIQCPRGWAvVPfJ16wOEFX1PYdlXwHivG/QsRyZtQ3s0R4VQIgE62ayjN3oP19EurZ5EVKlONHHpiputs9ldChSJSXjyY=",
+        "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+      },
+      {
+        "sig": "MEQCICcrUt4D8XdXW/X/Yzm3XVfnQu5iTxW8PpJo9fC0ljkGAiArKUox/tJWtUcSeoGYB68fu9iri8GYtUdonPMEgFrUjg==",
+        "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+      }
+    ],
+    "attestations": {
+      "url": "https://registry.npmjs.org/-/npm/v1/attestations/@oliphaunt%2fliboliphaunt-linux-x64-gnu@0.3.2",
+      "provenance": {
+        "predicateType": "https://slsa.dev/provenance/v1"
+      }
+    },
+    "unpackedSize": 34420240
+  },
+  "libc": [
+    "glibc"
+  ],
+  "name": "@oliphaunt/liboliphaunt-linux-x64-gnu",
+  "type": "module",
+  "_from": "file:/home/runner/work/oliphaunt/oliphaunt/target/release/npm-packages/oliphaunt-liboliphaunt-linux-x64-gnu/oliphaunt-liboliphaunt-linux-x64-gnu-0.3.2.tgz",
+  "exports": {
+    "./package.json": "./package.json"
+  },
+  "license": "MIT AND PostgreSQL AND Unicode-3.0",
+  "_npmUser": {
+    "name": "GitHub Actions",
+    "email": "npm-oidc-no-reply@github.com",
+    "trustedPublisher": {
+      "id": "github",
+      "oidcConfigId": "b375dfe0-1c31-45d8-8c3a-508778e50c59"
+    }
+  },
+  "homepage": "https://github.com/f0rr0/oliphaunt#readme",
+  "optional": true,
+  "_resolved": "/home/runner/work/oliphaunt/oliphaunt/target/release/npm-packages/oliphaunt-liboliphaunt-linux-x64-gnu/oliphaunt-liboliphaunt-linux-x64-gnu-0.3.2.tgz",
+  "oliphaunt": {
+    "target": "linux-x64-gnu",
+    "libraryRelativePath": "lib/liboliphaunt.so",
+    "runtimeRelativePath": "runtime"
+  },
+  "_integrity": "sha512-Sgv63U8zCISFCCYWYbWmSkQFNyQpWvjJPSDgGXfucLsque4YLenjXr49nIjA5iSXmX3/sPtRw+pP5IBg0cUzrw==",
+  "repository": {
+    "url": "git+https://github.com/f0rr0/oliphaunt.git",
+    "type": "git",
+    "directory": "src/native/runtime/packages/linux-x64-gnu"
+  },
+  "_npmVersion": "11.18.0",
+  "description": "Linux x64 glibc liboliphaunt native library for Oliphaunt.",
+  "directories": {},
+  "maintainers": [
+    {
+      "name": "oliphaunt",
+      "email": "sids.outlook.email@gmail.com"
+    }
+  ],
+  "_nodeVersion": "22.22.3",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "executableFiles": [
+      "./runtime/bin/initdb",
+      "./runtime/bin/pg_ctl",
+      "./runtime/bin/postgres"
+    ]
+  },
+  "_hasShrinkwrap": false,
+  "_npmOperationalInternal": {
+    "tmp": "tmp/liboliphaunt-linux-x64-gnu_0.3.2_1791360394182_0.7911558616524945",
+    "host": "s3://npm-registry-packages-npm-production"
+  },
+  "_id": "@oliphaunt/liboliphaunt-linux-x64-gnu@0.3.2",
+  "version": "0.3.2"
+}

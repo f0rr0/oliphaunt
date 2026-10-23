@@ -1,0 +1,164 @@
+--- a/crate_universe/extensions.bzl
++++ b/crate_universe/extensions.bzl
+@@ -529,6 +529,53 @@
+ 
+     return config
+ 
++def _project_configured_target_features(metadata, supported_platform_triples):
++    # cargo tree already resolved configured target features; translate only
++    # predicates the platform-only generator cannot evaluate.
++    packages = {package["id"]: package for package in metadata["packages"]}
++    tree = metadata["metadata"]["cargo-bazel"]["tree_metadata"]
++    for node in metadata["resolve"]["nodes"]:
++        parent = packages[node["id"]]
++        dependencies = []
++        for dependency in node["deps"]:
++            unsupported = [
++                kind
++                for kind in dependency["dep_kinds"]
++                if kind["target"] and "target_feature" in kind["target"]
++            ]
++            if not unsupported:
++                dependencies.append(dependency)
++                continue
++            declarations = [
++                declared
++                for declared in parent["dependencies"]
++                if (declared["rename"] or declared["name"]).replace("-", "_") == dependency["name"] and
++                   declared["kind"] == unsupported[0]["kind"] and
++                   declared["target"] == unsupported[0]["target"]
++            ]
++            if len(unsupported) != 1 or len(declarations) != 1:
++                fail("Ambiguous configured target-feature dependency in " + parent["id"])
++            # The maintained generator already uses cargo tree for optional deps.
++            if declarations[0]["optional"]:
++                dependencies.append(dependency)
++                continue
++            if len(dependency["dep_kinds"]) != 1 or unsupported[0]["kind"] != None:
++                fail("Configured target-feature projection requires one normal dependency kind in " + parent["id"])
++            child = packages[dependency["pkg"]]
++            child_id = child["name"] + " " + child["version"]
++            resolved = tree.get(parent["name"] + " " + parent["version"])
++            if resolved == None:
++                fail("Missing standard Cargo tree for configured target-feature dependency in " + parent["id"])
++            common = (resolved["common"] or {}).get("deps", [])
++            selected = [
++                triple
++                for triple in supported_platform_triples
++                if child_id in common or child_id in resolved["selects"].get(triple, {}).get("deps", [])
++            ]
++            if selected:
++                dependencies.append(dict(dependency, dep_kinds = [{"kind": None, "target": triple} for triple in selected]))
++        node["deps"] = dependencies
++
+ def _generate_hub_and_spokes(
+         *,
+         module_ctx,
+@@ -575,6 +622,34 @@
+ 
+     tag_path = module_ctx.path(cfg.name)
+ 
++    source_metadata = {}
++    if cfg.source_metadata:
++        # Source metadata is a one-way acquisition projection, never a second
++        # dependency lock. The standard splicer and generator still resolve all
++        # dependency edges and features from the conventional Cargo inputs.
++        if lockfile:
++            fail("source_metadata requires generation from the conventional Cargo lock")
++        source_metadata = json.decode(module_ctx.read(cfg.source_metadata))
++        annotations = dict(annotations)
++        for crate_id, source in source_metadata.items():
++            parts = crate_id.split(" ")
++            if len(parts) != 2 or sorted(source.keys()) != ["patches", "sha256", "strip_prefix", "url"]:
++                fail("Invalid immutable Cargo source metadata for " + crate_id)
++            name, version = parts
++            if (
++                source["strip_prefix"] != name + "-" + version or
++                not source["url"].startswith("https://") or
++                len(source["sha256"]) != 64 or
++                [c for c in source["sha256"].elems() if c not in "0123456789abcdef"]
++            ):
++                fail("Invalid immutable Cargo archive identity for " + crate_id)
++            annotation = _crate_universe_crate.annotation(
++                version = version,
++                patches = [Label(patch) for patch in source["patches"]],
++                patch_args = ["-p1"],
++            )
++            annotations[name] = list(annotations.get(name, [])) + [annotation]
++
+     config_file = tag_path.get_child("config.json")
+     module_ctx.file(
+         config_file,
+@@ -669,6 +744,22 @@
+             "metadata": splice_outputs.metadata,
+         })
+ 
++        if source_metadata:
++            metadata = json.decode(module_ctx.read(splice_outputs.metadata))
++            sources = metadata["metadata"]["cargo-bazel"]["sources"]
++            for crate_id, source in source_metadata.items():
++                name, version = crate_id.split(" ")
++                packages = [
++                    p
++                    for p in metadata["packages"]
++                    if p["name"] == name and p["version"] == version
++                ]
++                if len(packages) != 1 or packages[0]["source"] != None or crate_id in sources:
++                    fail("Immutable source must match exactly one path-patched Cargo package: " + crate_id)
++                sources[crate_id] = {"url": source["url"], "sha256": source["sha256"]}
++            _project_configured_target_features(metadata, cfg.supported_platform_triples)
++            module_ctx.file(splice_outputs.metadata, json.encode(metadata))
++
+         for path_to_track in splice_outputs.extra_paths_to_track:
+             # We can only watch paths in our workspace.
+             if path_to_track.startswith(str(nonhermetic_root_bazel_workspace_dir)):
+@@ -708,12 +799,39 @@
+         print("WARN: {}".format(warning))
+ 
+     crates_dir = tag_path.get_child(cfg.name)
++    if source_metadata:
++        # The generator models annotation patches as a set. Preserve the
++        # canonical series in both native HTTP spokes and the exported macro.
++        contents = json.decode(module_ctx.read(lockfile))
++        rendered_file = crates_dir.get_child("crates.bzl")
++        rendered = module_ctx.read(rendered_file)
++        for crate_id, source in source_metadata.items():
++            repository = contents["crates"][crate_id]["repository"]["Http"]
++            patches = repository.get("patches", [])
++            if (
++                repository["url"] != source["url"] or
++                repository["sha256"] != source["sha256"] or
++                repository.get("patch_args") != ["-p1"] or
++                sorted(patches) != sorted(source["patches"])
++            ):
++                fail("Generated HTTP source differs from canonical acquisition: " + crate_id)
++            if patches != source["patches"]:
++                original = "        patches = [\n" + "".join(["            %s,\n" % json.encode(patch) for patch in patches]) + "        ],"
++                ordered = "        patches = [\n" + "".join(["            %s,\n" % json.encode(patch) for patch in source["patches"]]) + "        ],"
++                if rendered.count(original) != 1:
++                    fail("Expected one generated HTTP patch list for " + crate_id)
++                rendered = rendered.replace(original, ordered)
++            repository["patches"] = source["patches"]
++        module_ctx.file(rendered_file, rendered)
++        module_ctx.file(lockfile, json.encode(contents))
+     hub_contents = {
+         "BUILD.bazel": module_ctx.read(crates_dir.get_child("BUILD.bazel")),
+         "alias_rules.bzl": module_ctx.read(crates_dir.get_child("alias_rules.bzl")),
+         "crates.bzl": module_ctx.read(crates_dir.get_child("crates.bzl")),
+         "defs.bzl": module_ctx.read(crates_dir.get_child("defs.bzl")),
+     }
++    if source_metadata:
++        hub_contents["cargo-bazel.json"] = module_ctx.read(lockfile)
+ 
+     # Per-alias subpackages always render so users can consume
+     # `@<repo>//<alias>`. `module_ctx` cannot enumerate a directory, so the
+@@ -1226,6 +1344,9 @@
+     return module_ctx.extension_metadata(**metadata_kwargs)
+ 
+ _FROM_COMMON_ATTRS = {
++    "source_metadata": attr.label(
++        doc = "One-way immutable HTTP archive identities and ordered patches for path-patched Cargo packages. Requires generation from the conventional Cargo lock, without a separate Bazel lockfile.",
++    ),
+     "cargo_config": CRATES_VENDOR_ATTRS["cargo_config"],
+     "cargo_lockfile": CRATES_VENDOR_ATTRS["cargo_lockfile"],
+     "generate_binaries": CRATES_VENDOR_ATTRS["generate_binaries"],

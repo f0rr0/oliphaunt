@@ -1,0 +1,251 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_library", "cc_test")
+load("//build_defs/foundation:bun.bzl", "bun_test")
+load(":llvm.bzl", "exec_files", "llvm_helper_runtime", "llvm_libxml2_arm64")
+load(":npm.bzl", "RUNTIME_NPM_HELPERS", "RUNTIME_NPM_NOTICES")
+load(":cargo.bzl", "RUNTIME_CARGO_HELPERS")
+load(":tools-carriers.bzl", "TOOLS_CARRIER_HELPERS")
+load(":aot-repeatability.bzl", "wasix_aot_repeatability_test")
+load(":napi.bzl", "NAPI_HELPERS", "NAPI_NOTICES")
+load(":host-aot-smoke.bzl", "wasix_host_aot_smoke_test")
+load(":host-aot-smoke-test.bzl", "wasix_host_aot_smoke_argument_tests")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["*.bzl", "*.bazel", "*.mts", "*.patch"]))
+exports_files(["config_probe.c"], visibility = ["@postgres_wasix//:__pkg__"])
+
+bun_test(
+    name = "napi_inputs_test",
+    entry_point = "napi-inputs.test.mts",
+    data = ["napi-inputs.mts", "napi.mts", "held-wasix-relocatable-includes.patch", "//src/wasix/node-addon:Cargo.toml", "//src/wasix/node-addon:package.json", "//:src/extensions/generated/extensions.catalog.json", "//:tools/packaging/testdata/release-fixture-utils.mts"] + NAPI_HELPERS + NAPI_NOTICES.keys() + [
+        "//src/wasix/node-addon:packages/" + target + "/" + file for target in ["linux-x64-gnu", "linux-arm64-gnu", "darwin-arm64", "win32-x64-msvc"] for file in ["package.json", "README.md"]
+    ],
+    size = "small",
+)
+
+bun_test(
+    name = "napi_envelopes_test",
+    entry_point = "//src/wasix/node-addon:tools/package-platform.test.mts",
+    data = ["//:tools/packaging/testdata/release-fixture-utils.mts", "//src/wasix/node-addon:tools/workspace-runtime-contract.test.mts"] + NAPI_HELPERS + NAPI_NOTICES.keys() + [
+        "//src/wasix/node-addon:packages/" + target + "/" + file for target in ["linux-x64-gnu", "linux-arm64-gnu", "darwin-arm64", "win32-x64-msvc"] for file in ["package.json", "README.md"]
+    ],
+    size = "small",
+)
+
+wasix_aot_repeatability_test(
+    name = "macos_aot_repeatability_test",
+    module = "//src/wasix/runtime:plpgsql",
+    size = "small",
+    tags = ["manual"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"],
+)
+
+
+bun_test(
+    name = "package_test",
+    entry_point = "package.test.mts",
+    data = [
+        "package.mts",
+        "//:tools/packaging/archive-directory.mts",
+        "//:tools/packaging/portable-archive.mts",
+    ],
+    size = "small",
+)
+
+bun_test(
+    name = "runtime_npm_test",
+    entry_point = "npm.test.mts",
+    data = ["npm.mts"] + RUNTIME_NPM_HELPERS + RUNTIME_NPM_NOTICES.keys(),
+    size = "small",
+)
+
+bun_test(
+    name = "runtime_cargo_test",
+    entry_point = "cargo.test.mts",
+    data = ["cargo.mts", "//src/wasix/runtime:toolchain.toml"] + RUNTIME_CARGO_HELPERS + RUNTIME_NPM_NOTICES.keys() + [
+        "//src/wasix/runtime/crates/assets:package_sources",
+        "//src/wasix/runtime/crates/aot/x86_64-unknown-linux-gnu:package_sources",
+        "//src/wasix/runtime/crates/aot/aarch64-unknown-linux-gnu:package_sources",
+        "//src/wasix/runtime/crates/aot/aarch64-apple-darwin:package_sources",
+        "//src/wasix/runtime/crates/aot/x86_64-pc-windows-msvc:package_sources",
+    ],
+    size = "small",
+)
+
+bun_test(
+    name = "tools_carriers_test",
+    entry_point = "tools-carriers.test.mts",
+    data = [
+        "tools-carriers.mts",
+        "//src/wasix/runtime:toolchain.toml",
+        "//src/wasix/runtime:postgres/series",
+        "//src/wasix/postgres-tools:npm/native.mts",
+        "//src/wasix/postgres-tools:carrier_source_patches",
+    ] + ["//src/wasix/postgres-tools:" + target + "_package_sources" for target in [
+        "portable", "linux_arm64_gnu", "linux_x64_gnu", "macos_arm64", "windows_x64_msvc",
+    ]] + TOOLS_CARRIER_HELPERS + RUNTIME_NPM_NOTICES.keys(),
+    size = "small",
+)
+
+bun_test(
+    name = "cargo_inputs_test",
+    entry_point = "cargo-inputs.test.mts",
+    data = [
+        "cargo-inputs.mts",
+        "cargo.mts",
+        "//build_defs/languages:cargo-metadata.mts",
+        "//:tools/packaging/frozen-cargo.mts",
+        "//:Cargo.lock",
+        "//src/wasix/runtime:release.toml",
+        "//src/wasix/runtime:toolchain.toml",
+        "//src/wasix/postgres-tools:crates/tools/Cargo.toml",
+        "//src/wasix/runtime/crates/assets:package_sources",
+        "//src/wasix/runtime/crates/aot/x86_64-unknown-linux-gnu:package_sources",
+        "//src/wasix/runtime/crates/aot/aarch64-unknown-linux-gnu:package_sources",
+        "//src/wasix/runtime/crates/aot/aarch64-apple-darwin:package_sources",
+        "//src/wasix/runtime/crates/aot/x86_64-pc-windows-msvc:package_sources",
+    ] + RUNTIME_CARGO_HELPERS + RUNTIME_NPM_NOTICES.keys(),
+    size = "small",
+)
+
+wasix_host_aot_smoke_test(
+    name = "host_aot_smoke_test",
+    target_triple = select({
+        ":llvm_linux_x64": "x86_64-unknown-linux-gnu",
+        ":llvm_linux_arm64": "aarch64-unknown-linux-gnu",
+        ":llvm_macos_arm64": "aarch64-apple-darwin",
+        ":llvm_windows_x64": "x86_64-pc-windows-msvc",
+    }),
+    size = "large",
+    timeout = "long",
+    tags = ["manual", "installed-consumer"],
+)
+
+wasix_host_aot_smoke_argument_tests()
+
+bun_test(
+    name = "host_aot_smoke_inputs_test",
+    entry_point = "host-aot-smoke.test.mts",
+    data = ["host-aot-smoke.mts", "cargo-inputs.mts", "cargo.mts", "//build_defs/languages:cargo-metadata.mts", "//:tools/packaging/frozen-cargo.mts", "//src/wasix/postgres-tools:tools/package-assets.mts", "//src/wasix/runtime:tools/package-release-assets.mts", "//src/wasix/runtime:toolchain.toml"] + RUNTIME_CARGO_HELPERS + RUNTIME_NPM_NOTICES.keys(),
+    size = "small",
+)
+
+platform(
+    name = "portable",
+    constraint_values = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
+)
+
+# Canonical LLVM22's helper and archives require glibc 2.34 for construction.
+# This internal execution profile does not set the native product ABI floor.
+platform(
+    name = "llvm_serializer_linux_x86_64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+        "@zig_sdk//libc:gnu.2.34",
+    ],
+)
+
+# These source selectors avoid acquiring foreign LLVM archives during a native
+# serializer build. The forwarding rules select in execution configuration.
+config_setting(name = "llvm_linux_x64", constraint_values = ["@platforms//os:linux", "@platforms//cpu:x86_64"])
+config_setting(name = "llvm_linux_arm64", constraint_values = ["@platforms//os:linux", "@platforms//cpu:aarch64"])
+config_setting(name = "llvm_macos_arm64", constraint_values = ["@platforms//os:macos", "@platforms//cpu:aarch64"])
+config_setting(name = "llvm_windows_x64", constraint_values = ["@platforms//os:windows", "@platforms//cpu:x86_64"])
+
+filegroup(
+    name = "llvm_files_for_host",
+    srcs = select({
+        ":llvm_linux_x64": ["@wasmer_llvm_linux_x64//:files"],
+        ":llvm_linux_arm64": ["@wasmer_llvm_linux_arm64//:files"],
+        ":llvm_macos_arm64": ["@wasmer_llvm_macos_arm64//:files"],
+        ":llvm_windows_x64": ["@wasmer_llvm_windows_x64//:files"],
+    }),
+)
+
+filegroup(
+    name = "llvm_env_for_host",
+    srcs = select({
+        ":llvm_linux_x64": ["@wasmer_llvm_linux_x64//:llvm.env"],
+        ":llvm_linux_arm64": ["@wasmer_llvm_linux_arm64//:llvm.env"],
+        ":llvm_macos_arm64": ["@wasmer_llvm_macos_arm64//:llvm.env"],
+        ":llvm_windows_x64": ["@wasmer_llvm_windows_x64//:llvm.env"],
+    }),
+)
+
+exec_files(name = "wasmer_llvm_files", srcs = [":llvm_files_for_host"])
+exec_files(name = "wasmer_llvm_env", srcs = [":llvm_env_for_host"])
+
+llvm_libxml2_arm64(name = "llvm_libxml2_arm64", target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:aarch64"])
+
+# LLVM22's GNU C++ ABI and its llvm-config helper use this maintained runtime.
+# Import the ELF SONAME file, rather than libgcc_s.so's linker script.
+cc_import(
+    name = "wasmer_gnu_unwind",
+    shared_library = "@llvm_gnu_runtime//:lib64/libgcc_s.so.1",
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+cc_library(
+    name = "wasmer_llvm_gnu_link",
+    deps = ["@llvm_gnu_runtime//:libstdcxx", ":wasmer_gnu_unwind"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+llvm_helper_runtime(
+    name = "wasmer_llvm_gnu_env",
+    libraries = [
+        "@llvm_gnu_runtime//:lib64/libstdc++.so.6",
+        "@llvm_gnu_runtime//:lib64/libstdc++.so.6.0.30",
+        "@llvm_gnu_runtime//:lib64/libgcc_s.so.1",
+    ],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+filegroup(
+    name = "wasmer_llvm_gnu_files",
+    srcs = [":wasmer_llvm_gnu_env"],
+    output_group = "runtime_files",
+)
+
+# Resolution reads only these constraints; acquire the compiler payload only
+# when a configured wasm32/WASI target selects its implementation.
+toolchain(
+    name = "cc_toolchain",
+    toolchain = "@wasix_toolchain//:compiler",
+    toolchain_type = "@rules_cc//cc:toolchain_type",
+    exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    target_compatible_with = ["@platforms//os:wasi", "@platforms//cpu:wasm32"],
+)
+
+alias(
+    name = "config_probe",
+    actual = "@postgres_wasix//:configuration_contract",
+    target_compatible_with = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
+)
+
+cc_test(
+    name = "bridge_abi_test",
+    size = "small",
+    srcs = [
+        "//src/wasix/runtime:assets/build/wasix_shim/oliphaunt_wasix_bridge.c",
+        "//src/wasix/runtime:assets/build/wasix_shim/oliphaunt_wasix_bridge_abi_test.c",
+    ],
+    copts = ["-std=c11", "-Wall", "-Wextra"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+cc_test(
+    name = "initdb_shim_abi_test",
+    size = "small",
+    srcs = [
+        "//src/wasix/runtime:assets/build/wasix_shim/oliphaunt_wasix_initdb_shim.c",
+        "//src/wasix/runtime:assets/build/wasix_shim/oliphaunt_wasix_initdb_shim_abi_test.c",
+    ],
+    copts = ["-std=c11", "-Wall", "-Wextra"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+source_quality_files()

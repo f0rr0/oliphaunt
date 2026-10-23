@@ -1,0 +1,1 @@
+{"label":"@@//src/query/ts:shipping_package","package":{"configuration":"portable","ecosystem":"npm","name":"@oliphaunt/ts-query","outputs":[{"owner":"@@//src/query/ts:npm","path":"bazel-out/k8-fastbuild/bin/src/query/ts/oliphaunt-ts-query.tgz"}],"product":"oliphaunt-query-ts","role":"facade","version":"0.1.1"}}

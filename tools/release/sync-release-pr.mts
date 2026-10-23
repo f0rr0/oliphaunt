@@ -1,10 +1,12 @@
 #!/usr/bin/env bun
 import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { cargoSatisfies } from '../../build_defs/languages/cargo-metadata.mts';
 import { electronReleaseDependencies } from '../../src/examples/tools/example-release-dependencies.mts';
 import { extensionRegistryPackageStrings } from '../../src/extensions/artifacts/packages/tools/extension-registry-packages.mts';
 import { currentEvidenceTable } from '../../src/extensions/tools/extension-evidence.mts';
 import { catalogPath, readJson } from '../../src/extensions/tools/extension-projections.mts';
+import { isCargoPathCompatibility } from './compatibility-version-parser.mts';
 import { requireMatchingWasixRuntime } from './compatibility-version-policy.mts';
 import {
   exampleCargoPolicies,
@@ -19,12 +21,11 @@ import {
   ROOT,
 } from './release-artifact-targets.mts';
 import {
-  buildBoundCompatibilityProducts,
   releaseDependencyPlan,
+  resolveBuildBoundCompatibilityProducts,
 } from './release-dependency-plan.mts';
 import {
   compatibilityVersionEntries,
-  loadGraph,
   loadProducts,
   productCompatibilityVersion,
 } from './release-graph.mts';
@@ -40,7 +41,7 @@ export { cargoManifestPaths } from './release-please-transition.mts';
 
 const PREFIX = 'sync-release-pr.mts';
 const DEPENDENCY_TABLES = ['dependencies', 'dev-dependencies', 'build-dependencies'];
-const LOCKFILES = [path.join(ROOT, 'Cargo.lock')];
+const CARGO_LOCKFILE = path.join(ROOT, 'Cargo.lock');
 const BUN_LOCKFILE = path.join(ROOT, 'bun.lock');
 const RELEASE_PLEASE_CONFIG = path.join(ROOT, 'release-please-config.json');
 const RELEASE_PLEASE_MANIFEST = path.join(ROOT, '.release-please-manifest.json');
@@ -84,14 +85,16 @@ function jsonText(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
-function writeTextIfChanged(file, text, changes, detail, { write }) {
-  const before = readText(file);
+function writeTextIfChanged(file, text, changes, detail, { write, observeUpdate }) {
+  const beforeBytes = readFileSync(file);
+  const before = beforeBytes.toString('utf8');
   if (before === text) {
     return;
   }
   changes.push({ path: file, detail });
   if (write) {
     writeFileSync(file, text, 'utf8');
+    observeUpdate?.({ path: rel(file), before: beforeBytes, after: Buffer.from(text) });
   }
 }
 
@@ -160,9 +163,14 @@ function setJsonPath(data, dotted, expected, context) {
 export function syncTomlStringPath(text, dotted, expected, context) {
   const entryParts = dotted.split('.');
   if (entryParts.at(-1) === 'version' && DEPENDENCY_TABLES.includes(entryParts.at(-3))) {
+    // Compatibility reads normalize Cargo's exact requirement to its installed
+    // version. Writing that value must retain the authored constraint.
+    const actual = valueAt(Bun.TOML.parse(text), entryParts);
+    const exact = typeof actual === 'string' ? /^(=\s*)/u.exec(actual) : null;
+    const requirement = exact && !expected.startsWith('=') ? `${exact[1]}${expected}` : expected;
     return replaceUniqueDependencyVersion(
       text,
-      { entryParts: entryParts.slice(0, -1), expected, name: context },
+      { entryParts: entryParts.slice(0, -1), expected: requirement, name: context },
       context,
     );
   }
@@ -232,7 +240,7 @@ function replaceTopLevelArrayAssignment(text, key, values, context) {
   return output.join('');
 }
 
-function syncExtensionRegistryMetadata(changes, { write }) {
+function syncExtensionRegistryMetadata(changes, { write, observeUpdate }) {
   const expectedPublishTargets = ['github-release-assets', 'npm', 'maven-central', 'crates-io'];
   for (const product of exactExtensionReleaseProducts(PREFIX)) {
     const releaseToml = path.join(ROOT, packagePath(product), 'release.toml');
@@ -259,13 +267,13 @@ function syncExtensionRegistryMetadata(changes, { write }) {
         updated,
         changes,
         'synced explicit extension registry metadata',
-        { write },
+        { write, observeUpdate },
       );
     }
   }
 }
 
-function syncReleasePleaseBootstrapBoundary(changes, { write }) {
+function syncReleasePleaseBootstrapBoundary(changes, { write, observeUpdate }) {
   const config = readJsonObject(RELEASE_PLEASE_CONFIG);
   const manifest = readJsonObject(RELEASE_PLEASE_MANIFEST);
   const updated = releasePleaseConfigAfterBootstrapConsumption(config, manifest);
@@ -275,18 +283,22 @@ function syncReleasePleaseBootstrapBoundary(changes, { write }) {
       jsonText(updated),
       changes,
       'removed the consumed one-time bootstrap-sha history boundary',
-      { write },
+      { write, observeUpdate },
     );
   }
 }
 
-async function syncCompatibilityVersions(changes, { write, transitions }) {
+async function syncCompatibilityVersions(
+  changes,
+  { write, observeUpdate, transitions, buildBound },
+) {
   const links = compatibilityEntriesForBumpedProducts(compatibilityVersionLinks(), transitions);
   const plan = releaseDependencyPlan(
     graphProducts(),
     transitions.map(({ product }) => product),
     {
       entries: links,
+      buildBound,
     },
   );
   for (const { id: specId, sourceProduct, path: pathText, parser, version: expected } of plan) {
@@ -297,7 +309,7 @@ async function syncCompatibilityVersions(changes, { write, transitions }) {
         `${expected}\n`,
         changes,
         `${specId} -> ${sourceProduct} ${expected}`,
-        { write },
+        { write, observeUpdate },
       );
       continue;
     }
@@ -305,21 +317,25 @@ async function syncCompatibilityVersions(changes, { write, transitions }) {
       const data = readJsonObject(file);
       const detail = setJsonPath(data, parser.split(':', 2)[1], expected, specId);
       if (detail !== undefined) {
-        writeTextIfChanged(file, jsonText(data), changes, detail, { write });
+        writeTextIfChanged(file, jsonText(data), changes, detail, { write, observeUpdate });
       }
       continue;
     }
     if (parser.startsWith('toml:')) {
+      // Cargo requirements were projected before scope froze; runtime/helper
+      // metadata retains its separate installed-artifact adoption contract.
+      if (isCargoPathCompatibility({ id: specId, path: pathText, parser }, readText(file)))
+        continue;
       const [text, detail] = setTomlStringPath(file, parser.split(':', 2)[1], expected, specId);
       if (text !== undefined && detail !== undefined) {
-        writeTextIfChanged(file, text, changes, detail, { write });
+        writeTextIfChanged(file, text, changes, detail, { write, observeUpdate });
       }
       continue;
     }
     if (parser.startsWith('rust-const:')) {
       const [text, detail] = setRustConstString(file, parser.split(':', 2)[1], expected, specId);
       if (text !== undefined && detail !== undefined) {
-        writeTextIfChanged(file, text, changes, detail, { write });
+        writeTextIfChanged(file, text, changes, detail, { write, observeUpdate });
       }
       continue;
     }
@@ -335,9 +351,10 @@ async function expectedNativeToolsOptionalVersions() {
   return versions;
 }
 
-async function syncNativeToolsOptionalDependencies(changes, { write, transitions }) {
+async function syncNativeToolsOptionalDependencies(changes, { write, observeUpdate, transitions }) {
   return syncOptionalRuntimeDependencies(changes, {
     write,
+    observeUpdate,
     transitions,
     ownerProduct: 'postgres-tools-native',
     packageFile: NATIVE_TOOLS_FACADE_PACKAGE,
@@ -347,7 +364,7 @@ async function syncNativeToolsOptionalDependencies(changes, { write, transitions
 
 async function syncOptionalRuntimeDependencies(
   changes,
-  { write, transitions, ownerProduct, packageFile, runtimeVersions },
+  { write, observeUpdate, transitions, ownerProduct, packageFile, runtimeVersions },
 ) {
   if (!transitions.some(({ product }) => product === ownerProduct)) {
     return;
@@ -370,11 +387,11 @@ async function syncOptionalRuntimeDependencies(
     }
   }
   if (changed) {
-    writeTextIfChanged(file, jsonText(data), changes, details.join('; '), { write });
+    writeTextIfChanged(file, jsonText(data), changes, details.join('; '), { write, observeUpdate });
   }
 }
 
-function syncElectronExampleDependencies(changes, { write, transitions }) {
+function syncElectronExampleDependencies(changes, { write, observeUpdate, transitions }) {
   if (
     transitions.length &&
     !transitions.some(({ product }) => ['oliphaunt-js', 'postgres-tools-native'].includes(product))
@@ -402,14 +419,15 @@ function syncElectronExampleDependencies(changes, { write, transitions }) {
   if (changed) {
     writeTextIfChanged(ELECTRON_EXAMPLE_PACKAGE, jsonText(data), changes, details.join('; '), {
       write,
+      observeUpdate,
     });
   }
 }
 
-function localCargoPackagesByManifest() {
+function localCargoPackagesByManifest(manifests) {
   const packages = new Map();
-  for (const manifest of cargoManifestPaths()) {
-    const data = Bun.TOML.parse(readText(manifest));
+  for (const manifest of manifests?.keys() ?? cargoManifestPaths()) {
+    const data = manifests?.get(manifest).manifest ?? Bun.TOML.parse(readText(manifest));
     const packageConfig = data.package;
     if (
       packageConfig === null ||
@@ -440,10 +458,11 @@ function localCargoPackageVersions() {
   return versions;
 }
 
-function iterDependencyTables(manifest) {
+export function iterDependencyTables(manifest) {
   const tables = [];
   for (const [parts, owner] of [
     [[], manifest],
+    ...(manifest.workspace ? [[['workspace'], manifest.workspace]] : []),
     ...Object.entries(manifest.target ?? {}).map(([target, value]) => [['target', target], value]),
   ]) {
     for (const tableName of DEPENDENCY_TABLES) {
@@ -455,8 +474,38 @@ function iterDependencyTables(manifest) {
   return tables;
 }
 
-export function desiredCargoPathDependencyVersion(current, packageVersion) {
-  if (current === '*') return current;
+export function cargoPathDependencyConsumers(
+  file,
+  manifest,
+  manifests,
+  owners,
+  binding,
+  products = {},
+) {
+  const consumerOwners = (file, manifest) => {
+    const relative = path.isAbsolute(file) ? rel(file) : file;
+    return [
+      owners.get(manifest.package?.name),
+      ...Object.entries(products)
+        .filter(([, product]) => product.embedded_cargo_manifests?.includes(relative))
+        .map(([id]) => id),
+    ];
+  };
+  const consumers =
+    file === 'Cargo.toml'
+      ? [...manifests]
+          .filter(([, { manifest }]) =>
+            iterDependencyTables(manifest).some(
+              ([, table]) => table[binding.name]?.workspace === true,
+            ),
+          )
+          .flatMap(([file, { manifest }]) => consumerOwners(file, manifest))
+      : consumerOwners(file, manifest);
+  return [...new Set(consumers.filter(Boolean))];
+}
+
+export function desiredCargoPathDependencyVersion(current, packageVersion, updateMinimum = false) {
+  if (!updateMinimum && cargoSatisfies(packageVersion, current)) return current;
   return current.startsWith('=') ? `=${packageVersion}` : packageVersion;
 }
 
@@ -505,7 +554,9 @@ export function cargoPathDependencyBindings(
         continue;
       }
       const dependencyManifest = path.resolve(path.dirname(manifestPath), pathValue, 'Cargo.toml');
-      const packageInfo = localPackages.get(realpathIfExists(dependencyManifest));
+      const packageInfo =
+        localPackages.get(dependencyManifest) ??
+        localPackages.get(realpathIfExists(dependencyManifest));
       if (packageInfo === undefined) {
         continue;
       }
@@ -525,27 +576,40 @@ export function cargoPathDependencyBindings(
   return desired;
 }
 
-function syncCargoPathDependencyPins(changes, { write, transitions }) {
-  const localPackages = localCargoPackagesByManifest();
+function syncCargoPathDependencyPins(changes, { write, observeUpdate, transitions, buildBound }) {
+  const manifests = new Map(
+    cargoManifestPaths().map((file) => {
+      const text = readText(file);
+      return [file, { text, manifest: Bun.TOML.parse(text) }];
+    }),
+  );
+  const localPackages = localCargoPackagesByManifest(manifests);
   const products = graphProducts();
-  const compiled = buildBoundCompatibilityProducts(products);
+  const owners = new Map(
+    Object.entries(products).flatMap(([id, product]) =>
+      (product.registry_packages ?? [])
+        .filter((name) => name.startsWith('crates:'))
+        .map((name) => [name.slice(7), id]),
+    ),
+  );
+  const selected = new Set(transitions.map(({ product }) => product));
   const selectedRoots = transitions
     .map(({ product }) => ({ product, root: path.join(ROOT, packagePath(product)) }))
     .sort(
       (left, right) => right.root.length - left.root.length || compareText(left.root, right.root),
     );
-  for (const manifestPath of cargoManifestPaths()) {
+  for (const [manifestPath, { text: source, manifest: parsed }] of manifests) {
+    const file = rel(manifestPath);
     const owner = selectedRoots.find(
       ({ root }) => manifestPath === root || manifestPath.startsWith(`${root}${path.sep}`),
     );
-    if (!owner) continue;
-    const source = readText(manifestPath);
-    const parsed = Bun.TOML.parse(source);
+    if (!owner && file !== 'Cargo.toml') continue;
+    const priorVersions = priorCargoPathDependencyVersions(manifestPath);
     const bindings = cargoPathDependencyBindings(
       source,
       manifestPath,
       localPackages,
-      priorCargoPathDependencyVersions(manifestPath),
+      priorVersions,
     ).filter((binding) => {
       const dependency = valueAt(parsed, binding.entryParts);
       const input = path.resolve(path.dirname(manifestPath), dependency.path);
@@ -556,7 +620,40 @@ function syncCargoPathDependencyPins(changes, { write, transitions }) {
             input.startsWith(path.join(ROOT, metadata.path) + path.sep),
         )
         .sort((left, right) => right[1].path.length - left[1].path.length)[0]?.[0];
-      return compiled.get(owner.product)?.has(producer);
+      const consumers = cargoPathDependencyConsumers(
+        file,
+        parsed,
+        manifests,
+        owners,
+        binding,
+        products,
+      );
+      const producerSelected = selected.has(producer);
+      const adopts = producerSelected && consumers.some((product) => selected.has(product));
+      if (adopts)
+        binding.expected = desiredCargoPathDependencyVersion(
+          binding.expected,
+          products[producer].version,
+          true,
+        );
+      if (file === 'Cargo.toml' && producerSelected) {
+        const held = consumers.filter(
+          (product) =>
+            !selected.has(product) &&
+            (buildBound.get(product)?.has(producer) ||
+              products[product].registry_packages?.some((name) => name.startsWith('crates:'))),
+        );
+        const prior = priorVersions.get(JSON.stringify(binding.entryParts)) ?? dependency.version;
+        if (held.length && binding.expected !== prior)
+          fail(
+            'workspace Cargo requirement ' +
+              binding.name +
+              ' would change unselected public consumers: ' +
+              held.join(', '),
+          );
+        return adopts;
+      }
+      return adopts || Boolean(owner && buildBound.get(owner.product)?.has(producer));
     });
     const result = syncExampleCargoManifestText(source, {
       policy: { crateDir: path.dirname(manifestPath) },
@@ -564,7 +661,10 @@ function syncCargoPathDependencyPins(changes, { write, transitions }) {
       label: rel(manifestPath),
     });
     if (result.details.length)
-      writeTextIfChanged(manifestPath, result.text, changes, result.details.join('; '), { write });
+      writeTextIfChanged(manifestPath, result.text, changes, result.details.join('; '), {
+        write,
+        observeUpdate,
+      });
   }
 }
 
@@ -755,7 +855,7 @@ export function syncExampleCargoManifestText(
   return { text: updated, details };
 }
 
-function syncExampleCargoRegistryPins(changes, { write, transitions }) {
+function syncExampleCargoRegistryPins(changes, { write, observeUpdate, transitions }) {
   const bindings = exampleCargoReleaseVersionBindings();
   for (const policy of exampleCargoPolicies()) {
     if (
@@ -779,7 +879,10 @@ function syncExampleCargoRegistryPins(changes, { write, transitions }) {
       fail(cause.message);
     }
     if (result.details.length > 0) {
-      writeTextIfChanged(file, result.text, changes, result.details.join('; '), { write });
+      writeTextIfChanged(file, result.text, changes, result.details.join('; '), {
+        write,
+        observeUpdate,
+      });
     }
   }
 }
@@ -807,7 +910,7 @@ function replaceVersionLine(line, version) {
   return `${match[1]}"${version}"${match[2]}${newline}`;
 }
 
-export function syncLockfile(lockfile, versions, changes, { write }) {
+export function syncLockfile(lockfile, versions, changes, { write, observeUpdate }) {
   const data = Bun.TOML.parse(readText(lockfile));
   if (!Array.isArray(data.package)) {
     fail(`${rel(lockfile)} is missing [[package]] entries`);
@@ -847,15 +950,16 @@ export function syncLockfile(lockfile, versions, changes, { write }) {
     }
   }
   if (fileChanges.length > 0) {
-    writeTextIfChanged(lockfile, lines.join(''), changes, fileChanges.join('; '), { write });
+    writeTextIfChanged(lockfile, lines.join(''), changes, fileChanges.join('; '), {
+      write,
+      observeUpdate,
+    });
   }
 }
 
-function syncLockfiles(changes, { write }) {
+function syncLockfiles(changes, { write, observeUpdate }) {
   const versions = localCargoPackageVersions();
-  for (const lockfile of LOCKFILES) {
-    syncLockfile(lockfile, versions, changes, { write });
-  }
+  syncLockfile(CARGO_LOCKFILE, versions, changes, { write, observeUpdate });
   // Bun can defer workspace dependency changes when their package versions also change.
   const lock = Bun.JSONC.parse(readText(BUN_LOCKFILE));
   const updated = [];
@@ -867,10 +971,13 @@ function syncLockfiles(changes, { write }) {
     }
   }
   if (updated.length > 0)
-    writeTextIfChanged(BUN_LOCKFILE, jsonText(lock), changes, 'npm workspace versions', { write });
+    writeTextIfChanged(BUN_LOCKFILE, jsonText(lock), changes, 'npm workspace versions', {
+      write,
+      observeUpdate,
+    });
 }
 
-function syncExtensionEvidenceSummary(changes, { write }) {
+function syncExtensionEvidenceSummary(changes, { write, observeUpdate }) {
   const identity = {
     commit: process.env.OLIPHAUNT_EVIDENCE_COMMIT,
     tree: process.env.OLIPHAUNT_EVIDENCE_TREE,
@@ -884,7 +991,7 @@ function syncExtensionEvidenceSummary(changes, { write }) {
     expected,
     changes,
     'extension evidence summary',
-    { write },
+    { write, observeUpdate },
   );
 }
 
@@ -921,13 +1028,15 @@ function parseArgs(argv) {
   return args;
 }
 
-async function main(argv) {
+export async function syncReleasePr(argv = process.argv.slice(2), options = {}) {
   const args = parseArgs(argv);
+  const buildBound = resolveBuildBoundCompatibilityProducts(graphProducts(), options);
   const changes = [];
   const write = !args.check;
+  const observeUpdate = options.observeUpdate;
   const transitions = releasePleaseWorktreeTransitions(ROOT, { prefix: PREFIX });
-  syncReleasePleaseBootstrapBoundary(changes, { write });
-  await syncCompatibilityVersions(changes, { write, transitions });
+  syncReleasePleaseBootstrapBoundary(changes, { write, observeUpdate });
+  await syncCompatibilityVersions(changes, { write, observeUpdate, transitions, buildBound });
   if (
     transitions.some(({ product }) => product === 'oliphaunt-wasix-ts') &&
     (write || changes.length === 0)
@@ -955,14 +1064,14 @@ async function main(argv) {
       { prefix: PREFIX },
     );
   }
-  syncExtensionRegistryMetadata(changes, { write });
-  await syncNativeToolsOptionalDependencies(changes, { write, transitions });
-  syncElectronExampleDependencies(changes, { write, transitions });
-  syncCargoPathDependencyPins(changes, { write, transitions });
-  syncExampleCargoRegistryPins(changes, { write, transitions });
-  syncLockfiles(changes, { write });
+  syncExtensionRegistryMetadata(changes, { write, observeUpdate });
+  await syncNativeToolsOptionalDependencies(changes, { write, observeUpdate, transitions });
+  syncElectronExampleDependencies(changes, { write, observeUpdate, transitions });
+  syncCargoPathDependencyPins(changes, { write, observeUpdate, transitions, buildBound });
+  syncExampleCargoRegistryPins(changes, { write, observeUpdate, transitions });
+  syncLockfiles(changes, { write, observeUpdate });
   if (!args.generatedReleaseCheck) {
-    syncExtensionEvidenceSummary(changes, { write });
+    syncExtensionEvidenceSummary(changes, { write, observeUpdate });
   }
   if (changes.length === 0) {
     console.log('release PR derived files are in sync');
@@ -994,7 +1103,7 @@ export function releaseDerivedPathInventory() {
   return [
     ...new Set(
       [
-        ...LOCKFILES,
+        CARGO_LOCKFILE,
         BUN_LOCKFILE,
         RELEASE_PLEASE_CONFIG,
         ELECTRON_EXAMPLE_PACKAGE,
@@ -1013,5 +1122,5 @@ export function releaseDerivedPathInventory() {
 }
 
 if (import.meta.main) {
-  await main(Bun.argv.slice(2));
+  await syncReleasePr(Bun.argv.slice(2));
 }

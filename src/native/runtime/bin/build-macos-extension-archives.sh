@@ -283,7 +283,7 @@ archive_mobile_static_extension_objects() {
 }
 
 build_static_extension_objects() {
-  local extension source source_dir source_rel object object_dir objects_file stem prefix include_dir cflag
+  local extension source source_dir source_rel object object_dir objects_file sources stem prefix include_dir cflag
   local -a compile_args extension_include_args extension_cflags
   for extension in ${mobile_static_extensions[@]+"${mobile_static_extensions[@]}"}; do
     if [ "$extension" = "postgis" ]; then
@@ -317,6 +317,7 @@ build_static_extension_objects() {
     rm -rf "$object_dir"
     mkdir -p "$object_dir"
     : > "$objects_file"
+    sources="$(set -e; oliphaunt_mobile_static_extension_source_files "$repo_root" "$build_dir" "$extension")"
     while IFS= read -r source; do
       [ -n "$source" ] || continue
       [ -f "$source" ] || fail "macOS static extension source is missing: $source"
@@ -343,7 +344,7 @@ build_static_extension_objects() {
         -o "$object"
       )
       "${compile_args[@]}"
-    done < <(oliphaunt_mobile_static_extension_source_files "$repo_root" "$build_dir" "$extension")
+    done <<< "$sources"
     [ -s "$objects_file" ] || fail "macOS static extension $extension did not produce object inputs"
     archive_mobile_static_extension_objects "$extension" "$object_dir" "$objects_file"
   done

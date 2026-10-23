@@ -173,6 +173,67 @@ async function relativeFiles(root, relative = '') {
   return files.sort();
 }
 
+function staticElfArchive(machine) {
+  const object = elfFixture({ machine, type: 1 });
+  const header = ['extension.o/', '0', '0', '0', '100644', String(object.length)]
+    .map((value, index) => value.padEnd([16, 12, 6, 6, 8, 10][index], ' '))
+    .join('');
+  return Buffer.concat([
+    Buffer.from('!<arch>\n' + header + '`\n', 'ascii'),
+    object,
+    ...(object.length % 2 ? [Buffer.from('\n')] : []),
+  ]);
+}
+
+describe('Android exact-extension staged static archive qualification', () => {
+  for (const [target, machine, wrongMachine] of [
+    ['android-arm64-v8a', 183, 62],
+    ['android-x86_64', 62, 183],
+  ]) {
+    test(`${target} validates shipped extension/dependency objects and excludes build utilities`, async () => {
+      const root = await fixture(target);
+      const artifact = path.join(root, 'artifact');
+      const scratch = path.join(root, 'build/out');
+      const extension = `mobile-static/${target}/extensions/vector/liboliphaunt_extension_vector.a`;
+      const dependency = `mobile-static/${target}/dependencies/libiconv/libiconv.a`;
+      await writeRuntimeFile(artifact, extension, staticElfArchive(machine));
+      await writeRuntimeFile(artifact, dependency, staticElfArchive(machine));
+      // Mobile carriers also contain their Linux support module. Its separate
+      // target contract must not be applied to Android static objects.
+      await writeRuntimeFile(artifact, 'files/lib/postgresql/vector.so', elfFixture());
+      const utility = elfFixture({ machine, androidApi: 24 });
+      utility.writeBigUInt64LE(4096n, 112);
+      await writeRuntimeFile(scratch, 'dependencies/libiconv/bin/iconv', utility);
+      await expect(inspectPlatformBinaryTree(scratch, { target })).rejects.toThrow(
+        /PT_LOAD alignment 4096/u,
+      );
+      const args = { nativeModuleStem: 'vector', nativeTarget: target };
+      await expect(validateExactArtifactBinaryContract(artifact, args)).resolves.toMatchObject({
+        target,
+        binaries: 2,
+        slices: 2,
+      });
+      await rm(path.join(artifact, extension));
+      await expect(validateExactArtifactBinaryContract(artifact, args)).rejects.toThrow(
+        /missing staged .* static archive for vector/u,
+      );
+      await writeRuntimeFile(artifact, extension, staticElfArchive(wrongMachine));
+      await expect(validateExactArtifactBinaryContract(artifact, args)).rejects.toThrow(
+        /ELF machine/u,
+      );
+      await writeRuntimeFile(artifact, extension, staticElfArchive(machine));
+      await writeRuntimeFile(artifact, dependency, staticElfArchive(wrongMachine));
+      await expect(validateExactArtifactBinaryContract(artifact, args)).rejects.toThrow(
+        /ELF machine/u,
+      );
+      await writeRuntimeFile(artifact, dependency, Buffer.from('!<arch>\ntruncated'));
+      await expect(validateExactArtifactBinaryContract(artifact, args)).rejects.toThrow(
+        /ar member header/u,
+      );
+    });
+  }
+});
+
 describe('desktop exact-extension post-strip binary qualification', () => {
   test('validates both Linux profiles and rejects a corrupt or over-floor embedded module', async () => {
     const root = await fixture('linux-exact-profiles');

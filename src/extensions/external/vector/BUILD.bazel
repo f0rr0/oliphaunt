@@ -1,0 +1,46 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/extensions:external.bzl", "native_external_extension_modules")
+load("//build_defs/extensions:extensions.bzl", "NATIVE_EXTENSION_CONFIGURATION", "extension_identity", "extension_member_payload", "extension_member_validation_test")
+load("//build_defs/release:shipping.bzl", "shipping_package")
+load("//build_defs/extensions:native_carriers.bzl", "native_external_extension_carriers")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["upstream-license-data.json", "release.toml", "source.toml", "recipe.toml"])
+
+native_external_extension_carriers(sql_name = "vector")
+
+native_external_extension_modules(name = "vector")
+
+
+extension_member_payload(
+    name = "native_payload",
+    sql_name = "vector",
+    owner = extension_identity("vector"),
+    resources = ["@pgvector//:sql_resources"],
+    main_sql = "@pgvector//:sql/vector.sql",
+    server_module = ":vector_server_module",
+    embedded_module = ":vector_embedded_module",
+    construction_licenses = select({
+        "//build_defs/native:linux_x86_64_gnu_2_28": {
+            "@pgvector_compiler_rt//:LICENSE.TXT": "share/licenses/llvm-compiler-rt/LICENSE.TXT",
+            "@pgvector_compiler_rt//:SOURCE.json": "share/licenses/llvm-compiler-rt/SOURCE.json",
+        },
+        "//conditions:default": {},
+    }),
+)
+
+shipping_package(
+    name = "native_member",
+    owner = extension_identity("vector"),
+    artifacts = [":native_payload"],
+    suppliers = ":native_payload",
+    ecosystem = "internal",
+    package_name = "vector",
+    configuration = NATIVE_EXTENSION_CONFIGURATION,
+    role = "extension-member",
+)
+
+extension_member_validation_test(name = "native_payload_test", payload = ":native_payload", sql_name = "vector")
+
+source_quality_files()

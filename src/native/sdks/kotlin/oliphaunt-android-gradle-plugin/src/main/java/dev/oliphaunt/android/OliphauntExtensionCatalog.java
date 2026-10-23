@@ -92,7 +92,7 @@ final class OliphauntExtensionCatalog {
       }
     }
 
-    Map<OwnerBuilder, String> overrideValues = new LinkedHashMap<>();
+    Map<String, String> overrideValues = new LinkedHashMap<>();
     for (Map.Entry<String, String> override : overrides.entrySet()) {
       String releaseProduct = override.getKey().trim();
       String version = override.getValue().trim();
@@ -104,12 +104,12 @@ final class OliphauntExtensionCatalog {
                 + " does not identify a selected extension release owner");
       }
       validateVersion(version, "Oliphaunt extension release owner " + owner.entry.releaseProduct());
-      overrideValues.put(owner, version);
+      overrideValues.put(releaseProduct, version);
     }
 
     List<Owner> result = new ArrayList<>();
     for (OwnerBuilder builder : builders.values()) {
-      String version = overrideValues.get(builder);
+      String version = overrideValues.get(builder.entry.releaseProduct());
       if (version == null) {
         if (!builder.entry.runtimeBound()) {
           throw new GradleException(

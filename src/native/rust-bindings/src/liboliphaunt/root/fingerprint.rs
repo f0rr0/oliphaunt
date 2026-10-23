@@ -47,8 +47,14 @@ pub(super) fn fingerprint_named_extension_sql_files(
     state: &mut u64,
     source_share: &Path,
     sql_name: &str,
+    require_control: bool,
 ) -> Result<()> {
     let source_dir = source_share.join("extension");
+    if !require_control
+        && matches!(fs::metadata(&source_dir), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+    {
+        return Ok(());
+    }
     for entry in sorted_read_dir(&source_dir)? {
         let file_name = entry.file_name().to_string_lossy().into_owned();
         if extension_sql_file_belongs(sql_name, &file_name) {

@@ -1,0 +1,89 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load(":icu_sources.bzl", "ICU_COMMON_HEADERS", "ICU_COMMON_SOURCES", "ICU_I18N_HEADERS", "ICU_I18N_SOURCES", "ICU_STUBDATA_HEADERS", "ICU_STUBDATA_SOURCES")
+
+package(default_visibility = ["//visibility:public"])
+
+_WASIX = ["@platforms//cpu:wasm32", "@platforms//os:wasi"]
+_COPTS = ["-std=c++17", "-O2", "-g0", "-flto=thin", "-fvisibility=hidden", "-fvisibility-inlines-hidden"]
+
+# Match the WASIX files-data/static profile. The sysroot has POSIX headers but
+# no tzname symbol; ICU's undefined-platform default otherwise references it.
+cc_library(
+    name = "common_headers",
+    linkstatic = True,
+    hdrs = ICU_COMMON_HEADERS,
+    defines = ["U_STATIC_IMPLEMENTATION", "U_HAVE_TZNAME=0", "U_HAVE_TIMEZONE=0"],
+    includes = ["common"],
+    target_compatible_with = _WASIX,
+)
+
+cc_library(
+    name = "data_stub",
+    linkstatic = True,
+    srcs = ICU_STUBDATA_SOURCES,
+    hdrs = ICU_STUBDATA_HEADERS,
+    copts = _COPTS,
+    deps = [":common_headers"],
+    target_compatible_with = _WASIX,
+)
+
+cc_library(
+    name = "common",
+    linkstatic = True,
+    srcs = ICU_COMMON_SOURCES,
+    local_defines = ["U_COMMON_IMPLEMENTATION"],
+    copts = _COPTS,
+    deps = [":common_headers", ":data_stub"],
+    target_compatible_with = _WASIX,
+)
+
+cc_library(
+    name = "i18n_headers",
+    linkstatic = True,
+    hdrs = ICU_I18N_HEADERS,
+    includes = ["i18n"],
+    deps = [":common_headers"],
+    target_compatible_with = _WASIX,
+)
+
+cc_library(
+    name = "i18n",
+    linkstatic = True,
+    srcs = ICU_I18N_SOURCES,
+    local_defines = ["U_I18N_IMPLEMENTATION"],
+    copts = _COPTS,
+    deps = [":common", ":i18n_headers"],
+    target_compatible_with = _WASIX,
+)
+
+# Canonical frontend tools use a separate O2/no-LTO ICU closure: the pinned
+# WASIX LLVM has failed on their large libpq/ICU ThinLTO links. Headers and data
+# layout are shared; runtime and initdb retain the original release profile.
+_TOOLS_COPTS = [option for option in _COPTS if option != "-flto=thin"]
+cc_library(
+    name = "data_stub_tools",
+    linkstatic = True,
+    srcs = ICU_STUBDATA_SOURCES,
+    hdrs = ICU_STUBDATA_HEADERS,
+    copts = _TOOLS_COPTS,
+    deps = [":common_headers"],
+    target_compatible_with = _WASIX,
+)
+cc_library(
+    name = "common_tools",
+    linkstatic = True,
+    srcs = ICU_COMMON_SOURCES,
+    local_defines = ["U_COMMON_IMPLEMENTATION"],
+    copts = _TOOLS_COPTS,
+    deps = [":common_headers", ":data_stub_tools"],
+    target_compatible_with = _WASIX,
+)
+cc_library(
+    name = "i18n_tools",
+    linkstatic = True,
+    srcs = ICU_I18N_SOURCES,
+    local_defines = ["U_I18N_IMPLEMENTATION"],
+    copts = _TOOLS_COPTS,
+    deps = [":common_tools", ":i18n_headers"],
+    target_compatible_with = _WASIX,
+)

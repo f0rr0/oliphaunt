@@ -927,7 +927,7 @@ dependencies {
     // coordinate cannot win through another Gradle repository or cache.
     implementation files(kotlinSdkAar)
     // File dependencies have no Maven metadata; supply the Kotlin SDK's JNA runtime.
-    implementation "net.java.dev.jna:jna:5.14.0@aar"
+    implementation "net.java.dev.jna:jna:5.18.1@aar"
   } else {
     implementation kotlinSdkDependency
   }

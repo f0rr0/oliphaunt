@@ -1,6 +1,9 @@
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+$hostPolicyPath = Join-Path $PSScriptRoot "../../tools/dev/native-host-toolchains.json"
+$hostPolicy = (Get-Content -LiteralPath $hostPolicyPath -Raw | ConvertFrom-Json).windows
+
 function Fail([string] $Message) {
     throw "setup-msvc.ps1: $Message"
 }
@@ -82,7 +85,7 @@ $vswhereOutput = & $vswhere `
     -latest `
     -products '*' `
     -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
-    -version '[18.0,19.0)' `
+    -version "[$($hostPolicy.visual_studio_major).0,$($hostPolicy.visual_studio_major + 1).0)" `
     -format json `
     -utf8
 if ($LASTEXITCODE -ne 0) {
@@ -112,7 +115,7 @@ $installationVersion = ([string] $installationVersionProperty.Value).Trim()
 if (-not $installPath -or -not (Test-Path -LiteralPath $installPath -PathType Container)) {
     Fail "Visual Studio 18 installation path was not found at $installPath"
 }
-$null = Require-MajorVersion "installationVersion" $installationVersion 18
+$null = Require-MajorVersion "installationVersion" $installationVersion $hostPolicy.visual_studio_major
 
 $devShellLauncher = Join-Path $installPath "Common7\Tools\Launch-VsDevShell.ps1"
 if (-not (Test-Path -LiteralPath $devShellLauncher -PathType Leaf)) {
@@ -139,7 +142,7 @@ if (-not $env:VCToolsRedistDir) {
 if (-not $env:VSCMD_VER) {
     Fail "VSCMD_VER was not set by the Visual Studio developer shell"
 }
-$null = Require-MajorVersion "VSCMD_VER" $env:VSCMD_VER 18
+$null = Require-MajorVersion "VSCMD_VER" $env:VSCMD_VER $hostPolicy.visual_studio_major
 if ($env:VSCMD_ARG_HOST_ARCH -ne "x64" -or $env:VSCMD_ARG_TGT_ARCH -ne "x64") {
     Fail "developer shell architecture must be HostX64/x64; observed host '$($env:VSCMD_ARG_HOST_ARCH)' target '$($env:VSCMD_ARG_TGT_ARCH)'"
 }
@@ -147,17 +150,17 @@ if (-not $env:VCToolsVersion) {
     Fail "VCToolsVersion was not set by the Visual Studio developer shell"
 }
 $vcToolsVersion = $env:VCToolsVersion.Trim().TrimEnd('\')
-$vcToolsVersionInfo = Require-MajorVersion "VCToolsVersion" $vcToolsVersion 14
-if ($vcToolsVersionInfo.Minor -lt 50 -or $vcToolsVersionInfo.Minor -ge 60) {
+$vcToolsVersionInfo = Require-MajorVersion "VCToolsVersion" $vcToolsVersion $hostPolicy.vc_toolset_major
+if ($vcToolsVersionInfo.Minor -lt $hostPolicy.vc_toolset_minor_min -or $vcToolsVersionInfo.Minor -ge $hostPolicy.vc_toolset_minor_max_exclusive) {
     Fail "VCToolsVersion '$vcToolsVersion' is not the Visual Studio 2026 VC145 toolset family"
 }
 if (-not $env:WindowsSDKVersion) {
     Fail "WindowsSDKVersion was not set by the Visual Studio developer shell"
 }
 $windowsSdkVersion = $env:WindowsSDKVersion.Trim().TrimEnd('\')
-$null = Require-MajorVersion "WindowsSDKVersion" $windowsSdkVersion 10
+$null = Require-MajorVersion "WindowsSDKVersion" $windowsSdkVersion $hostPolicy.windows_sdk_major
 
-$vcRuntimeDir = Join-Path $env:VCToolsRedistDir "x64\Microsoft.VC145.CRT"
+$vcRuntimeDir = Join-Path $env:VCToolsRedistDir "x64\Microsoft.$($hostPolicy.crt_family).CRT"
 if (-not (Test-Path -LiteralPath $vcRuntimeDir -PathType Container)) {
     Fail "the exact x64 Microsoft.VC145.CRT redistributable directory was not found at $vcRuntimeDir"
 }

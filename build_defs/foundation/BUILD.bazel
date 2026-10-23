@@ -1,0 +1,74 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load(":bun.bzl", "bun_binary", "bun_source_output", "bun_test", "bun_toolchain_test")
+load(":native-entry-test.bzl", "native_entry_test")
+
+package(default_visibility = ["//visibility:public"])
+
+toolchain_type(name = "bun_toolchain_type")
+bun_toolchain_test(name = "bun_toolchain_test", size = "small")
+
+bun_binary(
+    name = "native_entry_generator",
+    entry_point = "native-entry-generator.mts",
+    data = ["native-entry-helper.mts"],
+)
+
+bun_source_output(
+    name = "native_entry_fixture",
+    source = "native-entry-fixture.txt",
+    tool = ":native_entry_generator",
+    out = "native-entry-fixture.json",
+)
+
+native_entry_test(
+    name = "native_entry_test",
+    source = "native-entry-fixture.txt",
+    generated = ":native_entry_fixture",
+    args = ["forwarded"],
+    size = "small",
+)
+
+bun_test(
+    name = "toolchain_metadata_test",
+    size = "small",
+    entry_point = "toolchain-metadata.test.mts",
+    data = ["toolchain-metadata.mts", "//tools/release:platform-compatibility-policy.mts", "//build_defs/host:deployment-policy.mts"],
+)
+
+exports_files([
+    "bun.bzl",
+    "bun-sources.bzl",
+    "bun-test-entrypoint.mts.tpl",
+    "bun-toolchain.bzl",
+    "bun-toolchain-test.mts",
+    "extensions.bzl",
+    "repositories.bzl",
+    "toolchain-metadata.mts",
+])
+
+platform(
+    name = "linux_x86_64",
+    constraint_values = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+platform(
+    name = "linux_aarch64",
+    constraint_values = ["@platforms//os:linux", "@platforms//cpu:aarch64"],
+)
+
+platform(
+    name = "macos_x86_64",
+    constraint_values = ["@platforms//os:macos", "@platforms//cpu:x86_64"],
+)
+
+platform(
+    name = "macos_aarch64",
+    constraint_values = ["@platforms//os:macos", "@platforms//cpu:aarch64"],
+)
+
+platform(
+    name = "windows_x86_64",
+    constraint_values = ["@platforms//os:windows", "@platforms//cpu:x86_64"],
+)
+
+source_quality_files()

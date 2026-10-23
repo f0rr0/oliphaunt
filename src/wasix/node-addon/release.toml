@@ -10,7 +10,6 @@ registry_packages = [
 ]
 release_artifacts = ["node-api-prebuilds", "npm-optional-platform-packages"]
 embedded_cargo_manifests = ["src/wasix/node-addon/Cargo.toml"]
-embedded_payload_products = ["liboliphaunt-wasix", "postgres-tools-wasix", "database-resources"]
 
 [compatibility_versions.oliphaunt-wasix-napi-runtime]
 public_support = false
@@ -47,3 +46,12 @@ public_support = false
 source_product = "oliphaunt-wasix-rust"
 path = "src/wasix/node-addon/package.json"
 parser = "json:oliphaunt.rustBindingVersion"
+
+[artifact_targets]
+preset = "wasix-napi-addon"
+targets = [
+  "linux-arm64-gnu",
+  "linux-x64-gnu",
+  "macos-arm64",
+  "windows-x64-msvc",
+]

@@ -8,4 +8,4 @@ homepage.workspace = true
 license.workspace = true
 description = "PostgreSQL query encoding, result decoding and shared types for Oliphaunt SDKs."
 readme = "README.md"
-exclude = ["moon.yml", "release.toml"]
+exclude = ["BUILD.bazel", "moon.yml", "release.toml"]

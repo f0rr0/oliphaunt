@@ -1828,28 +1828,6 @@ private final class ChunkBox: @unchecked Sendable {
     }
 }
 
-actor AsyncStringSignal {
-    private var result: String?
-    private var waiters: [CheckedContinuation<String, Never>] = []
-
-    func complete(_ value: String) {
-        guard result == nil else { return }
-        result = value
-        let current = waiters
-        waiters.removeAll()
-        current.forEach { $0.resume(returning: value) }
-    }
-
-    func wait() async -> String {
-        if let result { return result }
-        return await withCheckedContinuation { continuation in
-            waiters.append(continuation)
-        }
-    }
-
-    func current() -> String? { result }
-}
-
 private struct UppercaseText: Equatable, Sendable, OliphauntPostgresDecodable {
     let value: String
 
@@ -1889,12 +1867,18 @@ private func requireRowsStatement(
 private func captureProtocolStreamCallback(
     _ chunk: Data,
     onChunk: @escaping @Sendable (Data) throws -> Void
-) -> OliphauntProtocolStreamOutcome {
-    do {
-        try onChunk(chunk)
-        return .complete
-    } catch {
-        return .callbackAborted(error)
+) async -> OliphauntProtocolStreamOutcome {
+    // Native callbacks arrive on foreign threads. Keep synchronous callback
+    // waits off Swift's cooperative executor in the session doubles as well.
+    await withCheckedContinuation { continuation in
+        Thread.detachNewThread {
+            do {
+                try onChunk(chunk)
+                continuation.resume(returning: .complete)
+            } catch {
+                continuation.resume(returning: .callbackAborted(error))
+            }
+        }
     }
 }
 
@@ -2022,7 +2006,7 @@ private actor TestSession: OliphauntSession {
         _ bytes: Data,
         onChunk: @escaping @Sendable (Data) throws -> Void
     ) async throws -> OliphauntProtocolStreamOutcome {
-        let outcome = captureProtocolStreamCallback(try await execProtocolRaw(bytes), onChunk: onChunk)
+        let outcome = await captureProtocolStreamCallback(try await execProtocolRaw(bytes), onChunk: onChunk)
         if failStreamAfterCallback {
             throw OliphauntError.engine("stream recovery failed")
         }
@@ -2142,7 +2126,7 @@ private actor AdmissionOrderSession: OliphauntSession {
         _ bytes: Data,
         onChunk: @escaping @Sendable (Data) throws -> Void
     ) async throws -> OliphauntProtocolStreamOutcome {
-        captureProtocolStreamCallback(try await execProtocolRaw(bytes), onChunk: onChunk)
+        await captureProtocolStreamCallback(try await execProtocolRaw(bytes), onChunk: onChunk)
     }
 
     func backup() async throws -> Data { Data() }
@@ -2252,7 +2236,7 @@ private actor SettlementBlockingSession: OliphauntSession {
         _ bytes: Data,
         onChunk: @escaping @Sendable (Data) throws -> Void
     ) async throws -> OliphauntProtocolStreamOutcome {
-        captureProtocolStreamCallback(try await execProtocolRaw(bytes), onChunk: onChunk)
+        await captureProtocolStreamCallback(try await execProtocolRaw(bytes), onChunk: onChunk)
     }
 
     func backup() async throws -> Data { Data() }

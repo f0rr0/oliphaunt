@@ -13,7 +13,7 @@ DO $$
 DECLARE n int;
 BEGIN
   SELECT count(*) INTO n FROM oliphaunt_ivm_summary;
-  IF n <> 2 THEN RAISE EXCEPTION 'pg_ivm count failed: %', n; END IF;
+  IF n IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'pg_ivm count failed: %', n; END IF;
   UPDATE oliphaunt_ivm_orders SET amount = 11 WHERE id = 1;
   SELECT amount INTO n FROM oliphaunt_ivm_summary WHERE id = 1;
   IF n IS DISTINCT FROM 11 THEN RAISE EXCEPTION 'pg_ivm maintenance failed: %', n; END IF;

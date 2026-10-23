@@ -1,0 +1,89 @@
+{
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "bugs": {
+    "url": "https://github.com/f0rr0/oliphaunt/issues"
+  },
+  "dist": {
+    "shasum": "ffb866b389c2eecf6b07270e5572e9cbd2312a65",
+    "tarball": "https://registry.npmjs.org/@oliphaunt/liboliphaunt-win32-x64-msvc/-/liboliphaunt-win32-x64-msvc-0.3.2.tgz",
+    "fileCount": 816,
+    "integrity": "sha512-Eu3jaLvolQErjdN6Z3ddahDYBsukmpxjAXjfxYDxFI42QevT1pLoEt2UkuXYc0zJRQN1P2pxhH+pBbe0GD15WA==",
+    "signatures": [
+      {
+        "sig": "MEQCIGniIvM+XMvJuliphkPFFWFZUBsUSrBwxEa54GdEjdrfAiBMVAiXAmsz6cSczVw5zqmUbM+roxKAcu8kmtYEPPa17A==",
+        "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+      },
+      {
+        "sig": "MEUCICvRhgv8gR8w7JxyeQdR6U8yDBmywW7rtVylAYPVAadTAiEAgCAbX+TNcdfsz3HiCasGBq2w0IrZVdcdyT+ECInbabU=",
+        "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+      }
+    ],
+    "attestations": {
+      "url": "https://registry.npmjs.org/-/npm/v1/attestations/@oliphaunt%2fliboliphaunt-win32-x64-msvc@0.3.2",
+      "provenance": {
+        "predicateType": "https://slsa.dev/provenance/v1"
+      }
+    },
+    "unpackedSize": 64615340
+  },
+  "name": "@oliphaunt/liboliphaunt-win32-x64-msvc",
+  "type": "module",
+  "_from": "file:/home/runner/work/oliphaunt/oliphaunt/target/release/npm-packages/oliphaunt-liboliphaunt-win32-x64-msvc/oliphaunt-liboliphaunt-win32-x64-msvc-0.3.2.tgz",
+  "exports": {
+    "./package.json": "./package.json"
+  },
+  "license": "MIT AND PostgreSQL AND Unicode-3.0",
+  "_npmUser": {
+    "name": "GitHub Actions",
+    "email": "npm-oidc-no-reply@github.com",
+    "trustedPublisher": {
+      "id": "github",
+      "oidcConfigId": "5bf3b6d1-57a9-4a1e-8d22-a82682714810"
+    }
+  },
+  "homepage": "https://github.com/f0rr0/oliphaunt#readme",
+  "optional": true,
+  "_resolved": "/home/runner/work/oliphaunt/oliphaunt/target/release/npm-packages/oliphaunt-liboliphaunt-win32-x64-msvc/oliphaunt-liboliphaunt-win32-x64-msvc-0.3.2.tgz",
+  "oliphaunt": {
+    "target": "windows-x64-msvc",
+    "libraryRelativePath": "bin/oliphaunt.dll",
+    "runtimeRelativePath": "runtime"
+  },
+  "_integrity": "sha512-Eu3jaLvolQErjdN6Z3ddahDYBsukmpxjAXjfxYDxFI42QevT1pLoEt2UkuXYc0zJRQN1P2pxhH+pBbe0GD15WA==",
+  "repository": {
+    "url": "git+https://github.com/f0rr0/oliphaunt.git",
+    "type": "git",
+    "directory": "src/native/runtime/packages/win32-x64-msvc"
+  },
+  "_npmVersion": "11.18.0",
+  "description": "Windows x64 MSVC liboliphaunt native library for Oliphaunt.",
+  "directories": {},
+  "maintainers": [
+    {
+      "name": "oliphaunt",
+      "email": "sids.outlook.email@gmail.com"
+    }
+  ],
+  "_nodeVersion": "22.22.3",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "executableFiles": [
+      "./runtime/bin/initdb.exe",
+      "./runtime/bin/pg_ctl.exe",
+      "./runtime/bin/postgres.exe"
+    ]
+  },
+  "_hasShrinkwrap": false,
+  "_npmOperationalInternal": {
+    "tmp": "tmp/liboliphaunt-win32-x64-msvc_0.3.2_1791360538939_0.29245279241943734",
+    "host": "s3://npm-registry-packages-npm-production"
+  },
+  "_id": "@oliphaunt/liboliphaunt-win32-x64-msvc@0.3.2",
+  "version": "0.3.2"
+}

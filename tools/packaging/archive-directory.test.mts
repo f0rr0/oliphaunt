@@ -17,6 +17,46 @@ import test from 'node:test';
 import { gunzipSync, zstdDecompressSync } from 'node:zlib';
 
 import { archiveDirectory } from './archive-directory.mts';
+import { readPortableArchiveEntries } from './portable-archive.mts';
+
+test('declared member modes survive host permission differences and reject invalid mappings', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'oliphaunt-archive-modes-'));
+  try {
+    const source = path.join(root, 'source');
+    mkdirSync(source);
+    writeFileSync(path.join(source, 'executable'), 'payload\n', { mode: 0o644 });
+    const options = { keepParent: true, modes: { 'source/executable': 0o755 } };
+    for (const suffix of ['tar.gz', 'zip']) {
+      const first = path.join(root, `first.${suffix}`);
+      const second = path.join(root, `second.${suffix}`);
+      await archiveDirectory(source, first, options);
+      assert.equal(readPortableArchiveEntries(first).get('source/executable').mode & 0o777, 0o755);
+      chmodSync(path.join(source, 'executable'), 0o755);
+      await archiveDirectory(source, second, options);
+      assert.equal(digest(first), digest(second));
+      chmodSync(path.join(source, 'executable'), 0o644);
+    }
+    for (const modes of [
+      { 'source/missing': 0o755 },
+      { source: 0o644 },
+      { 'source/executable': 0o777 },
+    ]) {
+      await assert.rejects(
+        archiveDirectory(source, path.join(root, 'invalid.tar.gz'), { keepParent: true, modes }),
+        /existing regular member and mode 0644 or 0755/,
+      );
+    }
+    // A filename can match Object.prototype; it is not a declared permission.
+    writeFileSync(path.join(source, 'toString'), 'ordinary member\n', { mode: 0o644 });
+    for (const suffix of ['tar.gz', 'zip']) {
+      const output = path.join(root, `ordinary.${suffix}`);
+      await archiveDirectory(source, output);
+      assert.equal(readPortableArchiveEntries(output).get('toString').mode & 0o777, 0o644);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 function tarString(buffer, offset, length) {
   const end = buffer.indexOf(0, offset);

@@ -13,6 +13,16 @@ test('compatible independent products pass without coupling their packaging vers
   ).not.toThrow();
 });
 
+test('consumer admission rejects missing supplier coverage before reading published requirements', () => {
+  const state = fixture();
+  for (const buildBound of [undefined, new Map(), new Map([['foreign', new Set()]])]) {
+    expect(() =>
+      validateReleaseConsumerCompatibility(['oliphaunt-wasix-ts'], { ...state, buildBound }),
+    ).toThrow('buildBound');
+    expect(state.reads).toEqual([]);
+  }
+});
+
 test('source qualification cannot substitute a newer workspace addon for a published carrier', () => {
   const state = fixture();
   state.published['oliphaunt-wasix-napi']['liboliphaunt-wasix'] = '0.3.0';
@@ -135,9 +145,8 @@ test('compiled SDK sources follow the binary closure while installed addon consu
   expect(() => validateReleaseConsumerCompatibility(selected, state)).toThrow(
     'oliphaunt-wasix-napi targets liboliphaunt-wasix@0.3.2',
   );
-  const buildBound = new Map([
-    ['oliphaunt-wasix-napi', new Set(['oliphaunt-wasix-rust', 'liboliphaunt-wasix'])],
-  ]);
+  const buildBound = new Map(Object.keys(state.products).map((id) => [id, new Set<string>()]));
+  buildBound.set('oliphaunt-wasix-napi', new Set(['oliphaunt-wasix-rust', 'liboliphaunt-wasix']));
   expect(() =>
     validateReleaseConsumerCompatibility(selected, { ...state, buildBound }),
   ).not.toThrow();

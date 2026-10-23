@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { loadPublicationCatalog } from './publication-catalog.mts';
 import { extensionSqlNames } from './release-artifact-targets.mts';
-import { buildPlan, loadGraph } from './release-graph.mts';
 import { normalPublicationPlan } from './normal-publication-plan.mts';
+import { projectInternalDependencyIds } from './publication-lock.mts';
 
 function carrier({ id, product, publishOrder, dependencies = [] }) {
   const separator = id.indexOf(':');
@@ -24,10 +24,7 @@ function lock(carriers) {
   };
 }
 
-function realSelection(changedFile) {
-  const graph = loadGraph('normal-publication-plan.test');
-  const release = buildPlan(graph, [changedFile], 'normal-publication-plan.test');
-  const publicationProducts = release.releaseProducts;
+function selectedCatalog(publicationProducts) {
   const catalog = loadPublicationCatalog('normal-publication-plan.test', {
     products: publicationProducts,
   });
@@ -40,34 +37,18 @@ function realSelection(changedFile) {
     })),
   };
   return {
-    release,
     catalog,
     topology: normalPublicationPlan(frozen, publicationProducts),
   };
 }
 
 describe('normal publication plan', () => {
-  test('SDK documentation does not select releases while source and explicit inputs do', () => {
-    const graph = loadGraph('normal-publication-plan.test');
-    const files = [
-      'src/native/sdks/rust/README.md',
-      'src/native/sdks/ts/README.md',
-      'src/native/sdks/swift/README.md',
-      'src/native/sdks/kotlin/README.md',
-      'src/native/sdks/react-native/README.md',
-      'src/wasix/sdks/ts/README.md',
-      'src/wasix/sdks/rust/README.md',
-      'src/native/sdks/rust/docs/guide.mdx',
-    ];
-    expect(buildPlan(graph, files).releaseProducts).toEqual([]);
-    expect(buildPlan(graph, [...files, 'src/native/sdks/rust/src/lib.rs']).releaseProducts).toEqual(
-      ['oliphaunt-kotlin', 'oliphaunt-rust', 'oliphaunt-swift'],
-    );
-    const explicit = {
-      ...graph,
-      shared_release_sources: [{ files: [files[0]], products: ['oliphaunt-rust'] }],
-    };
-    expect(buildPlan(explicit, files).releaseProducts).toEqual(['oliphaunt-rust']);
+  test('the explicit SDK scope publishes its own carriers without expanding consumer owners', () => {
+    const { catalog, topology } = selectedCatalog(['oliphaunt-rust']);
+    expect(catalog.products.map(({ id }) => id)).toEqual(['oliphaunt-rust']);
+    expect(catalog.carriers.length).toBeGreaterThan(0);
+    expect(catalog.carriers.every(({ product }) => product === 'oliphaunt-rust')).toBe(true);
+    expect(topology.carrierCount).toBe(catalog.carriers.length);
   });
 
   test('executes exact frozen carriers in lock-derived dependency order', () => {
@@ -191,18 +172,55 @@ describe('normal publication plan', () => {
     expect(() => normalPublicationPlan(value, ['a', 'b'])).toThrow(/dependency cycle/u);
   });
 
-  test('real release selections include exact embedded consumers without unrelated products', () => {
-    const external = realSelection('src/extensions/external/vector/CHANGELOG.md');
-    expect(external.release.directProducts).toEqual(['oliphaunt-extension-vector']);
-    expect(external.release.releaseProducts).toEqual(['oliphaunt-extension-vector']);
-    expect(external.catalog.products.map(({ id }) => id)).toEqual(external.release.releaseProducts);
+  test('orders actual packages when current cross-ecosystem relations form a product cycle', () => {
+    const rows = [
+      carrier({ id: 'npm:tools', product: 'tools', publishOrder: 0 }),
+      carrier({ id: 'cargo:sdk', product: 'sdk', publishOrder: 1 }),
+      carrier({ id: 'npm:sdk', product: 'sdk', publishOrder: 2 }),
+      carrier({ id: 'cargo:tools', product: 'tools', publishOrder: 3 }),
+    ];
+    const requirements = {
+      'npm:tools': [{ ecosystem: 'npm', name: 'sdk', requirement: '1.0.0', scope: 'runtime' }],
+      'cargo:sdk': [{ ecosystem: 'cargo', name: 'tools', requirement: '=1.0.0', scope: 'build' }],
+    };
+    for (const row of rows) {
+      row.dependencies = projectInternalDependencyIds(rows, requirements[row.id] ?? []);
+    }
+    expect(
+      normalPublicationPlan(lock(rows), ['sdk', 'tools']).operations.map(
+        ({ carrierId }) => carrierId,
+      ),
+    ).toEqual(['npm:sdk', 'npm:tools', 'cargo:tools', 'cargo:sdk']);
+  });
+
+  test('a held package requirement does not depend on a newly selected same-name carrier', () => {
+    const rows = [
+      carrier({ id: 'npm:tools', product: 'tools', publishOrder: 0 }),
+      carrier({ id: 'npm:sdk', product: 'sdk', publishOrder: 1 }),
+    ];
+    const requirements = {
+      'npm:tools': [{ ecosystem: 'npm', name: 'sdk', requirement: '1.0.0', scope: 'runtime' }],
+      'npm:sdk': [{ ecosystem: 'npm', name: 'tools', requirement: '0.2.4', scope: 'optional' }],
+    };
+    const project = () => {
+      for (const row of rows)
+        row.dependencies = projectInternalDependencyIds(rows, requirements[row.id]);
+      return normalPublicationPlan(lock(rows), ['sdk', 'tools']);
+    };
+    expect(project().operations.map(({ carrierId }) => carrierId)).toEqual([
+      'npm:sdk',
+      'npm:tools',
+    ]);
+    requirements['npm:sdk'][0].requirement = '1.0.0';
+    expect(project).toThrow(/publication unit dependency cycle/u);
+  });
+
+  test('canonical selected owners retain their shared carriers and exact publication scope', () => {
+    const external = selectedCatalog(['oliphaunt-extension-vector']);
+    expect(external.catalog.products.map(({ id }) => id)).toEqual(['oliphaunt-extension-vector']);
     expect(external.topology.carrierCount).toBe(external.catalog.carriers.length);
 
-    const runtime = realSelection('src/native/runtime/CHANGELOG.md');
-    expect(runtime.release.directProducts).toEqual(['liboliphaunt-native']);
-    expect(runtime.release.releaseProducts).toContain('liboliphaunt-native');
-    expect(runtime.release.releaseProducts).not.toContain('liboliphaunt-wasix');
-    expect(runtime.release.releaseProducts).not.toContain('oliphaunt-extension-contrib-pg18');
+    const runtime = selectedCatalog(['liboliphaunt-native']);
     expect(
       extensionSqlNames('oliphaunt-extension-contrib-pg18', 'normal-publication-plan.test'),
     ).toContain('amcheck');
@@ -211,37 +229,35 @@ describe('normal publication plan', () => {
     );
     expect(contribCarriers.length).toBeGreaterThan(0);
     expect(contribCarriers.every(({ product }) => product === 'liboliphaunt-native')).toBe(true);
-    expect(runtime.release.releaseProducts).not.toContain('oliphaunt-extension-vector');
-    expect(runtime.release.releaseProducts).toEqual(['liboliphaunt-native']);
-    expect(runtime.catalog.products.map(({ id }) => id)).toEqual(runtime.release.releaseProducts);
+    expect(runtime.catalog.products.map(({ id }) => id)).toEqual(['liboliphaunt-native']);
     expect(runtime.topology.carrierCount).toBe(runtime.catalog.carriers.length);
 
-    const contrib = realSelection('src/extensions/contrib/postgres18.toml');
-    expect(contrib.release.directProducts).toEqual([
+    const contrib = selectedCatalog(['liboliphaunt-native', 'liboliphaunt-wasix']);
+    expect(contrib.catalog.products.map(({ id }) => id)).toEqual([
       'liboliphaunt-native',
       'liboliphaunt-wasix',
-      'oliphaunt-wasix-napi',
     ]);
-    expect(contrib.release.releaseProducts).toEqual([
-      'liboliphaunt-native',
-      'liboliphaunt-wasix',
+    expect(
+      [
+        ...new Set(
+          contrib.catalog.carriers
+            .filter(({ name }) => name.includes('extension-contrib-pg18'))
+            .map(({ product }) => product),
+        ),
+      ].sort(),
+    ).toEqual(['liboliphaunt-native', 'liboliphaunt-wasix']);
+
+    const icu = selectedCatalog(['database-resources']);
+    expect(icu.catalog.products.map(({ id }) => id)).toEqual(['database-resources']);
+
+    const pgwire = selectedCatalog(['oliphaunt-pgwire-server', 'oliphaunt-wasix-napi']);
+    expect(pgwire.catalog.products.map(({ id }) => id)).toEqual([
+      'oliphaunt-pgwire-server',
       'oliphaunt-wasix-napi',
     ]);
 
-    const icu = realSelection('src/database-resources/icu/cargo/src/lib.rs');
-    expect(icu.release.directProducts.sort()).toEqual([
-      'database-resources',
-      'oliphaunt-wasix-napi',
-    ]);
-    expect(icu.release.releaseProducts.sort()).toEqual([
-      'database-resources',
-      'oliphaunt-wasix-napi',
-    ]);
-
-    const sdk = realSelection('src/native/sdks/react-native/CHANGELOG.md');
-    expect(sdk.release.directProducts).toEqual(['oliphaunt-react-native']);
-    expect(sdk.release.releaseProducts).toEqual(['oliphaunt-react-native']);
-    expect(sdk.catalog.products.map(({ id }) => id)).toEqual(sdk.release.releaseProducts);
+    const sdk = selectedCatalog(['oliphaunt-react-native']);
+    expect(sdk.catalog.products.map(({ id }) => id)).toEqual(['oliphaunt-react-native']);
     expect(sdk.topology.carrierCount).toBe(sdk.catalog.carriers.length);
   });
 });

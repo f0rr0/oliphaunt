@@ -23,7 +23,7 @@ test.after(() => rmSync(fixture, { force: true, recursive: true }));
 
 function report(extensionCount) {
   return {
-    schema: 'oliphaunt-expo-smoke-pass-v4',
+    schema: 'oliphaunt-expo-smoke-pass-v5',
     runner: 'smoke',
     platform: 'android',
     extensionCount,
@@ -33,11 +33,17 @@ function report(extensionCount) {
     extensionCatalogSha256: catalogSha256,
     catalogProfile: 'standard',
     icuRuntimeProof: false,
+    lifecycleResume: false,
   };
 }
 
-function extensionReceipt(selectedExtensions, extensionCount) {
-  writeFileSync(reportFile, JSON.stringify(report(extensionCount)));
+function extensionReceipt(
+  selectedExtensions,
+  extensionCount,
+  overrides = {},
+  expectedLifecycle = '0',
+) {
+  writeFileSync(reportFile, JSON.stringify({ ...report(extensionCount), ...overrides }));
   return spawnSync(
     process.execPath,
     [
@@ -45,7 +51,7 @@ function extensionReceipt(selectedExtensions, extensionCount) {
       'extension-receipt',
       reportFile,
       metadataFile,
-      'android',
+      (overrides as any).platform ?? 'android',
       'a'.repeat(40),
       'b'.repeat(40),
       selectedExtensions,
@@ -56,6 +62,7 @@ function extensionReceipt(selectedExtensions, extensionCount) {
         ...process.env,
         OLIPHAUNT_MOBILE_E2E_EXPECT_ICU: '0',
         OLIPHAUNT_MOBILE_E2E_EXPECT_CATALOG_PROFILE: 'standard',
+        OLIPHAUNT_MOBILE_E2E_EXPECT_LIFECYCLE: expectedLifecycle,
       },
     },
   );
@@ -77,4 +84,23 @@ test('rejects unknown, duplicate, and mismatched extension selections', () => {
   assert.notEqual(extensionReceipt('unknown', 1).status, 0);
   assert.notEqual(extensionReceipt('vector,vector', 2).status, 0);
   assert.notEqual(extensionReceipt('vector', 0).status, 0);
+});
+
+test('required lifecycle qualification rejects ordinary, old and missing PASS proofs on both platforms', () => {
+  for (const platform of ['android', 'ios']) {
+    const valid = extensionReceipt('vector', 1, { platform, lifecycleResume: true }, '1');
+    assert.equal(valid.status, 0, valid.stderr);
+    assert.equal(JSON.parse(valid.stdout).lifecycleResume, true);
+    for (const overrides of [
+      { lifecycleResume: false },
+      { lifecycleResume: undefined },
+      { lifecycleResume: 'true' },
+      { schema: 'oliphaunt-expo-smoke-pass-v4', lifecycleResume: true },
+    ])
+      assert.notEqual(extensionReceipt('vector', 1, { platform, ...overrides }, '1').status, 0);
+    assert.notEqual(extensionReceipt('vector', 1, { platform }, 'invalid').status, 0);
+    const ordinary = extensionReceipt('vector', 1, { platform, lifecycleResume: false }, '0');
+    assert.equal(ordinary.status, 0, ordinary.stderr);
+    assert.equal(JSON.parse(ordinary.stdout).lifecycleResume, false);
+  }
 });

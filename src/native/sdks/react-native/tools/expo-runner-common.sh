@@ -74,7 +74,7 @@ need_cmd() {
 # The app owns SDK assertions. Read only the continuous capture started for this
 # launch, and reject failures/dead processes before accepting its receipt.
 mobile_log_has_failure() {
-  grep -Eq "$failure_tag|Fatal error|FATAL EXCEPTION|terminating with uncaught exception" "$1"
+  grep -Eq "$failure_tag|Fatal error|FATAL EXCEPTION|Unhandled JS Exception:|terminating with uncaught exception" "$1"
 }
 
 wait_for_mobile_receipt() {

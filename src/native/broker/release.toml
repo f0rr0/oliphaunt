@@ -27,3 +27,12 @@ public_support = false
 source_product = "oliphaunt-query"
 path = "src/native/broker/Cargo.toml"
 parser = "toml:dependencies.oliphaunt-query.version"
+
+[artifact_targets]
+preset = "broker-helper"
+targets = [
+  "linux-arm64-gnu",
+  "linux-x64-gnu",
+  "macos-arm64",
+  "windows-x64-msvc",
+]

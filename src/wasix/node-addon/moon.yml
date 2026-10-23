@@ -22,18 +22,19 @@ project:
   release:
     component: "oliphaunt-wasix-napi"
     packagePath: "src/wasix/node-addon"
-    artifactTargets:
-      preset: "wasix-napi-addon"
-      targets:
-        - "linux-arm64-gnu"
-        - "linux-x64-gnu"
-        - "macos-arm64"
-        - "windows-x64-msvc"
 
 owners:
   defaultOwner: "@oliphaunt/wasix-napi"
 
+workspace:
+  mergeStrategies:
+    fileGroups: replace
+
 fileGroups:
+  cargo-workspace:
+    - "/src/wasix/node-addon/Cargo.lock"
+    - "/src/wasix/node-addon/Cargo.toml"
+    - "/rust-toolchain.toml"
   code:
     - "**/*"
     - "!**/*.md"
@@ -72,7 +73,7 @@ tasks:
     tags: ["quality", "unit", "requires-rust"]
     script: |
       set -e
-      bash ../../../tools/dev/bun.sh test --cwd src/wasix/node-addon ./tools/detect-linux-libc.test.mts ./tools/package-contract.test.mts ../../../tools/packaging/local-npm-tarball.test.mts
+      bash ../../../tools/dev/bun.sh test --cwd src/wasix/node-addon ./tools/detect-linux-libc.test.mts ./tools/package-contract.test.mts ./tools/workspace-runtime-contract.test.mts ../../../tools/packaging/local-npm-tarball.test.mts
       bash tools/package-platform.test.sh
       cargo test --manifest-path Cargo.toml --locked --no-default-features --features extensions,test-noop --lib
     env:
@@ -89,7 +90,7 @@ tasks:
 
   rust-format-check:
     tags: ["quality", "static", "format", "requires-rust"]
-    command: "cargo fmt -p oliphaunt-wasix-napi --check"
+    command: "cargo fmt --manifest-path src/wasix/node-addon/Cargo.toml -p oliphaunt-wasix-napi --check"
     inputs: ["/src/wasix/node-addon/**/*.rs","/src/wasix/node-addon/Cargo.toml","/clippy.toml","@group(cargo-workspace)"]
     options:
       runFromWorkspaceRoot: true
@@ -98,7 +99,7 @@ tasks:
       - target: cargo-sources
         cacheStrategy: hash
     tags: ["quality", "static", "requires-rust"]
-    command: "cargo clippy -p oliphaunt-wasix-napi --all-targets --locked -- -D warnings"
+    command: "cargo clippy --manifest-path src/wasix/node-addon/Cargo.toml -p oliphaunt-wasix-napi --all-targets --locked -- -D warnings"
     env:
       CARGO_TARGET_DIR: "target"
     inputs: ["/src/wasix/node-addon/**/*.rs","/src/wasix/node-addon/Cargo.toml","/clippy.toml","@group(cargo-workspace)"]

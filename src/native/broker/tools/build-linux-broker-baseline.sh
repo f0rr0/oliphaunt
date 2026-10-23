@@ -142,7 +142,7 @@ if ! CARGO_NET_OFFLINE=true docker_cargo none cargo fetch --locked --offline; th
 fi
 
 CARGO_NET_OFFLINE=true docker_cargo none \
-  cargo build -p oliphaunt-broker --release --locked --offline
+  cargo build --manifest-path src/native/broker/Cargo.toml --release --locked --offline
 
 broker="$target_dir/release/oliphaunt-broker"
 [ -x "$broker" ] || fail "sealed build did not produce $broker"

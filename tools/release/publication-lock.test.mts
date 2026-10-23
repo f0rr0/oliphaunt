@@ -5,6 +5,7 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   unlinkSync,
@@ -13,20 +14,21 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import { gunzipSync } from 'node:zlib';
-import {
-  extensionCarrierLegalContract,
-  stageExtensionUpstreamLicenses,
-} from '../../src/extensions/tools/extension-upstream-licenses.mts';
+import { composeExtensionReleaseDocuments } from '../../src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts';
+import { bundleCarrierAssets } from '../../src/extensions/artifacts/packages/tools/bundle-carrier-assets.mts';
+import { projectNativeRuntimeAssetMember } from '../../src/extensions/artifacts/packages/tools/extension-runtime-asset-contract.mts';
+import { nativeExtensionConstructionLicenseInventory } from '../../src/extensions/tools/extension-upstream-licenses.mts';
+import { iosBaseLegalMetadata } from '../../src/native/sdks/swift/tools/ios-carrier-manifest.mts';
 import { extensionDependencyRequirement } from '../../src/wasix/runtime/tools/package_liboliphaunt_wasix_cargo_artifacts.mts';
-import {
-  buildSwiftExtensionCarrierManifest,
-  iosBaseLegalMetadata,
-  swiftExtensionCarrierAssetName,
-} from '../../src/native/sdks/swift/tools/ios-carrier-manifest.mts';
 import { createDeterministicTar } from '../packaging/cargo-source-package.mts';
 import { releaseJavaScript } from '../packaging/emit-javascript.mts';
-import { canonicalGzipSync } from '../packaging/portable-archive.mts';
-import { stageReleaseNotices } from '../packaging/release-notices.mts';
+import { canonicalGzipSync, readPortableArchiveEntries } from '../packaging/portable-archive.mts';
+import {
+  extensionGithubArtifactInputs,
+  loadReleaseMetadata,
+  nativePublicationInputProjection,
+  nativeSupplierGithubArtifactDeclarations,
+} from './bazel-release-metadata.mts';
 import { loadPublicationCatalog, resolveActualCarrier } from './publication-catalog.mts';
 import {
   assertLockedArtifactSet,
@@ -36,6 +38,8 @@ import {
   buildPublicationCandidate,
   discoverProductArtifacts,
   discoverPublicationArtifacts,
+  expectedExtensionGithubReleaseAssetRows,
+  expectedProductArtifactRows,
   freezePublicationCandidate,
   lockedCarrierFile,
   lockedPublicationFiles,
@@ -46,16 +50,68 @@ import {
 } from './publication-lock.mts';
 import {
   allArtifactTargets,
+  contribCarrierDescriptor,
   currentProductVersionSync,
-  extensionArtifactProductRoot,
   extensionArtifactTargets,
-  extensionMetadata,
-  extensionSourceIdentity,
   extensionSqlNames,
+  validateExtensionCatalogRows,
 } from './release-artifact-targets.mts';
-import { productCompatibilityVersion, ROOT } from './release-graph.mts';
+import { loadProducts, productCompatibilityVersion, ROOT } from './release-graph.mts';
+import {
+  extensionGithubReleaseFixture,
+  githubReleaseFixture,
+  sha256File,
+} from './testdata/publication-artifact-fixtures.mts';
 
 const temporaryDirectories = [];
+
+function writeProducedExtensionControls(fixture, frozen, mutatePublic = undefined) {
+  const prefix = `${frozen.product}-${frozen.version}`;
+  const publicFile = path.join(fixture.directory, `${prefix}-manifest.json`);
+  const previous = JSON.parse(readFileSync(publicFile, 'utf8'));
+  const { releaseData } = composeExtensionReleaseDocuments({
+    product: frozen.product,
+    releaseProduct: frozen.releaseProduct ?? frozen.product,
+    family: frozen.family ?? null,
+    version: frozen.version,
+    members: frozen.extensions ?? [frozen],
+    directAssets: frozen.carrierAssets ?? frozen.assets,
+    releaseMetadata: {
+      class: previous.extensionClass,
+      versioning: previous.versioning,
+      sourceIdentity: previous.sourceIdentity,
+      compatibility: frozen.compatibility,
+    },
+  });
+  mutatePublic?.(releaseData);
+  writeFileSync(fixture.manifestPath, JSON.stringify(frozen));
+  writeFileSync(publicFile, JSON.stringify(releaseData));
+  const checksum = `${prefix}-release-assets.sha256`;
+  writeFileSync(
+    path.join(fixture.directory, checksum),
+    readdirSync(fixture.directory)
+      .filter((name) => name !== checksum)
+      .sort()
+      .map((name) => `${sha256File(path.join(fixture.directory, name))}  ./${name}\n`)
+      .join(''),
+  );
+}
+
+function assertExpectedArtifactInventory(artifacts, products) {
+  const versions = new Map(products.map(({ id, version }) => [id, version]));
+  expect(
+    artifacts.map(({ product, id, role, kind, target, identity, name }) => ({
+      product,
+      version: versions.get(product),
+      id,
+      role,
+      kind,
+      target,
+      identity,
+      name,
+    })),
+  ).toEqual(expectedProductArtifactRows(products));
+}
 
 if (['prepare-handoff', 'prepare-npm-preflight'].includes(process.argv[2])) {
   const root = process.argv[3];
@@ -93,6 +149,413 @@ if (process.argv[2] === 'assert-source') {
   process.exit(0);
 }
 
+test('native publication inventory requires no Moon metadata and preserves runtime carrier ownership', () => {
+  const script = `
+    Bun.YAML.parse = () => { throw new Error('Moon metadata must not be read'); };
+    const { loadPublicationCatalog } = await import('./tools/release/publication-catalog.mts');
+    const { expectedProductArtifactRows } = await import('./tools/release/publication-lock.mts');
+    const catalog = loadPublicationCatalog('native-inventory-test');
+    const rows = expectedProductArtifactRows(catalog.products);
+    const versions = new Map(catalog.products.map(({ id, version }) => [id, version]));
+    if (rows.some(row => row.version !== versions.get(row.product))) throw new Error('Wrong release owner version');
+    if (new Set(rows.map(row => row.product + ':' + row.id)).size !== rows.length) throw new Error('Duplicate artifact identity');
+    const contrib = rows.filter(row => row.name.startsWith('oliphaunt-extension-contrib-pg18-'));
+    if (!contrib.some(row => row.product === 'liboliphaunt-native' && row.identity === 'native')) throw new Error('Missing native contrib envelope');
+    if (!contrib.some(row => row.product === 'liboliphaunt-wasix' && row.identity === 'wasix')) throw new Error('Missing WASIX contrib envelope');
+    if (contrib.some(row => row.product === 'oliphaunt-extension-contrib-pg18')) throw new Error('Contrib has no independent release version');
+    const swiftOnly = loadPublicationCatalog('native-inventory-swift', { products: ['oliphaunt-swift'] });
+    if (expectedProductArtifactRows(swiftOnly.products).some(row => row.kind === 'swiftpm-extension-consumer-fixture')) throw new Error('Unselected extension fixture');
+    if (rows.some(row => row.kind === 'swiftpm-extension-consumer-fixture')) throw new Error('Undeclared consumer fixture');
+    if (!expectedProductArtifactRows(catalog.products, { swiftExtensionFixture: true }).some(row => row.kind === 'swiftpm-extension-consumer-fixture')) throw new Error('Missing requested extension fixture');
+  `;
+  const result = Bun.spawnSync([process.execPath, '-e', script], {
+    cwd: ROOT,
+    env: { ...process.env, OLIPHAUNT_MOON_PROJECTS_FILE: '/missing-moon-projects.json' },
+  });
+  expect(result.exitCode, result.stderr.toString()).toBe(0);
+});
+
+function historicalArtifactContext() {
+  const files = new Map(
+    [
+      'src/database-resources/contracts/contract.json',
+      'src/extensions/contracts/extension-target-profiles.toml',
+      'src/extensions/generated/sdk/extensions.json',
+      'src/extensions/generated/mobile/static-extensions.tsv',
+    ].map((file) => [file, readFileSync(path.join(ROOT, file), 'utf8')]),
+  );
+  return {
+    files,
+    context: {
+      products: structuredClone(loadProducts('historical-artifact-test')),
+      contrib: structuredClone(contribCarrierDescriptor('historical-artifact-test')),
+      readText: (file) => {
+        if (!files.has(file)) throw new Error(`uncaptured historical input ${file}`);
+        return files.get(file);
+      },
+    },
+  };
+}
+
+test('historical artifact context preserves all current canonical renderer output', () => {
+  const { context } = historicalArtifactContext();
+  const catalog = loadPublicationCatalog('historical-artifact-parity');
+  expect(expectedProductArtifactRows(catalog.products, { inputContext: context })).toEqual(
+    expectedProductArtifactRows(catalog.products),
+  );
+});
+
+test('historical artifact context uses captured runtime targets and contrib member profiles', () => {
+  const { context, files } = historicalArtifactContext();
+  const native = context.contrib.nativeOwner;
+  const wasix = context.contrib.wasixOwner;
+  context.products[native].artifact_targets.targets = ['linux-x64-gnu'];
+  context.products[wasix].artifact_targets.targets = ['portable'];
+  context.contrib.members = [
+    { id: 'old_one', 'sql-name': 'old_one' },
+    { id: 'old_two', 'sql-name': 'old_two' },
+  ];
+  files.set(
+    'src/extensions/contracts/extension-target-profiles.toml',
+    `schema = "oliphaunt-extension-artifact-target-profiles-v1"
+[[profiles]]
+id = "old-native"
+[[profiles.targets]]
+target = "linux-x64-gnu"
+family = "native"
+kind = "native-dynamic"
+[[profiles]]
+id = "old-wasix"
+[[profiles.targets]]
+target = "wasix-portable"
+family = "wasix"
+kind = "wasix-runtime"
+`,
+  );
+  // Bundled historical members do not require today's singleton mobile files.
+  files.delete('src/extensions/generated/sdk/extensions.json');
+  files.delete('src/extensions/generated/mobile/static-extensions.tsv');
+  const product = { id: native, kind: context.products[native].kind, version: '0.1.0' };
+  const rows = expectedProductArtifactRows([product], { inputContext: context });
+  expect(rows.filter((row) => row.kind === 'native-runtime').map((row) => row.target)).toEqual([
+    'linux-x64-gnu',
+  ]);
+  expect(rows.filter((row) => row.kind === 'extension-bundle').map((row) => row.name)).toEqual([
+    `${context.contrib.artifactProduct}-0.1.0-native-linux-x64-gnu-bundle.tar.gz`,
+  ]);
+  expect(extensionSqlNames(context.contrib.artifactProduct, 'historical-test', context)).toEqual([
+    'old_one',
+    'old_two',
+  ]);
+});
+
+test('historical artifact context uses the captured resource contract rather than current seed slots', () => {
+  const { context, files } = historicalArtifactContext();
+  files.set(
+    'src/database-resources/contracts/contract.json',
+    JSON.stringify({
+      compatibilityKeys: { native: { 'linux-x64-gnu': [] } },
+      profiles: { standard: {} },
+    }),
+  );
+  const rows = expectedProductArtifactRows(
+    [
+      {
+        id: 'database-resources',
+        kind: context.products['database-resources'].kind,
+        version: '0.1.0',
+      },
+    ],
+    { inputContext: context },
+  );
+  expect(
+    rows.filter((row) => ['native-seeds', 'wasix-seeds'].includes(row.kind)).map((row) => row.name),
+  ).toEqual([
+    'database-resources-0.1.0-seed-native-linux-x64-gnu-standard.json',
+    'database-resources-0.1.0-seed-native-linux-x64-gnu-standard.tar.zst',
+    'database-resources-0.1.0-seed-wasix-standard.json',
+    'database-resources-0.1.0-seed-wasix-standard.tar.zst',
+  ]);
+  files.delete('src/database-resources/contracts/contract.json');
+  expect(() =>
+    expectedProductArtifactRows(
+      [{ id: 'database-resources', kind: 'resource', version: '0.1.0' }],
+      { inputContext: context },
+    ),
+  ).toThrow('uncaptured historical input');
+});
+
+test('historical artifact context keeps old iOS module and dependency identities without current file fallback', () => {
+  const { context, files } = historicalArtifactContext();
+  context.products = {
+    [context.contrib.nativeOwner]: {
+      ...context.products[context.contrib.nativeOwner],
+      artifact_targets: { preset: 'liboliphaunt-native', targets: ['ios-xcframework'] },
+    },
+    [context.contrib.wasixOwner]: {
+      ...context.products[context.contrib.wasixOwner],
+      artifact_targets: { preset: 'liboliphaunt-wasix', targets: ['portable'] },
+    },
+    'oliphaunt-extension-vector': {
+      kind: 'exact-extension-artifact',
+      extension_sql_name: 'vector',
+      path: 'gone/old-vector',
+    },
+  };
+  files.set(
+    'src/extensions/contracts/extension-target-profiles.toml',
+    `schema = "oliphaunt-extension-artifact-target-profiles-v1"
+[[profiles]]
+id = "old-ios"
+[[profiles.targets]]
+target = "ios-xcframework"
+family = "native"
+kind = "native-static-registry"
+`,
+  );
+  files.set(
+    'src/extensions/generated/sdk/extensions.json',
+    JSON.stringify({ extensions: [{ 'sql-name': 'vector', 'native-module-stem': 'old_vector' }] }),
+  );
+  files.set(
+    'src/extensions/generated/mobile/static-extensions.tsv',
+    'sql-name\tnative-module-stem\tios-static-dependencies\nvector\told_vector\topenssl\n',
+  );
+  const product = {
+    id: 'oliphaunt-extension-vector',
+    kind: 'exact-extension-artifact',
+    version: '0.0.9',
+  };
+  const rows = expectedProductArtifactRows([product], { inputContext: context });
+  expect(rows.filter((row) => row.role === 'github-release-asset').map((row) => row.name)).toEqual([
+    'oliphaunt-extension-vector-0.0.9-native-ios-dependency-openssl-xcframework.zip',
+    'oliphaunt-extension-vector-0.0.9-native-ios-runtime.tar.gz',
+    'oliphaunt-extension-vector-0.0.9-native-ios-xcframework.zip',
+  ]);
+  expect(rows.find((row) => row.kind === 'ios-xcframework').identity).toBe('old_vector');
+  const outsideOldTables = new Map(files);
+  outsideOldTables.set(
+    'src/extensions/contracts/extension-target-profiles.toml',
+    files.get('src/extensions/contracts/extension-target-profiles.toml') +
+      `
+[[profiles.targets]]
+target = "linux-arm64-gnu"
+family = "native"
+kind = "native-dynamic"
+`,
+  );
+  const rejected = Bun.spawnSync(
+    [
+      process.execPath,
+      '-e',
+      `
+    import { expectedProductArtifactRows } from './tools/release/publication-lock.mts';
+    const { product, context, files } = JSON.parse(process.env.HISTORICAL_ARTIFACT_FIXTURE);
+    context.readText = (file) => {
+      if (!Object.hasOwn(files, file)) throw new Error('uncaptured historical input ' + file);
+      return files[file];
+    };
+    expectedProductArtifactRows([product], { inputContext: context });
+  `,
+    ],
+    {
+      cwd: ROOT,
+      env: {
+        ...process.env,
+        HISTORICAL_ARTIFACT_FIXTURE: JSON.stringify({
+          product,
+          context,
+          files: Object.fromEntries(outsideOldTables),
+        }),
+      },
+    },
+  );
+  expect(rejected.exitCode).not.toBe(0);
+  expect(rejected.stderr.toString()).toContain('not backed by runtime artifact metadata');
+  const wasixTargets = context.products[context.contrib.wasixOwner].artifact_targets;
+  delete context.products[context.contrib.wasixOwner].artifact_targets;
+  expect(() => expectedProductArtifactRows([product], { inputContext: context })).toThrow(
+    'missing historical runtime artifact targets',
+  );
+  context.products[context.contrib.wasixOwner].artifact_targets = wasixTargets;
+  files.delete('src/extensions/generated/mobile/static-extensions.tsv');
+  expect(() => expectedProductArtifactRows([product], { inputContext: context })).toThrow(
+    'uncaptured historical input',
+  );
+  files.delete('src/extensions/generated/sdk/extensions.json');
+  expect(() => expectedProductArtifactRows([product], { inputContext: context })).toThrow(
+    'uncaptured historical input',
+  );
+  files.delete('src/extensions/contracts/extension-target-profiles.toml');
+  expect(() => expectedProductArtifactRows([product], { inputContext: context })).toThrow(
+    'uncaptured historical input',
+  );
+  delete context.products[context.contrib.nativeOwner];
+  expect(() =>
+    allArtifactTargets({ product: 'liboliphaunt-native', inputContext: context }),
+  ).toThrow('missing historical product');
+});
+
+test('canonical extension GitHub projection matches every legacy native asset row', () => {
+  const metadata = loadReleaseMetadata(ROOT);
+  const nativePayloads = metadata.extensionGithubArtifacts.filter(
+    (row) => row.family === 'native' && !row.control,
+  );
+  const distributions = [
+    ...new Set(metadata.extensionGithubArtifacts.map((row) => row.artifactProduct)),
+  ];
+  expect(distributions).toHaveLength(8);
+  for (const artifactProduct of distributions) {
+    const actual = nativePayloads.filter((row) => row.artifactProduct === artifactProduct);
+    const identity = { id: artifactProduct, version: actual[0].version, family: 'native' };
+    const legacy = expectedExtensionGithubReleaseAssetRows(identity).filter(
+      (row) => row.family === 'native',
+    );
+    expect(actual).toEqual(
+      legacy.map((row) => ({
+        artifactProduct,
+        owner: actual[0].owner,
+        product: actual[0].owner,
+        version: actual[0].version,
+        id: `github-release:${row.name}`,
+        role: 'github-release-asset',
+        family: row.family,
+        kind: row.kind,
+        target: row.target,
+        identity: row.identity,
+        name: row.name,
+      })),
+    );
+    expect(
+      expectedExtensionGithubReleaseAssetRows(identity, {
+        sqlNames: extensionSqlNames(artifactProduct),
+        requiredRows: legacy.map(({ name: _name, ...row }) => row),
+      }),
+    ).toEqual(legacy);
+  }
+  expect(nativePayloads).toHaveLength(68);
+  expect(
+    metadata.extensionGithubArtifacts.filter((row) => row.family === 'wasix' && !row.control),
+  ).toHaveLength(8);
+  expect(metadata.extensionGithubArtifacts.filter((row) => row.control)).toHaveLength(35);
+  for (const [target, count] of [
+    ['android-arm64-v8a', 8],
+    ['android-x86_64', 8],
+    ['ios-xcframework', 20],
+  ])
+    expect(metadata.extensionGithubArtifacts.filter((row) => row.target === target)).toHaveLength(
+      count,
+    );
+  const catalog = loadPublicationCatalog('canonical-extension-github-projection');
+  const old = expectedProductArtifactRows(catalog.products).filter(
+    (row) =>
+      row.role === 'github-release-asset' &&
+      metadata.extensionGithubArtifacts.some(
+        (asset) => asset.product === row.product && asset.id === row.id,
+      ),
+  );
+  expect(
+    metadata.extensionGithubArtifacts
+      .filter((row) => !row.control)
+      .map(({ artifactProduct: _artifactProduct, owner: _owner, family: _family, ...row }) => row)
+      .sort((left, right) => left.id.localeCompare(right.id)),
+  ).toEqual(old.sort((left, right) => left.id.localeCompare(right.id)));
+});
+
+test('canonical extension GitHub projection preserves all 39 legacy mobile member contracts', () => {
+  const metadata = loadReleaseMetadata(ROOT);
+  const catalog = validateExtensionCatalogRows(
+    JSON.parse(
+      readFileSync(path.join(ROOT, 'src/extensions/generated/extensions.catalog.json'), 'utf8'),
+    ),
+  );
+  const sdk = JSON.parse(
+    readFileSync(path.join(ROOT, 'src/extensions/generated/sdk/extensions.json'), 'utf8'),
+  );
+  const lines = readFileSync(
+    path.join(ROOT, 'src/extensions/generated/mobile/static-extensions.tsv'),
+    'utf8',
+  )
+    .split(/\r?\n/u)
+    .filter((line) => line && !line.startsWith('#'));
+  const columns = lines[0].split('\t');
+  const statics = new Map(
+    lines.slice(1).map((line) => {
+      const values = line.split('\t');
+      const row = Object.fromEntries(columns.map((key, index) => [key, values[index] ?? '']));
+      return [row['sql-name'], row];
+    }),
+  );
+  expect(metadata.extensionReleaseMetadata).toHaveLength(39);
+  let compared = 0;
+  for (const member of metadata.extensionReleaseMetadata) {
+    const sqlName = member.sqlName;
+    const legacy = sdk.extensions.find((row) => row['sql-name'] === sqlName);
+    expect(legacy).toBeDefined();
+    const stem = legacy['native-module-stem'] ?? null;
+    const profiles = Object.keys(metadata.nativeMobileComponentClosures[sqlName]).map((target) => ({
+      target,
+      family: 'native',
+      kind: 'native-static-registry',
+    }));
+    expect(profiles).toHaveLength(3);
+    const identity = {
+      artifactProduct: member.artifactProduct,
+      owner: 'fixture',
+      version: '1.2.3',
+      sqlNames: [sqlName],
+    };
+    const actual = extensionGithubArtifactInputs(
+      identity,
+      profiles,
+      catalog,
+      metadata.nativeMobileComponentClosures,
+    );
+    for (const { target } of profiles) {
+      const dependencies =
+        stem === null
+          ? []
+          : (
+              statics.get(sqlName)?.[
+                target === 'ios-xcframework'
+                  ? 'ios-static-dependencies'
+                  : 'android-static-dependencies'
+              ] ?? ''
+            )
+              .split(',')
+              .filter(Boolean)
+              .sort();
+      expect([...metadata.nativeMobileComponentClosures[sqlName][target].linkUnits].sort()).toEqual(
+        dependencies,
+      );
+      const rows = [{ sqlName, family: 'native', target, kind: 'runtime', identity: null }];
+      if (target === 'ios-xcframework' && stem !== null)
+        rows.push(
+          { sqlName, family: 'native', target, kind: 'ios-xcframework', identity: stem },
+          ...dependencies.map((dependency) => ({
+            sqlName,
+            family: 'native',
+            target,
+            kind: 'ios-dependency-xcframework',
+            identity: dependency,
+          })),
+        );
+      rows.sort(
+        (left, right) =>
+          left.kind.localeCompare(right.kind) ||
+          (left.identity ?? '').localeCompare(right.identity ?? ''),
+      );
+      expect(
+        actual
+          .filter((row) => row.target === target)
+          .map(({ kind, identity }) => ({ kind, identity })),
+      ).toEqual(rows.map(({ kind, identity }) => ({ kind, identity })));
+      compared += 1;
+    }
+  }
+  expect(compared).toBe(117);
+});
+
 test('frozen Cargo bytes reject a changed archive header with unchanged package identity', () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-frozen-cargo-'));
   temporaryDirectories.push(root);
@@ -113,46 +576,6 @@ test('frozen Cargo bytes reject a changed archive header with unchanged package 
     assertLockedArtifactSet(lock, discoverPublicationArtifacts([file]), { product: 'fixture' }),
   ).toThrow(/frozen artifact bytes mismatch/u);
 });
-
-function sortJsonValue(value) {
-  if (Array.isArray(value)) return value.map(sortJsonValue);
-  if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.keys(value)
-        .sort()
-        .map((key) => [key, sortJsonValue(value[key])]),
-    );
-  }
-  return value;
-}
-
-function canonicalJson(value) {
-  return `${JSON.stringify(sortJsonValue(value), null, 2)}\n`;
-}
-
-function wasixInstall(sqlName, dependencies, createsExtension) {
-  return {
-    schema: 'oliphaunt-wasix-extension-install-v1',
-    name: sqlName,
-    nativeModule: null,
-    nativeModules: [],
-    coreExportsRequired: [],
-    dependencies,
-    loadOrder: [],
-    lifecycle: {
-      createExtension: createsExtension,
-      createSchema: 'pg_catalog',
-      loadSql: [],
-      postCreateSql: [],
-      startupConfig: [],
-      preloadRequired: false,
-      restartRequired: false,
-      sharedMemoryRequired: false,
-    },
-    installedFiles: [`share/postgresql/extension/${sqlName}.control`],
-    unresolvedImports: [],
-  };
-}
 
 function refreshTarHeaderChecksum(tar, offset = 0) {
   tar.fill(0x20, offset + 148, offset + 156);
@@ -201,6 +624,44 @@ function selectionNeutralSwiftSourceCarrier(version = '1.2.3') {
     schema: 'oliphaunt-react-native-ios-carrier-v1',
   };
 }
+
+test('React Native aggregate carrier discovery accepts declared and legacy layouts without selecting Swift source inputs', () => {
+  const root = temporaryDirectory();
+  const name = 'oliphaunt-react-native-ios-carriers.json';
+  const products = loadPublicationCatalog('publication-lock.test', {
+    products: ['oliphaunt-react-native'],
+  }).products;
+  const bytes = Buffer.from(`${JSON.stringify(selectionNeutralSwiftSourceCarrier())}\n`);
+  const sourceTree = path.join(root, 'release-tree/src/sdks/swift/Carriers');
+  mkdirSync(sourceTree, { recursive: true });
+  writeFileSync(path.join(sourceTree, name), bytes);
+  expect(() => discoverProductArtifacts([root], products)).toThrow(
+    /exactly one canonical aggregate iOS carrier manifest, found 0/u,
+  );
+
+  for (const layout of ['npm/ios-carriers', 'release/ios-carriers']) {
+    const directory = path.join(root, layout);
+    mkdirSync(directory, { recursive: true });
+    const file = path.join(directory, name);
+    writeFileSync(file, bytes);
+    const artifacts = discoverProductArtifacts([root], products);
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0]).toMatchObject({
+      product: 'oliphaunt-react-native',
+      id: `release-input:${name}`,
+      kind: 'react-native-ios-carrier-manifest',
+      size: bytes.length,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    });
+    unlinkSync(file);
+  }
+
+  for (const layout of ['npm/ios-carriers', 'release/ios-carriers'])
+    writeFileSync(path.join(root, layout, name), bytes);
+  expect(() => discoverProductArtifacts([root], products)).toThrow(
+    /exactly one canonical aggregate iOS carrier manifest, found 2/u,
+  );
+});
 
 function tarGzip(output, cwd, member) {
   writeFileSync(
@@ -354,419 +815,6 @@ function mavenFixture(root, group, artifact, version) {
   return pom;
 }
 
-function sha256File(file) {
-  return createHash('sha256').update(readFileSync(file)).digest('hex');
-}
-
-function githubReleaseFixture(root, product) {
-  const directory = path.join(root, product.id, 'release-assets');
-  mkdirSync(directory, { recursive: true });
-  const rows = allArtifactTargets(
-    {
-      product: product.id,
-      surface: 'github-release',
-    },
-    'publication-lock.test',
-  ).map((target) => ({
-    target,
-    name: target.asset.replaceAll('{version}', product.version),
-  }));
-  const checksum = rows.find((row) => row.target.kind === 'checksums');
-  for (const row of rows.filter((item) => item !== checksum)) {
-    writeFileSync(path.join(directory, row.name), `fixture:${row.name}\n`);
-  }
-  const checksumLines = rows
-    .filter((item) => item !== checksum)
-    .map((row) => `${sha256File(path.join(directory, row.name))}  ./${row.name}\n`)
-    .sort();
-  writeFileSync(path.join(directory, checksum.name), checksumLines.join(''));
-  return { checksum, directory, rows };
-}
-
-function extensionGithubReleaseFixture(
-  root,
-  product,
-  {
-    artifactProduct = product.id,
-    family = null,
-    mutateBundleArchive = undefined,
-    mutateBundleStage = undefined,
-    bundleFixedFileMode = 0o644,
-  } = {},
-) {
-  const productRoot = extensionArtifactProductRoot(
-    artifactProduct,
-    family ?? 'native',
-    path.join(root, 'target', 'extension-artifacts'),
-    'publication-lock.test',
-  );
-  const directory = path.join(productRoot, 'release-assets');
-  rmSync(productRoot, { recursive: true, force: true });
-  mkdirSync(directory, { recursive: true });
-  const sqlNames = extensionSqlNames(artifactProduct, 'publication-lock.test');
-  const bundled = sqlNames.length > 1;
-  const releaseMetadata = extensionMetadata(artifactProduct, 'publication-lock.test');
-  const ownership =
-    artifactProduct === product.id
-      ? {}
-      : { releaseProduct: product.id, family: family ?? 'combined' };
-  const compatibility = releaseMetadata.compatibility;
-  const generated = JSON.parse(
-    readFileSync(
-      path.join(import.meta.dir, '../../src/extensions/generated/sdk/extensions.json'),
-      'utf8',
-    ),
-  );
-  const staticLines = readFileSync(
-    path.join(import.meta.dir, '../../src/extensions/generated/mobile/static-extensions.tsv'),
-    'utf8',
-  )
-    .split(/\r?\n/u)
-    .filter((line) => line.length > 0 && !line.startsWith('#'));
-  const staticHeader = staticLines[0].split('\t');
-  const staticRows = staticLines
-    .slice(1)
-    .map((line) =>
-      Object.fromEntries(
-        staticHeader.map((column, index) => [column, line.split('\t')[index] ?? '']),
-      ),
-    );
-  const assets = [];
-  const extensions = [];
-  for (const sqlName of sqlNames) {
-    const extension = generated.extensions.find((row) => row['sql-name'] === sqlName);
-    const nativeModuleStem = extension['native-module-stem'];
-    const staticRow = staticRows.find((row) => row['sql-name'] === sqlName);
-    const iosNativeDependencies =
-      nativeModuleStem === null
-        ? []
-        : (staticRow?.['ios-static-dependencies'] ?? '').split(',').filter(Boolean).sort();
-    const memberAssets = [];
-    for (const target of extensionArtifactTargets(
-      { product: artifactProduct },
-      'publication-lock.test',
-    ).filter((row) => row.sqlName === sqlName && (family === null || row.family === family))) {
-      const roles =
-        target.family === 'wasix'
-          ? ['wasix-runtime']
-          : target.target === 'ios-xcframework'
-            ? [
-                'runtime',
-                ...(nativeModuleStem === null
-                  ? []
-                  : [
-                      'ios-xcframework',
-                      ...iosNativeDependencies.map(
-                        (dependency) => `ios-dependency-xcframework:${dependency}`,
-                      ),
-                    ]),
-              ]
-            : ['runtime'];
-      for (const role of roles) {
-        const [kind, dependencyIdentity] = role.split(':');
-        const identity =
-          kind === 'ios-xcframework'
-            ? nativeModuleStem
-            : kind === 'ios-dependency-xcframework'
-              ? dependencyIdentity
-              : null;
-        const prefix = `${artifactProduct}-${product.version}`;
-        const name =
-          target.family === 'wasix'
-            ? `${prefix}-wasix-portable.tar.zst`
-            : kind === 'ios-xcframework'
-              ? `${prefix}-native-ios-xcframework.zip`
-              : kind === 'ios-dependency-xcframework'
-                ? `${prefix}-native-ios-dependency-${identity}-xcframework.zip`
-                : target.target === 'ios-xcframework'
-                  ? `${prefix}-native-ios-runtime.tar.gz`
-                  : `${prefix}-native-${target.target}-runtime.tar.gz`;
-        const file = path.join(
-          bundled ? path.join(productRoot, 'member-assets', sqlName) : directory,
-          name,
-        );
-        mkdirSync(path.dirname(file), { recursive: true });
-        writeFileSync(file, `fixture:${name}\n`);
-        const asset = {
-          name,
-          family: target.family,
-          target: target.target,
-          kind,
-          identity,
-          path: file,
-          sha256: sha256File(file),
-          bytes: readFileSync(file).length,
-        };
-        assets.push(asset);
-        memberAssets.push(asset);
-      }
-    }
-    const dependencies = [...extension['selected-extension-dependencies']].sort();
-    const createsExtension = extension['creates-extension'] !== false;
-    const stagesIos = memberAssets.some((asset) => asset.target === 'ios-xcframework');
-    extensions.push({
-      sqlName,
-      createsExtension,
-      dependencies,
-      dataFiles: [...extension['runtime-share-data-files']].sort(),
-      extensionSqlFileNames: [...extension['extension-sql-file-names']].sort(),
-      extensionSqlFilePrefixes: [...extension['extension-sql-file-prefixes']].sort(),
-      nativeModuleStem,
-      iosNativeDependencies: stagesIos ? iosNativeDependencies : [],
-      iosRegistration:
-        nativeModuleStem === null || !stagesIos
-          ? null
-          : {
-              schema: 'oliphaunt-ios-extension-registration-v1',
-              sqlName,
-              nativeModuleStem,
-              magicSymbol: `oliphaunt_static_${nativeModuleStem.replaceAll(/[^A-Za-z0-9_]/gu, '_')}_Pg_magic_func`,
-              initSymbol: null,
-              symbols: [],
-            },
-      wasixInstall: memberAssets.some((asset) => asset.family === 'wasix')
-        ? wasixInstall(sqlName, dependencies, createsExtension)
-        : null,
-      sharedPreloadLibraries: [...extension['shared-preload-libraries']].sort(),
-      assets: memberAssets,
-    });
-  }
-  const carrierAssets = [];
-  if (bundled) {
-    const groups = new Map();
-    for (const extension of extensions) {
-      for (const asset of extension.assets) {
-        const key = `${asset.family}\0${asset.target}`;
-        const group = groups.get(key) ?? { family: asset.family, target: asset.target, rows: [] };
-        group.rows.push({ sqlName: extension.sqlName, asset });
-        groups.set(key, group);
-      }
-    }
-    for (const group of [...groups.values()].sort((left, right) =>
-      `${left.family}\0${left.target}`.localeCompare(`${right.family}\0${right.target}`),
-    )) {
-      const archiveRoot = `${artifactProduct}-${product.version}-${group.family}-${group.target}-bundle`;
-      const stage = path.join(productRoot, 'bundle-stage', archiveRoot);
-      rmSync(stage, { recursive: true, force: true });
-      mkdirSync(stage, { recursive: true });
-      const manifestMembers = [];
-      for (const { sqlName, asset } of group.rows.sort((left, right) =>
-        `${left.sqlName}\0${left.asset.kind}\0${left.asset.identity ?? ''}`.localeCompare(
-          `${right.sqlName}\0${right.asset.kind}\0${right.asset.identity ?? ''}`,
-        ),
-      )) {
-        const memberPath = `extensions/${sqlName}/${asset.name}`;
-        const destination = path.join(stage, ...memberPath.split('/'));
-        mkdirSync(path.dirname(destination), { recursive: true });
-        writeFileSync(destination, readFileSync(asset.path));
-        asset.carrierAsset = `${archiveRoot}.tar.gz`;
-        asset.carrierRoot = archiveRoot;
-        asset.memberPath = memberPath;
-        manifestMembers.push({
-          sqlName,
-          kind: asset.kind,
-          identity: asset.identity,
-          path: memberPath,
-          sha256: asset.sha256,
-          bytes: asset.bytes,
-        });
-      }
-      const memberNames = [...new Set(manifestMembers.map(({ sqlName }) => sqlName))].sort();
-      const legal = extensionCarrierLegalContract(artifactProduct, memberNames, {
-        family: group.family,
-        target: group.target,
-      });
-      for (const sqlName of memberNames) stageExtensionUpstreamLicenses(sqlName, stage);
-      const bundleManifest = path.join(stage, 'bundle-manifest.json');
-      writeFileSync(
-        bundleManifest,
-        canonicalJson({
-          schema: 'oliphaunt-extension-bundle-v1',
-          product: artifactProduct,
-          version: product.version,
-          compatibility,
-          family: group.family,
-          target: group.target,
-          licenseProfile: legal.profile,
-          licenseFiles: legal.licenseFiles,
-          members: manifestMembers,
-        }),
-      );
-      stageReleaseNotices(stage, { profile: legal.profile });
-      mutateBundleStage?.({
-        archiveRoot,
-        bundleManifest,
-        family: group.family,
-        legal,
-        stage,
-        target: group.target,
-      });
-      const output = path.join(directory, `${archiveRoot}.tar.gz`);
-      const tarOptions = {
-        includeDirectories: false,
-        fail(message) {
-          throw new Error(`publication lock fixture: ${message}`);
-        },
-      };
-      if (bundleFixedFileMode !== null) tarOptions.fixedFileMode = bundleFixedFileMode;
-      writeFileSync(
-        output,
-        canonicalGzipSync(createDeterministicTar(stage, archiveRoot, tarOptions)),
-      );
-      mutateBundleArchive?.({
-        archiveRoot,
-        family: group.family,
-        output,
-        target: group.target,
-      });
-      carrierAssets.push({
-        name: path.basename(output),
-        path: output,
-        sha256: sha256File(output),
-        bytes: readFileSync(output).length,
-        family: group.family,
-        target: group.target,
-        kind: 'extension-bundle',
-        memberCount: sqlNames.length,
-      });
-    }
-  }
-  const extensionManifestPath = path.join(productRoot, 'extension-artifacts.json');
-  const extensionManifest = bundled
-    ? {
-        schema: 'oliphaunt-extension-ci-artifacts-v2',
-        product: artifactProduct,
-        ...ownership,
-        version: product.version,
-        compatibility,
-        extensions,
-        carrierAssets,
-      }
-    : {
-        schema: 'oliphaunt-extension-ci-artifacts-v1',
-        product: artifactProduct,
-        ...ownership,
-        version: product.version,
-        compatibility,
-        ...extensions[0],
-      };
-  writeFileSync(extensionManifestPath, `${JSON.stringify(extensionManifest, null, 2)}\n`);
-  const manifestName = `${artifactProduct}-${product.version}-manifest.json`;
-  const propertiesName = `${artifactProduct}-${product.version}-manifest.properties`;
-  const swiftCarrierName = swiftExtensionCarrierAssetName(artifactProduct, product.version);
-  const checksumName = `${artifactProduct}-${product.version}-release-assets.sha256`;
-  const directAssets = bundled ? carrierAssets : assets;
-  writeFileSync(
-    path.join(directory, manifestName),
-    `${JSON.stringify(
-      {
-        schema: bundled
-          ? 'oliphaunt-extension-release-manifest-v2'
-          : 'oliphaunt-extension-release-manifest-v1',
-        product: artifactProduct,
-        ...ownership,
-        version: product.version,
-        extensionClass: releaseMetadata.class,
-        versioning: releaseMetadata.versioning,
-        sourceIdentity: extensionSourceIdentity(artifactProduct, 'publication-lock.test'),
-        compatibility,
-        ...(bundled
-          ? {
-              extensions: extensions.map((row) => ({
-                ...row,
-                assets: row.assets.map(
-                  ({
-                    name,
-                    family,
-                    target,
-                    kind,
-                    identity,
-                    sha256,
-                    bytes,
-                    carrierAsset,
-                    carrierRoot,
-                    memberPath,
-                  }) => ({
-                    name,
-                    family,
-                    target,
-                    kind,
-                    identity,
-                    sha256,
-                    bytes,
-                    carrierAsset,
-                    carrierRoot,
-                    memberPath,
-                  }),
-                ),
-              })),
-              assets: carrierAssets.map(
-                ({ name, family, target, kind, sha256, bytes, memberCount }) => ({
-                  name,
-                  family,
-                  target,
-                  kind,
-                  sha256,
-                  bytes,
-                  memberCount,
-                }),
-              ),
-            }
-          : {
-              sqlName: extensions[0].sqlName,
-              createsExtension: extensions[0].createsExtension,
-              dependencies: extensions[0].dependencies,
-              dataFiles: extensions[0].dataFiles,
-              extensionSqlFileNames: extensions[0].extensionSqlFileNames,
-              extensionSqlFilePrefixes: extensions[0].extensionSqlFilePrefixes,
-              nativeModuleStem: extensions[0].nativeModuleStem,
-              iosNativeDependencies: extensions[0].iosNativeDependencies,
-              iosRegistration: extensions[0].iosRegistration,
-              wasixInstall: extensions[0].wasixInstall,
-              sharedPreloadLibraries: extensions[0].sharedPreloadLibraries,
-              assets: assets.map(({ name, family, target, kind, identity, sha256, bytes }) => ({
-                name,
-                family,
-                target,
-                kind,
-                identity,
-                sha256,
-                bytes,
-              })),
-            }),
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  writeFileSync(
-    path.join(directory, propertiesName),
-    `schema=oliphaunt-extension-release-manifest-v${bundled ? '2' : '1'}\nproduct=${artifactProduct}\n${artifactProduct === product.id ? '' : `releaseProduct=${product.id}\ncarrierFamily=${family ?? 'combined'}\n`}version=${product.version}\n`,
-  );
-  writeFileSync(
-    path.join(directory, swiftCarrierName),
-    `${JSON.stringify(
-      buildSwiftExtensionCarrierManifest({
-        extensionManifest: extensionManifestPath,
-        verifyMembers: false,
-      }),
-      null,
-      2,
-    )}\n`,
-  );
-  const payloadNames = [
-    ...directAssets.map((asset) => asset.name),
-    manifestName,
-    propertiesName,
-    swiftCarrierName,
-  ].sort();
-  writeFileSync(
-    path.join(directory, checksumName),
-    payloadNames.map((name) => `${sha256File(path.join(directory, name))}  ./${name}\n`).join(''),
-  );
-  return { assets: directAssets, directory, manifestPath: extensionManifestPath, swiftCarrierName };
-}
-
 afterEach(() => {
   while (temporaryDirectories.length > 0) {
     rmSync(temporaryDirectories.pop(), { recursive: true, force: true });
@@ -776,9 +824,9 @@ afterEach(() => {
 describe('canonical publication catalog', () => {
   test('projects repeated package dependencies to one sorted internal carrier edge', () => {
     const carriers = [
-      { id: 'npm:@oliphaunt/zeta' },
-      { id: 'cargo:oliphaunt-tools' },
-      { id: 'cargo:oliphaunt' },
+      { id: 'npm:@oliphaunt/zeta', version: '0.1.0' },
+      { id: 'cargo:oliphaunt-tools', version: '0.1.0' },
+      { id: 'cargo:oliphaunt', version: '0.1.0' },
     ];
     const packageDependencies = [
       { ecosystem: 'cargo', name: 'oliphaunt-tools', requirement: '=0.1.0', scope: 'runtime' },
@@ -791,6 +839,59 @@ describe('canonical publication catalog', () => {
       'cargo:oliphaunt-tools',
       'npm:@oliphaunt/zeta',
     ]);
+  });
+
+  test('projects only matching selected versions and package-manager publication scopes', () => {
+    const carriers = [
+      { id: 'cargo:tools', version: '0.3.1' },
+      { id: 'npm:tools', version: '0.3.1' },
+      { id: 'maven:example:tools', version: '0.3.1' },
+    ];
+    const edge = (ecosystem, name, requirement, scope = 'runtime') => ({
+      ecosystem,
+      name,
+      requirement,
+      scope,
+    });
+    expect(
+      projectInternalDependencyIds(carriers, [
+        edge('cargo', 'tools', '=0.2.4'),
+        edge('npm', 'tools', '0.2.4'),
+        edge('maven', 'example:tools', '0.2.4'),
+        edge('cargo', 'tools', '=0.3.1', 'development'),
+        edge('maven', 'example:tools', '0.3.1', 'test'),
+      ]),
+    ).toEqual([]);
+    expect(
+      projectInternalDependencyIds(carriers, [
+        edge('cargo', 'tools', '0.3.0', 'build'),
+        edge('cargo', 'tools', '>=0.3.0,<0.4.0'),
+        edge('npm', 'tools', '^0.3.0', 'optional'),
+        edge('maven', 'example:tools', '0.3.1', 'compile'),
+      ]),
+    ).toEqual(['cargo:tools', 'maven:example:tools', 'npm:tools']);
+    expect(projectInternalDependencyIds(carriers, [edge('npm', 'tools', '0.3.0')])).toEqual([]);
+    expect(projectInternalDependencyIds(carriers, [edge('cargo', 'tools', '0.2.4')])).toEqual([]);
+  });
+
+  test('Cargo bare prerelease and build versions retain implicit caret semantics', () => {
+    const carriers = [
+      { id: 'cargo:tools', version: '1.0.1' },
+      { id: 'npm:tools', version: '1.0.1' },
+    ];
+    for (const requirement of ['1.0.0-rc.1', '1.0.0+build', ' 1.0.0-rc.1+build ']) {
+      expect(
+        projectInternalDependencyIds(carriers, [
+          { ecosystem: 'cargo', name: 'tools', requirement, scope: 'runtime' },
+          { ecosystem: 'npm', name: 'tools', requirement, scope: 'runtime' },
+        ]),
+      ).toEqual(['cargo:tools']);
+    }
+    expect(
+      projectInternalDependencyIds(carriers, [
+        { ecosystem: 'cargo', name: 'tools', requirement: '=1.0.0-rc.1', scope: 'runtime' },
+      ]),
+    ).toEqual([]);
   });
 
   test('permits only Cargo part identities as dynamic carriers', () => {
@@ -865,6 +966,31 @@ describe('canonical publication catalog', () => {
 });
 
 describe('publication artifact discovery and freezing', () => {
+  test('freezes a held-version package cycle and rejects a selected new package cycle', () => {
+    const version = currentProductVersionSync('oliphaunt-rust');
+    const fixture = (requirement, scope = 'dependencies') => {
+      const root = temporaryDirectory();
+      cargoFixture(root, 'oliphaunt-build', version, {
+        manifestSuffix: `\n${scope === 'dependencies' ? '' : `[${scope}]\n`}oliphaunt = "${requirement}"\n`,
+      });
+      cargoFixture(root, 'oliphaunt', version, {
+        manifestSuffix: `\noliphaunt-build = "=${version}"\n`,
+      });
+      return () =>
+        buildPublicationCandidate({ products: ['oliphaunt-rust'], artifactRoots: [root] });
+    };
+    const held = fixture('=0.0.0')();
+    expect(held.carriers.find(({ id }) => id === 'cargo:oliphaunt-build').dependencies).toEqual([]);
+    expect(held.carriers.find(({ id }) => id === 'cargo:oliphaunt').dependencies).toEqual([
+      'cargo:oliphaunt-build',
+    ]);
+    expect(() => validatePublicationLock(freezePublicationCandidate(held))).not.toThrow();
+    expect(() =>
+      freezePublicationCandidate(fixture(`=${version}`, 'dev-dependencies')()),
+    ).not.toThrow();
+    expect(fixture(`=${version}`)).toThrow('carrier dependency cycle');
+  });
+
   test('publish resolution rejects regenerated paths and mutations', () => {
     const root = mkdtempSync(path.join(import.meta.dir, '../../target/publication-lock-publish-'));
     temporaryDirectories.push(root);
@@ -1138,6 +1264,7 @@ describe('publication artifact discovery and freezing', () => {
     const { checksum, directory, rows } = githubReleaseFixture(root, product);
     const artifacts = discoverProductArtifacts([root], [product]);
     expect(artifacts).toHaveLength(rows.length);
+    assertExpectedArtifactInventory(artifacts, [product]);
     expect(
       artifacts.every(
         (artifact) => artifact.role === 'github-release-asset' && artifact.sha256.length === 64,
@@ -1170,6 +1297,7 @@ describe('publication artifact discovery and freezing', () => {
       product,
     );
     const artifacts = discoverProductArtifacts([root], [product]);
+    assertExpectedArtifactInventory(artifacts, [product]);
     expect(artifacts).toHaveLength(assets.length + 4);
     expect(
       new Set(
@@ -1255,6 +1383,7 @@ describe('publication artifact discovery and freezing', () => {
     const { assets, manifestPath } = extensionGithubReleaseFixture(root, product, fixtureOptions);
     const artifacts = discoverProductArtifacts([root], [product]);
     expect(artifacts).toHaveLength(runtimeAssets.length + assets.length + 4);
+    assertExpectedArtifactInventory(artifacts, [product]);
     expect(assets.every(({ name }) => /^oliphaunt-extension-contrib-pg18-[^-]+/u.test(name))).toBe(
       true,
     );
@@ -1304,6 +1433,115 @@ describe('publication artifact discovery and freezing', () => {
     expect(() => discoverProductArtifacts([root], [product])).toThrow(
       /frozen aggregate member\/carrier inventory/u,
     );
+  });
+
+  test('reads produced contrib bundle legal inventories from each selected runtime asset', {
+    timeout: 30_000,
+  }, () => {
+    const root = temporaryDirectory();
+    const artifactProduct = 'oliphaunt-extension-contrib-pg18';
+    const product = loadPublicationCatalog('publication-lock.test', {
+      products: ['liboliphaunt-native'],
+    }).products[0];
+    githubReleaseFixture(root, product);
+    const fixture = extensionGithubReleaseFixture(root, product, {
+      artifactProduct,
+      family: 'native',
+    });
+    const frozen = JSON.parse(readFileSync(fixture.manifestPath, 'utf8'));
+    frozen.carrierAssets.reverse();
+    const pgcrypto = frozen.extensions.find(({ sqlName }) => sqlName === 'pgcrypto');
+    expect(pgcrypto).toBeDefined();
+    const linuxAssets = ['linux-x64-gnu', 'linux-arm64-gnu'].map((target) => {
+      const asset = pgcrypto.assets.find(
+        (asset) => asset.target === target && asset.kind === 'runtime',
+      );
+      expect(asset).toBeDefined();
+      asset.nativeConstructionLicenseFiles = nativeExtensionConstructionLicenseInventory(
+        'pgcrypto',
+        target,
+      ).map(({ mode, path, sha256 }) => ({ mode, path, sha256 }));
+      expect(asset.nativeConstructionLicenseFiles).toHaveLength(2);
+      return asset;
+    });
+    const rebuildBundle = (target, profile) => {
+      const members = frozen.extensions.map((member) => {
+        const assets = member.assets.filter((asset) => asset.target === target);
+        const runtime = assets.find((asset) => asset.kind === 'runtime');
+        return {
+          ...projectNativeRuntimeAssetMember(member, runtime),
+          assets: assets.map((asset) => ({
+            ...asset,
+            path: path.relative(root, asset.path).split(path.sep).join('/'),
+          })),
+        };
+      });
+      const carriers = bundleCarrierAssets(
+        artifactProduct,
+        product.version,
+        path.dirname(fixture.manifestPath),
+        members,
+        frozen.compatibility,
+        { root },
+      );
+      expect(carriers).toHaveLength(1);
+      const carrier = { ...carriers[0], path: path.resolve(root, carriers[0].path) };
+      Object.assign(
+        frozen.carrierAssets.find((asset) => asset.target === target),
+        carrier,
+      );
+      const archiveRoot = path.basename(carrier.name, '.tar.gz');
+      const entries = readPortableArchiveEntries(carrier.path);
+      const bundleManifest = JSON.parse(
+        entries.get(`${archiveRoot}/bundle-manifest.json`).data().toString('utf8'),
+      );
+      expect(bundleManifest.licenseProfile).toBe(profile);
+    };
+    for (const { target } of linuxAssets) rebuildBundle(target, 'contrib-native-openssl');
+    writeProducedExtensionControls(fixture, frozen);
+    assertExpectedArtifactInventory(discoverProductArtifacts([root], [product]), [product]);
+
+    writeProducedExtensionControls(fixture, frozen, (data) => data.assets.reverse());
+    expect(() => discoverProductArtifacts([root], [product])).toThrow(
+      /does not exactly expose the frozen aggregate member\/carrier inventory/u,
+    );
+    writeProducedExtensionControls(fixture, frozen);
+
+    // Legacy member-level facts remain the default when an asset has no override.
+    pgcrypto.nativeConstructionLicenseFiles = linuxAssets[0].nativeConstructionLicenseFiles;
+    delete linuxAssets[0].nativeConstructionLicenseFiles;
+    writeProducedExtensionControls(fixture, frozen);
+    assertExpectedArtifactInventory(discoverProductArtifacts([root], [product]), [product]);
+
+    // An explicit empty target inventory must override those legacy member facts.
+    linuxAssets[1].nativeConstructionLicenseFiles = [];
+    rebuildBundle(linuxAssets[1].target, 'contrib-native');
+    writeProducedExtensionControls(fixture, frozen);
+    assertExpectedArtifactInventory(discoverProductArtifacts([root], [product]), [product]);
+  });
+
+  test('reads produced singleton controls with exact optional native member facts', () => {
+    const root = temporaryDirectory();
+    const product = loadPublicationCatalog('publication-lock.test', {
+      products: ['oliphaunt-extension-vector'],
+    }).products[0];
+    const fixture = extensionGithubReleaseFixture(root, product);
+    const frozen = JSON.parse(readFileSync(fixture.manifestPath, 'utf8'));
+    frozen.nativeDependencyModules = ['support.so'];
+    frozen.nativeConstructionLicenseFiles = [];
+    writeProducedExtensionControls(fixture, frozen);
+    assertExpectedArtifactInventory(discoverProductArtifacts([root], [product]), [product]);
+    for (const field of ['nativeDependencyModules', 'nativeConstructionLicenseFiles']) {
+      for (const value of [undefined, ['changed']]) {
+        writeProducedExtensionControls(fixture, frozen, (data) => {
+          if (value === undefined) delete data[field];
+          else data[field] = value;
+        });
+        expect(() => discoverProductArtifacts([root], [product])).toThrow(
+          /does not exactly expose the canonical extension identity and frozen asset inventory/u,
+        );
+      }
+    }
   });
 
   test('rejects stale, missing, extra, substituted, or wrongly-moded aggregate bundle legal material', {
@@ -1442,6 +1680,31 @@ describe('publication artifact discovery and freezing', () => {
     ).toBe(true);
   });
 
+  test('pre-version inventory is digest-bound construction and cannot be frozen', () => {
+    const root = mkdtempSync(path.join(ROOT, 'target/publication-lock-phase-'));
+    temporaryDirectories.push(root);
+    const product = loadPublicationCatalog('publication-lock-phase', { products: ['oliphaunt-js'] })
+      .products[0];
+    npmFixture(root, '@oliphaunt/ts', product.version);
+    const final = buildPublicationCandidate({ products: [product.id], artifactRoots: [root] });
+    const pre = buildPublicationCandidate({
+      products: [product.id],
+      artifactRoots: [root],
+      artifactPhase: 'pre-version',
+    });
+    expect(pre.carriers).toEqual(final.carriers);
+    expect(pre.productArtifacts).toEqual(final.productArtifacts);
+    expect(pre.packageEnvelopeDigest).not.toBe(final.packageEnvelopeDigest);
+    expect(() => validatePublicationCandidate(pre)).not.toThrow();
+    expect(() => freezePublicationCandidate(pre)).toThrow(/construction.*cannot freeze/u);
+    const forged = { ...pre, artifactPhase: 'final' };
+    expect(() => validatePublicationCandidate(forged)).toThrow(/packageEnvelopeDigest/u);
+    expect(() => validatePublicationCandidate({ ...pre, scope: undefined })).toThrow(
+      /construction scope/u,
+    );
+    expect(() => freezePublicationCandidate(final)).not.toThrow();
+  });
+
   test('freezes a selection-neutral Swift source carrier and separately composed dependency-closed output', () => {
     const workspaceRoot = mkdtempSync(
       path.join(import.meta.dir, '../../target/publication-lock-swift-'),
@@ -1535,11 +1798,29 @@ describe('publication artifact discovery and freezing', () => {
     expect(() => discoverProductArtifacts([sdk, fixture], [product])).toThrow(
       /selects no extension products and requires no frozen Swift consumer fixture/u,
     );
-    expect(() => discoverProductArtifacts([sdk, extensionRoot], catalog.products)).toThrow(
-      /selects extension products and requires exactly one frozen Swift consumer fixture/u,
+    expect(() =>
+      discoverProductArtifacts([sdk, extensionRoot], catalog.products, {
+        swiftExtensionFixture: true,
+      }),
+    ).toThrow(/selects extension products and requires exactly one frozen Swift consumer fixture/u);
+    const preVersionArtifacts = discoverProductArtifacts([sdk, extensionRoot], catalog.products, {
+      artifactPhase: 'pre-version',
+    });
+    expect(
+      preVersionArtifacts.some(({ kind }) => kind === 'swiftpm-extension-consumer-fixture'),
+    ).toBe(false);
+    expect(preVersionArtifacts.map(({ product, id }) => `${product}:${id}`).sort()).toEqual(
+      expectedProductArtifactRows(catalog.products, { artifactPhase: 'pre-version' })
+        .map(({ product, id }) => `${product}:${id}`)
+        .sort(),
     );
 
-    const artifacts = discoverProductArtifacts(selectedRoots, catalog.products);
+    const artifacts = discoverProductArtifacts(selectedRoots, catalog.products, {
+      swiftExtensionFixture: true,
+    });
+    expect(artifacts.filter(({ kind }) => kind !== 'swiftpm-extension-consumer-fixture')).toEqual(
+      preVersionArtifacts,
+    );
     const swiftArtifacts = artifacts.filter((artifact) => artifact.product === product.id);
     expect(swiftArtifacts.map(({ id }) => id).sort()).toEqual([
       `github-release:${bindingsName}`,
@@ -1563,9 +1844,9 @@ describe('publication artifact discovery and freezing', () => {
     ).not.toThrow();
     const qualificationMarker = path.join(sdk, 'qualification.json');
     writeFileSync(qualificationMarker, JSON.stringify({ qualificationOnly: true }));
-    expect(() => discoverProductArtifacts(selectedRoots, catalog.products)).toThrow(
-      'workspace qualification carrier',
-    );
+    expect(() =>
+      discoverProductArtifacts(selectedRoots, catalog.products, { swiftExtensionFixture: true }),
+    ).toThrow('workspace qualification carrier');
     unlinkSync(qualificationMarker);
     const frozenFixture = swiftArtifacts.find(
       ({ id }) => id === 'release-input:swiftpm-extension-consumer-fixture',
@@ -1577,7 +1858,9 @@ describe('publication artifact discovery and freezing', () => {
       ),
       'tampered\n',
     );
-    const tamperedFixture = discoverProductArtifacts(selectedRoots, catalog.products).find(
+    const tamperedFixture = discoverProductArtifacts(selectedRoots, catalog.products, {
+      swiftExtensionFixture: true,
+    }).find(
       ({ id, product: artifactProduct }) =>
         artifactProduct === product.id && id === 'release-input:swiftpm-extension-consumer-fixture',
     );
@@ -1586,9 +1869,9 @@ describe('publication artifact discovery and freezing', () => {
     const selectedSourceCarrier = structuredClone(canonicalSourceCarrier);
     selectedSourceCarrier.extensions.push({ sqlName: 'pgtap' });
     writeFileSync(sourceCarrier, `${JSON.stringify(selectedSourceCarrier)}\n`);
-    expect(() => discoverProductArtifacts(selectedRoots, catalog.products)).toThrow(
-      /ios-carriers\.json\.extensions.*selection-neutral/u,
-    );
+    expect(() =>
+      discoverProductArtifacts(selectedRoots, catalog.products, { swiftExtensionFixture: true }),
+    ).toThrow(/ios-carriers\.json\.extensions.*selection-neutral/u);
 
     const malformedSourceCarrier = structuredClone(canonicalSourceCarrier);
     delete malformedSourceCarrier.carriers;
@@ -1606,4 +1889,104 @@ describe('publication artifact discovery and freezing', () => {
       /frozen extension-resource-inventory\.mjs must exactly match/u,
     );
   });
+});
+
+test('completed supplier projection preserves current and historical File facts without catalog authority', () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'complete-supplier-catalog-'));
+  try {
+    const root = path.resolve(import.meta.dir, '../..');
+    const metadata = loadReleaseMetadata(root);
+    const catalog = loadPublicationCatalog('complete supplier catalog fixture');
+    const expected = expectedProductArtifactRows(catalog.products).filter(
+      (row) => row.role === 'github-release-asset' || row.role === 'github-release-metadata',
+    );
+    const declarations = nativeSupplierGithubArtifactDeclarations(metadata)
+      .map(
+        (row) =>
+          row.product +
+          '/' +
+          row.asset.replaceAll('{version}', metadata.products[row.product].version),
+      )
+      .sort();
+    expect(declarations).toEqual(expected.map((row) => row.product + '/' + row.name).sort());
+    const bytes = Buffer.from('catalog File fixture; no public or runtime qualification');
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const supplierArtifacts = expected.map((row) => {
+      const file = path.join(directory, row.name);
+      writeFileSync(file, bytes);
+      const version = metadata.products[row.product].version;
+      return {
+        publication: {
+          product: row.product,
+          version,
+          tagName: row.product + '-v' + version,
+          publicationSha: 'a'.repeat(40),
+          publicationTree: 'b'.repeat(40),
+          releaseSha: 'c'.repeat(40),
+        },
+        artifact: row.id,
+        file: { path: file, size: bytes.length, sha256 },
+      };
+    });
+    const snapshot = {
+      source: { commit: 'd'.repeat(40), tree: 'e'.repeat(40) },
+      supplierArtifacts,
+    };
+    const result = nativePublicationInputProjection(snapshot, metadata);
+    expect(Object.keys(result.supplierArtifacts)).toHaveLength(expected.length);
+    expect(
+      Object.values(result.supplierArtifacts).some(
+        (row) => row.publication.product === 'oliphaunt-swift',
+      ),
+    ).toBe(true);
+    expect(
+      Object.values(result.supplierArtifacts).some((row) => row.artifact.includes('extension-')),
+    ).toBe(true);
+    expect(() =>
+      nativePublicationInputProjection(
+        {
+          ...snapshot,
+          supplierArtifacts: [
+            { ...supplierArtifacts[0], artifact: 'github-release:invented-private.bin' },
+          ],
+        },
+        metadata,
+      ),
+    ).toThrow('filename differs');
+    // Structural relocation preserves declared history; the completed reader
+    // independently authenticates its owner, source and inventory.
+    const historicalOwner = nativePublicationInputProjection(
+      {
+        ...snapshot,
+        supplierArtifacts: [
+          {
+            ...supplierArtifacts[0],
+            publication: {
+              ...supplierArtifacts[0].publication,
+              product: 'oliphaunt-rust',
+              tagName: 'oliphaunt-rust-v' + supplierArtifacts[0].publication.version,
+            },
+          },
+        ],
+      },
+      metadata,
+    );
+    expect(Object.values(historicalOwner.supplierArtifacts)).toHaveLength(1);
+    expect(Object.values(historicalOwner.supplierArtifacts)[0].publication.product).toBe(
+      'oliphaunt-rust',
+    );
+    const subset = structuredClone(metadata);
+    subset.products['oliphaunt-swift'].publish_targets = ['swift-package-source-tag'];
+    const binding = supplierArtifacts.find(
+      (row) => row.publication.product === 'oliphaunt-swift' && row.artifact.endsWith('.zip'),
+    );
+    const heldSwift = nativePublicationInputProjection(
+      { ...snapshot, supplierArtifacts: [binding] },
+      subset,
+    );
+    expect(Object.values(heldSwift.supplierArtifacts)).toHaveLength(1);
+    expect(Object.values(heldSwift.supplierArtifacts)[0].artifact).toBe(binding.artifact);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

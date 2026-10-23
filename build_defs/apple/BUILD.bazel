@@ -1,0 +1,127 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@bazel_skylib//rules:select_file.bzl", "select_file")
+load("@bazel_lib//lib:copy_file.bzl", "copy_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_apple//apple:ios.bzl", "ios_build_test")
+load("@rules_apple//apple:apple.bzl", "apple_dynamic_framework_import")
+load("@rules_swift//swift:swift_library.bzl", "swift_library")
+load("@rules_swift//swift:swift_interop_hint.bzl", "swift_interop_hint")
+load(":native.bzl", "apple_swift_cxx_copts", "expo_apple_swift_library", "react_apple_swift_copts")
+load("//build_defs/foundation:bun.bzl", "bun_test")
+load(":requirement-selection-test.bzl", "requirement_selection_test")
+load(":slices-test.bzl", "apple_slices_test")
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["*.bzl", "*.mts", "*.json", "*.plist", "*.patch"]))
+
+bun_test(
+    name = "app_action_test",
+    entry_point = "app.test.mts",
+    data = ["app.mts", "testdata/expo56-original-apple-resolve.json", "//build_defs/android:app.mts", "//:tools/packaging/archive-directory.mts", "//:tools/packaging/portable-archive.mts"],
+    size = "small",
+)
+
+bun_test(
+    name = "captured_swift_source_test",
+    entry_point = "captured-swift-source.test.mts",
+    data = ["captured-swift-source.mts", "captured-file.mts", "captured-archive.mts", "resources.mts", "testdata/swift-0.8.2-original-Package.swift", "//src/native/sdks/swift:tools/prepare-swift-release-consumer.mts", "//:tools/packaging/portable-archive.mts", "//:tools/packaging/archive-directory.mts", "//src/native/sdks/swift:tools/swift-native-carrier-contract.mts", "//build_defs/release:testdata/swift-0.8.2-carrier.json", "//build_defs/languages/swift:source-package.fixture.mts", "//build_defs/native/apple:static-carrier-consumer.mts", "//build_defs/native/apple:framework_helpers", "//src/native/sdks/swift:generator_sources", "//src/native/sdks/react-native:tools/stage-ios-app.mts", "//src/native/sdks/react-native:tools/native-resource-closure.mts", "//src/native/sdks/react-native:src/generated/extensions.json", "//src/database-resources:contracts/native-manifest.mts", "//src/database-resources:contracts/contract.json"],
+    size = "small",
+)
+
+bun_test(
+    name = "installed_app_boundary_test",
+    entry_point = "installed-app.test.mts",
+    data = ["installed-app.mts", "//:tools/packaging/portable-archive.mts", "//:tools/packaging/archive-directory.mts"],
+    size = "small",
+    target_compatible_with = ["@platforms//os:linux"],
+)
+
+
+# The original maintained rule tools execute licensed host paths selected by
+# the same Xcode policy. Their runfiles carry those watched bytes and receipt.
+filegroup(
+    name = "licensed_app_tools",
+    srcs = ["@native_apple_sdk//:app_tools"],
+    target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64"],
+)
+
+source_quality_files()
+
+requirement_selection_test(name = "requirement_selection_test")
+apple_slices_test(name = "slices_test")
+bun_test(name = "final_libraries_test", entry_point = "final-libraries.test.mts", data = ["final-libraries.mts", "//build_defs/native/apple:static-carrier-consumer.mts", "//build_defs/native/apple:framework_helpers", "//src/native/sdks/swift:generator_sources", "//:tools/packaging/testdata/zip-fixture.mts"], size = "small")
+
+# Rebuild a Swift 6 textual interface under the real Swift 5 React import profile.
+_SWIFT_CONTEXT = "testdata/swift-context/"
+_SWIFT_CONTEXT_MAC = ["@platforms//os:macos", "@platforms//cpu:aarch64", "//build_defs/host:apple_package"]
+swift_interop_hint(name = "swift_context_cbridge_hint", module_name = "CBridge", module_map = _SWIFT_CONTEXT + "module.modulemap")
+cc_library(
+    name = "swift_context_cbridge", hdrs = [_SWIFT_CONTEXT + "Bridge.h", _SWIFT_CONTEXT + "CallInvoker.h"],
+    aspect_hints = [":swift_context_cbridge_hint"], testonly = True, target_compatible_with = _SWIFT_CONTEXT_MAC,
+)
+swift_library(
+    name = "swift_context_emitter", module_name = "Bridge", srcs = [_SWIFT_CONTEXT + "Bridge.swift"],
+    deps = [":swift_context_cbridge"], library_evolution = True,
+    copts = ["-swift-version", "6", "-cxx-interoperability-mode=off"],
+    features = ["swift.add_target_name_to_output"], testonly = True, target_compatible_with = _SWIFT_CONTEXT_MAC,
+)
+select_file(name = "swift_context_interface", srcs = ":swift_context_emitter", subpath = "swift_context_emitter/Bridge.swiftinterface", testonly = True)
+# Copy only the interface: even without a sandbox, its search directory has no binary fallback.
+copy_file(name = "swift_context_interface_only", src = ":swift_context_interface", out = "swift_context_interfaces/Bridge.swiftinterface", testonly = True)
+swift_library(
+    name = "swift_context_consumer", module_name = "SwiftContextConsumer", srcs = [_SWIFT_CONTEXT + "Consumer.swift"],
+    deps = [":swift_context_cbridge"], swiftc_inputs = [":swift_context_interface_only", _SWIFT_CONTEXT + "react.yaml"],
+    copts = ["-swift-version", "5", "-I$(BINDIR)/build_defs/apple/swift_context_interfaces"] +
+        react_apple_swift_copts(_SWIFT_CONTEXT + "react.yaml") +
+        ["-Xcc", "-Ioliphaunt-swift-context/Headers", "-Xcc", "-DOLIPHAUNT_SWIFT_CONTEXT_REQUIRED=17"],
+    testonly = True, target_compatible_with = _SWIFT_CONTEXT_MAC,
+)
+build_test(name = "swift_interface_context_test", targets = [":swift_context_consumer"], target_compatible_with = _SWIFT_CONTEXT_MAC, size = "small")
+
+# CocoaPods supplies UIKit to Swift and Clang; private headers may import generated Swift declarations.
+_EXPO_UMBRELLA = "testdata/expo-umbrella/"
+_EXPO_UMBRELLA_IOS = ["@platforms//os:ios", "@platforms//cpu:aarch64"]
+apple_dynamic_framework_import(
+    name = "expo_umbrella_alias_framework",
+    framework_imports = glob([_EXPO_UMBRELLA + "AliasFixture.framework/**"]),
+    testonly = True, target_compatible_with = _EXPO_UMBRELLA_IOS,
+)
+expo_apple_swift_library(
+    name = "expo_umbrella_headerless", module_name = "ExpoUmbrellaHeaderless",
+    swift_srcs = [_EXPO_UMBRELLA + "Headerless.swift"], clang_srcs = [],
+    swift_copts = ["-swift-version", "5"] + apple_swift_cxx_copts(),
+    testonly = True, target_compatible_with = _EXPO_UMBRELLA_IOS,
+)
+# A prebuilt Swift dependency supplies an Objective-C header without a C++ API.
+swift_library(
+    name = "expo_umbrella_base", module_name = "ExpoUmbrellaBase",
+    srcs = [_EXPO_UMBRELLA + "Base.swift"], generates_header = True,
+    generated_header_name = "ExpoUmbrellaBase-Swift.h",
+    copts = ["-swift-version", "5", "-cxx-interoperability-mode=off"],
+    testonly = True, target_compatible_with = _EXPO_UMBRELLA_IOS,
+)
+expo_apple_swift_library(
+    name = "expo_umbrella_mixed", module_name = "ExpoUmbrellaMixed",
+    swift_srcs = [_EXPO_UMBRELLA + "Mixed.swift"], clang_srcs = [_EXPO_UMBRELLA + "Mixed.m"],
+    hdrs = [_EXPO_UMBRELLA + "Mixed.h", _EXPO_UMBRELLA + "include/ExpoUmbrellaMixed/Nested.h"],
+    includes = [_EXPO_UMBRELLA + "include"],
+    deps = [":expo_umbrella_alias_framework", ":expo_umbrella_base"],
+    clang_module_maps = [_EXPO_UMBRELLA + "AliasFixture.framework/Modules/module.modulemap"],
+    swiftc_inputs = [_EXPO_UMBRELLA + "MixedPrivate.h"],
+    additional_objc_compiler_inputs = [_EXPO_UMBRELLA + "MixedPrivate.h"],
+    swift_copts = ["-swift-version", "5"] + apple_swift_cxx_copts(),
+    testonly = True, target_compatible_with = _EXPO_UMBRELLA_IOS,
+)
+swift_library(
+    name = "expo_umbrella_consumer", module_name = "ExpoUmbrellaConsumer",
+    srcs = [_EXPO_UMBRELLA + "Consumer.swift"], deps = [":expo_umbrella_mixed"],
+    copts = ["-swift-version", "5"] + apple_swift_cxx_copts(),
+    testonly = True, target_compatible_with = _EXPO_UMBRELLA_IOS,
+)
+ios_build_test(
+    name = "expo_umbrella_test", minimum_os_version = "17.0",
+    targets = [":expo_umbrella_headerless", ":expo_umbrella_mixed", ":expo_umbrella_consumer"],
+    target_compatible_with = _EXPO_UMBRELLA_IOS, size = "small",
+)

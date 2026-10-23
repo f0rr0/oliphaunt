@@ -9,13 +9,178 @@ import test from 'node:test';
 import { readGitHubCoreRequestJournal } from './github-core-request-journal.mts';
 import {
   GitHubReadError,
+  githubJobArtifact,
   githubReadOptionsFromEnv,
+  latestGithubJob,
   RetryableReadError,
   redactGitHubReadDetail,
   requestGithubGraphql,
   requestGithubRepositoryJson,
   retryReadOperation,
 } from './github-read.mts';
+
+function inheritedJobFixture() {
+  // Execution fields and copy chronology follow run 39196019975's Linux x86_64 rows.
+  const original = {
+    id: 117880168369,
+    run_id: 39196019975,
+    head_sha: '1d5b15303737fe8d5a6bf49412755cdec99e69bf',
+    name: 'Linux runtime (x86_64)',
+    run_attempt: 1,
+    status: 'completed',
+    conclusion: 'success',
+    created_at: '2026-10-19T03:48:51Z',
+    started_at: '2026-10-19T03:48:53Z',
+    completed_at: '2026-10-19T06:51:36Z',
+  };
+  const inherited = {
+    ...original,
+    id: 117974326985,
+    run_attempt: 2,
+    created_at: '2026-10-19T08:58:35Z',
+  };
+  return {
+    original,
+    inherited,
+    snapshot: {
+      runId: String(original.run_id),
+      headSha: original.head_sha,
+      runAttempt: 2,
+      jobs: [original, inherited],
+      artifacts: [],
+    },
+  };
+}
+
+test('inherited GitHub job records resolve to the original physical execution without rewriting snapshots', () => {
+  const { original, inherited, snapshot } = inheritedJobFixture();
+  Object.assign(original, { steps: [{ name: 'Original display metadata' }] });
+  Object.assign(inherited, { steps: [] });
+  const before = JSON.stringify(snapshot);
+  assert.equal(latestGithubJob(snapshot, original.name), original);
+  assert.equal(JSON.stringify(snapshot), before);
+  snapshot.runAttempt = 3;
+  snapshot.jobs.push({ ...inherited, id: inherited.id + 1, run_attempt: 3 });
+  assert.equal(latestGithubJob(snapshot, original.name), original);
+  original.created_at = original.started_at;
+  assert.equal(latestGithubJob(snapshot, original.name), original);
+});
+
+for (const outcome of ['success', 'failure', 'cancelled', 'pending'])
+  test(`a newer physical ${outcome} job remains selected ahead of an older success`, () => {
+    const { original, inherited, snapshot } = inheritedJobFixture();
+    Object.assign(inherited, {
+      started_at: '2026-10-19T09:00:00Z',
+      completed_at: outcome === 'pending' ? null : '2026-10-19T09:01:00Z',
+      status: outcome === 'pending' ? 'in_progress' : 'completed',
+      conclusion: outcome === 'pending' ? null : outcome,
+    });
+    assert.equal(latestGithubJob(snapshot, original.name), inherited);
+  });
+
+for (const outcome of ['failure', 'cancelled'])
+  test(`an inherited ${outcome} job cannot become an older success`, () => {
+    const { original, inherited, snapshot } = inheritedJobFixture();
+    original.conclusion = inherited.conclusion = outcome;
+    assert.equal(latestGithubJob(snapshot, original.name), original);
+    assert.equal(latestGithubJob(snapshot, original.name).conclusion, outcome);
+  });
+
+const invalidInheritedJobs: [
+  string,
+  (fixture: ReturnType<typeof inheritedJobFixture>) => unknown,
+][] = [
+  ['missing original', ({ snapshot }) => snapshot.jobs.shift()],
+  ['same-attempt copies', ({ inherited, snapshot }) => snapshot.jobs.push({ ...inherited, id: 9 })],
+  ['duplicate origins', ({ original, snapshot }) => snapshot.jobs.unshift({ ...original, id: 8 })],
+  [
+    'copy before its physical origin',
+    ({ original, inherited, snapshot }) => {
+      snapshot.jobs.splice(1, 0, { ...original, id: 8, run_attempt: 2 });
+      original.created_at = inherited.created_at;
+      inherited.run_attempt = snapshot.runAttempt = 3;
+    },
+  ],
+  ['changed source', ({ inherited }) => (inherited.head_sha = 'f'.repeat(40))],
+  ['changed run', ({ inherited }) => (inherited.run_id += 1)],
+  [
+    'missing source',
+    ({ original, inherited }) => {
+      Reflect.deleteProperty(original, 'head_sha');
+      Reflect.deleteProperty(inherited, 'head_sha');
+    },
+  ],
+  [
+    'missing run',
+    ({ original, inherited }) => {
+      Reflect.deleteProperty(original, 'run_id');
+      Reflect.deleteProperty(inherited, 'run_id');
+    },
+  ],
+  ['wrong snapshot source', ({ snapshot }) => (snapshot.headSha = 'e'.repeat(40))],
+  ['wrong snapshot run', ({ snapshot }) => (snapshot.runId = '123')],
+  ['changed outcome', ({ inherited }) => (inherited.conclusion = 'failure')],
+  ['missing creation', ({ inherited }) => Reflect.deleteProperty(inherited, 'created_at')],
+  ['invalid creation', ({ inherited }) => (inherited.created_at = 'invalid')],
+  [
+    'alias created at completion',
+    ({ inherited }) => (inherited.created_at = inherited.completed_at),
+  ],
+  [
+    'original created after start',
+    ({ original }) => (original.created_at = '2026-10-19T03:49:00Z'),
+  ],
+  [
+    'reversed window',
+    ({ original, inherited }) => {
+      original.started_at = inherited.started_at = '2026-10-19T07:00:00Z';
+    },
+  ],
+  [
+    'invalid window',
+    ({ original, inherited }) => {
+      original.started_at = inherited.started_at = 'invalid';
+    },
+  ],
+];
+for (const [fault, mutate] of invalidInheritedJobs)
+  test(`inherited GitHub jobs reject ${fault}`, () => {
+    const f = inheritedJobFixture();
+    mutate(f);
+    assert.throws(() => latestGithubJob(f.snapshot, f.original.name));
+  });
+
+for (const outcome of ['success', 'failure', 'cancelled', 'pending'])
+  test(`an inherited record cannot bypass an intervening physical ${outcome} execution`, () => {
+    const { original, inherited, snapshot } = inheritedJobFixture();
+    snapshot.runAttempt = 3;
+    snapshot.jobs.push({ ...inherited, id: 7, run_attempt: 3 });
+    Object.assign(inherited, {
+      started_at: '2026-10-19T09:00:00Z',
+      completed_at: outcome === 'pending' ? null : '2026-10-19T09:01:00Z',
+      status: outcome === 'pending' ? 'in_progress' : 'completed',
+      conclusion: outcome === 'pending' ? null : outcome,
+    });
+    assert.throws(() => latestGithubJob(snapshot, original.name));
+  });
+
+test('a completed job with an incomplete window cannot fall back or authorize artifact download', () => {
+  const { original, inherited, snapshot } = inheritedJobFixture();
+  Reflect.deleteProperty(inherited, 'completed_at');
+  assert.equal(latestGithubJob(snapshot, original.name), inherited);
+  assert.throws(
+    () => githubJobArtifact(snapshot, inherited, 'native-build-evidence-x86_64', original.head_sha),
+    /valid producing window/u,
+  );
+});
+
+test('an inherited Required record does not establish a current-attempt physical gate', () => {
+  const { original, inherited, snapshot } = inheritedJobFixture();
+  original.name = inherited.name = 'Required';
+  const required = latestGithubJob(snapshot, 'Required');
+  assert.equal(required, original);
+  assert.notEqual(required.run_attempt, snapshot.runAttempt);
+});
 
 function deterministic(overrides = {}) {
   let time = 1_000;

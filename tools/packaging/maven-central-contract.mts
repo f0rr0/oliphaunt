@@ -126,7 +126,7 @@ function requireMetadata(project, context) {
  * Validate the immutable files for one Maven Central coordinate before any
  * signing, upload, or GitHub release mutation occurs.
  */
-export function validateMavenCentralPublication({ pomText, files, context = 'Maven publication' }) {
+export function mavenCentralPublicationFiles(pomText, context = 'Maven publication') {
   if (typeof pomText !== 'string' || pomText.length === 0) {
     throw error(`${context} POM must be nonempty UTF-8 text`);
   }
@@ -166,19 +166,24 @@ export function validateMavenCentralPublication({ pomText, files, context = 'Mav
   );
   requireMetadata(project, context);
 
-  const names = normalizedFiles(files, context);
   const prefix = `${artifactId}-${version}`;
   const required = [`${prefix}.pom`];
   if (packaging !== 'pom') {
     required.push(`${prefix}.${packaging}`, `${prefix}-sources.jar`, `${prefix}-javadoc.jar`);
   }
+  return { artifactId, groupId, packaging, version, files: required };
+}
+
+export function validateMavenCentralPublication({ pomText, files, context = 'Maven publication' }) {
+  const { files: required, ...identity } = mavenCentralPublicationFiles(pomText, context);
+  const names = normalizedFiles(files, context);
   for (const name of required) {
     if (!names.has(name)) {
       throw error(
-        `${context} (${groupId}:${artifactId}:${version}, packaging ${packaging}) is missing required file ${name}`,
+        `${context} (${identity.groupId}:${identity.artifactId}:${identity.version}, packaging ${identity.packaging}) is missing required file ${name}`,
       );
     }
   }
 
-  return { artifactId, groupId, packaging, version };
+  return identity;
 }

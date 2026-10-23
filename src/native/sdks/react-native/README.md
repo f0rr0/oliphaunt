@@ -10,7 +10,7 @@ npm install @oliphaunt/react-native @oliphaunt/seed-native-ios-datum64-standard
 
 For Expo, add `"@oliphaunt/react-native"` to `expo.plugins` in `app.json`, then build with `npx expo run:ios` or `npx expo run:android`. Expo Go does not include this native module. For bare projects, follow the [native integration guide](https://oliphaunt.dev/docs/sdk/react-native/architecture).
 
-The [quickstart](https://oliphaunt.dev/docs/sdk/react-native) covers prerequisites and the versions documented by the current site. Pin dependencies in your application manifest or lockfile.
+The [quickstart](https://oliphaunt.dev/docs/sdk/react-native) covers prerequisites. Pin dependencies in your application manifest or lockfile.
 
 ## First query
 

@@ -1,9 +1,8 @@
-import { archiveDirectory } from './archive-directory.mts';
 import assert from 'node:assert/strict';
 import {
   chmodSync,
-  mkdtempSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -14,6 +13,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { zstdCompressSync } from 'node:zlib';
+import { archiveDirectory } from './archive-directory.mts';
 
 import { createDeterministicTar } from './cargo-source-package.mts';
 import {
@@ -21,8 +21,8 @@ import {
   assertReleaseNoticesInDirectory,
   assertReleaseNoticesInEntries,
   hasCanonicalReleaseStagingMode,
-  releasePackageLicense,
   releaseNoticeRows,
+  releasePackageLicense,
   stageReleaseNotices,
 } from './release-notices.mts';
 
@@ -80,6 +80,24 @@ test('defines stable canonical member names in deterministic order', () => {
       'THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT',
     ],
   );
+});
+
+test('declared source roots preserve strict notice staging and reject linked inputs', (t) => {
+  const { root, stage } = fixture(t);
+  const sources = path.join(root, 'sources');
+  mkdirSync(sources);
+  for (const row of releaseNoticeRows({ profile: 'source-sdk' })) {
+    const file = path.join(sources, row.member);
+    writeFileSync(file, readFileSync(row.source), { mode: 0o644 });
+  }
+  const options = { profile: 'source-sdk', sourceRoot: sources };
+  stageReleaseNotices(stage, options);
+  assertReleaseNoticesInDirectory(stage, options);
+  assert.throws(() => releaseNoticeRows({ sourceRoot: 'relative' }), /absolute directory/u);
+  const license = path.join(sources, 'LICENSE');
+  rmSync(license);
+  symlinkSync(path.join(ROOT, 'LICENSE'), license);
+  assert.throws(() => stageReleaseNotices(stage, options), /regular non-symlink/u);
 });
 
 test('stages exact bytes and removes stale product notices', async (t) => {

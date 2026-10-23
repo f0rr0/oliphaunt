@@ -36,6 +36,10 @@ pub(super) const EXTENSION_ARTIFACT_POSTGRESQL_LICENSE: &str =
     "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT";
 pub(super) const EXTENSION_ARTIFACT_OPENSSL_LICENSE: &str =
     "THIRD_PARTY_LICENSES/OpenSSL-LICENSE.txt";
+pub(super) const EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES: [&str; 2] = [
+    "share/licenses/openssl-native/LICENSE.txt",
+    "share/licenses/openssl-native/SOURCE.toml",
+];
 
 fn extension_artifact_legal_members(
     profile: NativeExtensionArtifactLicenseProfile,
@@ -89,9 +93,16 @@ pub(super) fn validate_extension_artifact_license_profile(
     let external = catalog::by_sql_name(sql_name)
         .and_then(|extension| extension.artifact_product.as_deref())
         .is_none_or(|product| product != "oliphaunt-extension-contrib-pg18");
+    let openssl_construction_files = license_files.iter().map(PathBuf::as_path).eq(
+        EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES
+            .iter()
+            .map(Path::new),
+    );
     let embeds_openssl = !external
         && sql_name == "pgcrypto"
         && (matches!(native_target, Some("macos-arm64" | "windows-x64-msvc"))
+            || (openssl_construction_files
+                && native_target.is_some_and(|target| DESKTOP_NATIVE_TARGETS.contains(&target)))
             || mobile_static_dependency_archives
                 .iter()
                 .any(|archive| archive.name == "openssl"));
@@ -118,7 +129,7 @@ pub(super) fn validate_extension_artifact_license_profile(
             manifest_path.display()
         )));
     }
-    if !external && !license_files.is_empty() {
+    if !(external || license_files.is_empty() || embeds_openssl && openssl_construction_files) {
         return Err(Error::InvalidConfig(format!(
             "manifest {} contrib profile must not declare upstream licenseFiles leaves",
             manifest_path.display()
@@ -130,7 +141,7 @@ pub(super) fn validate_extension_artifact_license_profile(
 pub(super) fn validate_prebuilt_extension_leaf_inventory(
     root: &Path,
     manifest_path: &Path,
-    extension: &RuntimeResourceExtension,
+    extension: &mut RuntimeResourceExtension,
 ) -> Result<()> {
     let profile = extension.license_profile.ok_or_else(|| {
         Error::Engine(format!(
@@ -193,7 +204,29 @@ pub(super) fn validate_prebuilt_extension_leaf_inventory(
     for relative in &extension.data_files {
         expected.insert(PathBuf::from("files/share/postgresql").join(relative));
     }
-    if let Some(module) = &extension.native_module_file {
+    if let Some(module) = &extension.native_module_file
+        && let Some((_, suffix @ ("so" | "dylib" | "dll"))) = module.rsplit_once('.')
+        && let Some(canonical) = Extension::by_sql_name(&extension.sql_name)
+        && let Some(stem) = canonical.native_module_stem()
+        && extension.native_module_stem.as_deref() == Some(stem)
+        && module == &format!("{stem}.{suffix}")
+    {
+        let dependencies = canonical
+            .native_dependency_module_stems()
+            .iter()
+            .map(|stem| format!("{stem}.{suffix}"))
+            .collect::<Vec<_>>();
+        // Historical carriers may incorporate these dependencies into the main
+        // module. A separate canonical sidecar requires its complete profile.
+        if dependencies.iter().any(|module| {
+            ["files/lib/postgresql", "files/lib/modules"]
+                .iter()
+                .any(|prefix| actual.contains(&PathBuf::from(prefix).join(module)))
+        }) {
+            extension.native_dependency_module_files = dependencies;
+        }
+    }
+    for module in extension.native_module_files() {
         expected.insert(PathBuf::from("files/lib/postgresql").join(module));
         let embedded = PathBuf::from("files/lib/modules").join(module);
         if extension

@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-tool="${1:?usage: install-pinned-maintainer-tool.sh <cargo-binstall|actionlint> [--print-version|--promote-locked-cargo-source <binary>]}"
+tool="${1:?usage: install-pinned-maintainer-tool.sh <cargo-binstall|actionlint> [--print-version|--promote-locked-cargo-source <binary>], or zizmor --print-version}"
 shift
 case "$tool" in
   cargo-binstall | actionlint) ;;
+  zizmor)
+    [ "$#" = 1 ] && [ "$1" = --print-version ] || {
+      echo 'zizmor supports --print-version here; bootstrap-tools.sh owns its local installation' >&2
+      exit 2
+    }
+    ;;
   *) echo "unsupported pinned maintainer tool: $tool" >&2; exit 2 ;;
 esac
 
@@ -56,6 +62,12 @@ case "$tool" in
   cargo-binstall)
     if [ -n "${CARGO_BINSTALL_VERSION:-}" ] && [ "$CARGO_BINSTALL_VERSION" != "$version" ]; then
       echo "CARGO_BINSTALL_VERSION must match $manifest ($version)" >&2
+      exit 1
+    fi
+    ;;
+  zizmor)
+    if [ -n "${ZIZMOR_VERSION:-}" ] && [ "$ZIZMOR_VERSION" != "$version" ]; then
+      echo "ZIZMOR_VERSION must match $manifest ($version)" >&2
       exit 1
     fi
     ;;

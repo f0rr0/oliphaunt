@@ -7,7 +7,7 @@ if [ "${1:-}" != --context ]; then
   done
   unset CI_RUN_ID BOOTSTRAP_LEDGER_PATH OLIPHAUNT_REQUIRE_GITHUB_CORE_REQUEST_JOURNAL
   exec bash tools/release/release-please-state.sh "$PWD" HEAD \
-    bash tools/release/with-source.sh HEAD bash tools/ci/with-projects.sh --exec \
+    bash tools/release/with-source.sh HEAD \
     bash tools/release/bootstrap-publication-capsule.test.sh --context
 fi
 bash tools/dev/bun.sh test ./tools/release/bootstrap-publication-capsule.test.mts

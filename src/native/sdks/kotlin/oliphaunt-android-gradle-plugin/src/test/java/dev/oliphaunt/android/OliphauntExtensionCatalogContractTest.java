@@ -37,6 +37,12 @@ public final class OliphauntExtensionCatalogContractTest {
   private OliphauntExtensionCatalogContractTest() {}
 
   public static void main(String[] args) throws Exception {
+    String testTmpDir = System.getenv("TEST_TMPDIR");
+    if (testTmpDir != null) {
+      System.setProperty(
+          "gradle.user.home",
+          Files.createDirectories(Path.of(testTmpDir, "gradle-user-home")).toString());
+    }
     createsManagedPluginExtensionWithoutGradleNameCollision();
     resolvesRuntimeBoundBundleOnceWithDependencyClosure();
     acceptsProductionShapedRuntimeBundlesForBothAndroidAbis();

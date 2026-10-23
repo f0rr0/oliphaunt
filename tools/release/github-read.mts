@@ -45,6 +45,136 @@ function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+/** Match a requested Actions ref, optionally against the acquired run facts.
+ * A queue ref remains construction context; it cannot establish reviewed main.
+ */
+export function matchesGithubWorkflowRef(
+  event: string,
+  ref: string,
+  origin?: { headBranch?: string; pullRequestNumbers?: number[] },
+) {
+  const pattern =
+    event === 'pull_request'
+      ? /^refs\/pull\/[1-9][0-9]*\/merge$/u
+      : event === 'merge_group'
+        ? /^refs\/heads\/gh-readonly-queue\/main\/[^\s\u0000-\u001f\u007f]+$/u
+        : ['push', 'workflow_dispatch'].includes(event)
+          ? /^refs\/heads\/[^\s\u0000-\u001f\u007f]+$/u
+          : undefined;
+  if (!pattern?.test(ref)) return false;
+  if (origin === undefined) return true;
+  return event === 'pull_request'
+    ? origin.pullRequestNumbers?.includes(Number(ref.split('/')[2])) === true
+    : ref === `refs/heads/${origin.headBranch}`;
+}
+
+/** The latest execution of one role, not the latest workflow attempt.
+ * A newer failed or cancelled execution must never fall back to an older success.
+ */
+export function latestGithubJob(snapshot, name: string) {
+  const jobs = snapshot.jobs.filter((job) => job.name === name);
+  if (!jobs.length) return undefined;
+  if (
+    jobs.some(
+      (job) =>
+        !Number.isSafeInteger(job.run_attempt) ||
+        job.run_attempt <= 0 ||
+        job.run_attempt > snapshot.runAttempt,
+    )
+  )
+    throw new Error(`job ${name} has an invalid producing attempt`);
+  const attempt = jobs.reduce((maximum, job) => Math.max(maximum, job.run_attempt), 0);
+  const latest = jobs.filter((job) => job.run_attempt === attempt);
+  if (latest.length !== 1) throw new Error(`job ${name} has ambiguous latest executions`);
+  const selected = latest[0];
+  if (selected.status !== 'completed') return selected;
+  const time = (value) => (typeof value === 'string' ? Date.parse(value) : NaN);
+  const start = time(selected.started_at);
+  const end = time(selected.completed_at);
+  const created = time(selected.created_at);
+  const sameWindow = (job) =>
+    typeof selected.started_at === 'string' &&
+    typeof selected.completed_at === 'string' &&
+    job.started_at === selected.started_at &&
+    job.completed_at === selected.completed_at;
+  const earlier = jobs.filter((job) => job.run_attempt < attempt);
+  // GitHub copies retained roles into reruns after their physical execution ended.
+  if (!(created > end) && !earlier.some(sameWindow)) return selected;
+  if (
+    ![start, end, created].every(Number.isFinite) ||
+    start > end ||
+    !Number.isSafeInteger(selected.run_id) ||
+    selected.run_id <= 0 ||
+    typeof selected.head_sha !== 'string' ||
+    !/^[0-9a-f]{40}$/u.test(selected.head_sha ?? '') ||
+    typeof selected.conclusion !== 'string' ||
+    selected.conclusion.length === 0 ||
+    (snapshot.runId !== undefined && String(selected.run_id) !== String(snapshot.runId)) ||
+    (snapshot.headSha !== undefined && selected.head_sha !== snapshot.headSha)
+  )
+    throw new Error(`job ${name} has invalid inherited execution identity or window`);
+  const sameExecution = (job) =>
+    ['name', 'run_id', 'head_sha', 'status', 'conclusion', 'started_at', 'completed_at'].every(
+      (field) => job[field] === selected[field],
+    );
+  const retained = earlier.filter(sameWindow);
+  if (retained.some((job) => !sameExecution(job) || !Number.isFinite(time(job.created_at))))
+    throw new Error(`job ${name} has conflicting inherited executions`);
+  const origins = retained.filter((job) => time(job.created_at) <= start);
+  if (origins.length !== 1)
+    throw new Error(`job ${name} has missing or ambiguous inherited execution origin`);
+  const origin = origins[0];
+  if (retained.some((job) => job.run_attempt < origin.run_attempt))
+    throw new Error(`job ${name} has an inherited execution before its origin`);
+  const lineage = jobs.filter((job) => job.run_attempt >= origin.run_attempt);
+  if (new Set(lineage.map((job) => job.run_attempt)).size !== lineage.length)
+    throw new Error(`job ${name} has ambiguous inherited executions`);
+  if (
+    lineage.some(
+      (job) =>
+        !Number.isSafeInteger(job.id) ||
+        job.id <= 0 ||
+        (job !== origin &&
+          (!sameExecution(job) ||
+            !Number.isFinite(time(job.created_at)) ||
+            time(job.created_at) <= end)),
+    ) ||
+    new Set(lineage.map((job) => job.id)).size !== lineage.length
+  )
+    throw new Error(`job ${name} has conflicting inherited execution history`);
+  return origin;
+}
+
+/** Artifact names can repeat on reruns. Bind the exact source and producer window first. */
+export function githubJobArtifact(snapshot, job, name: string, source: string) {
+  const start = Date.parse(job.started_at);
+  const end = Date.parse(job.completed_at);
+  if (
+    job.status !== 'completed' ||
+    job.conclusion !== 'success' ||
+    !Number.isFinite(start) ||
+    !Number.isFinite(end) ||
+    start > end
+  )
+    throw new Error(`job ${job.name} did not complete successfully with a valid producing window`);
+  const matches = snapshot.artifacts.filter((artifact) => {
+    const created = Date.parse(artifact.created_at);
+    return (
+      artifact.name === name &&
+      artifact.expired === false &&
+      artifact.head_sha === source &&
+      Number.isFinite(created) &&
+      created >= start &&
+      created < end + 1000
+    );
+  });
+  if (matches.length !== 1)
+    throw new Error(
+      `${snapshot.runId}/${name} requires exactly one artifact bound to the selected source/job attempt; found ${matches.length}`,
+    );
+  return matches[0];
+}
+
 export class GitHubReadError extends Error {
   constructor(
     message,

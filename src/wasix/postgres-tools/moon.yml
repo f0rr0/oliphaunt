@@ -13,9 +13,6 @@ project:
   release:
     component: "postgres-tools-wasix"
     packagePath: "src/wasix/postgres-tools"
-    artifactTargets:
-      preset: "postgres-tools-wasix"
-      targets: ["portable", "linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"]
 fileGroups:
   sources: ["**/*", "!**/node_modules/**/*", "!**/target/**/*"]
   cargo-carrier-sources: ["crates/**/*.rs", "crates/**/Cargo.toml"]

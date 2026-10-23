@@ -217,7 +217,59 @@ fn artifact_name_from_file_stem(stem: &str) -> String {
 }
 
 fn rust_string_literal(path: &Path) -> String {
-    format!("{:?}", path.to_string_lossy())
+    // Generated Rust is compiled in a later action. Keep references relative
+    // to its output directory instead of retaining a build-script sandbox.
+    fn lexical_absolute(path: &Path) -> PathBuf {
+        let mut normalized = PathBuf::new();
+        for component in std::path::absolute(path)
+            .expect("absolute generated include path")
+            .components()
+        {
+            match component {
+                std::path::Component::ParentDir => {
+                    normalized.pop();
+                }
+                std::path::Component::CurDir => {}
+                component => normalized.push(component.as_os_str()),
+            }
+        }
+        normalized
+    }
+
+    let base = lexical_absolute(&PathBuf::from(
+        env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"),
+    ));
+    let target = lexical_absolute(path);
+    if !target.starts_with(&base) {
+        let manifest_dir = lexical_absolute(&PathBuf::from(
+            env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo"),
+        ));
+        if let Ok(member) = target.strip_prefix(&manifest_dir) {
+            return format!(
+                "concat!(env!(\"CARGO_MANIFEST_DIR\"), {:?})",
+                format!("/{}", member.to_string_lossy().replace('\\', "/"))
+            );
+        }
+    }
+    let base_components = base.components().collect::<Vec<_>>();
+    let target_components = target.components().collect::<Vec<_>>();
+    let common = base_components
+        .iter()
+        .zip(&target_components)
+        .take_while(|(left, right)| left == right)
+        .count();
+    if common == 0 {
+        // Ordinary Windows Cargo may place inputs and outputs on separate drives.
+        return format!("{:?}", target.to_string_lossy());
+    }
+    let mut relative = PathBuf::new();
+    for _ in &base_components[common..] {
+        relative.push("..");
+    }
+    for component in &target_components[common..] {
+        relative.push(component.as_os_str());
+    }
+    format!("{:?}", relative.to_string_lossy())
 }
 
 fn artifact_belongs_to_crate(name: &str) -> bool {

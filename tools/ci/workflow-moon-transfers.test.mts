@@ -1,16 +1,20 @@
 #!/usr/bin/env bun
 
 import assert from 'node:assert/strict';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readlinkSync,
+  rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
@@ -29,6 +33,64 @@ const tasks = new Map(
     task,
   ]),
 );
+
+if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
+  test('WASIX source lifecycle server inputs resolve in the Moon execution hasher', () => {
+    const scratch = mkdtempSync(path.join(tmpdir(), 'oliphaunt-moon-inputs-'));
+    const serverRoot = '/src/wasix/pgwire-server/';
+    const inputs = tasks
+      .get('oliphaunt-wasix-rust:test-regression')
+      .inputs.map((input) => (typeof input === 'string' ? input : (input.file ?? input.glob)))
+      .filter((input) => input?.startsWith(serverRoot));
+    try {
+      mkdirSync(path.join(scratch, '.moon'));
+      mkdirSync(path.join(scratch, 'fixture'));
+      writeFileSync(path.join(scratch, '.moon/workspace.yml'), 'projects:\n  fixture: fixture\n');
+      for (const file of ['Cargo.toml', 'README.md', 'src/lib.rs', 'tests/support/mod.rs']) {
+        const destination = path.join(scratch, serverRoot, file);
+        mkdirSync(path.dirname(destination), { recursive: true });
+        writeFileSync(destination, 'fixture\n');
+      }
+      const configure = (taskInputs) =>
+        writeFileSync(
+          path.join(scratch, 'fixture/moon.yml'),
+          JSON.stringify({
+            language: 'bash',
+            tasks: { qualify: { command: 'true', inputs: taskInputs } },
+          }),
+        );
+      configure(inputs);
+      const git = (args) => execFileSync('git', args, { cwd: scratch, stdio: 'pipe' });
+      git(['init', '--quiet', '--initial-branch=main']);
+      git(['add', '.']);
+      git([
+        '-c',
+        'user.name=Fixture',
+        '-c',
+        'user.email=fixture@example.invalid',
+        '-c',
+        'commit.gpgsign=false',
+        'commit',
+        '--quiet',
+        '-m',
+        'fixture',
+      ]);
+      // Moon tasks inherit their parent's workspace; this proof owns a separate one.
+      const env = { ...process.env, MOON_CACHE: 'off', MOON_WORKSPACE_ROOT: scratch };
+      delete env.MOON_BASE;
+      delete env.MOON_HEAD;
+      const run = () =>
+        spawnSync(
+          process.env.MOON_BIN ?? 'moon',
+          ['run', 'fixture:qualify', '--upstream', 'none', '--no-actions'],
+          { cwd: scratch, env, encoding: 'utf8' },
+        );
+      const result = run();
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
 
 if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
   test('Rust source uploads follow their selected package producers', () => {

@@ -1,0 +1,13 @@
+{
+  "workspaces": {
+    "oliphaunt-example-browser-wasix": ["vite", "@electric-sql/pglite"],
+    "@oliphaunt/ts": ["@types/pg"],
+    "@oliphaunt/react-native": [
+      "@react-native/typescript-config",
+      "react-native",
+      "react",
+      "@react-native/codegen"
+    ]
+  },
+  "overrideTools": ["esbuild"]
+}

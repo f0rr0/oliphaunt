@@ -1,5 +1,6 @@
 [package]
 name = "oliphaunt-build"
+exclude = ["BUILD.bazel"]
 version = "0.3.2"
 edition = "2024"
 rust-version = "1.93"

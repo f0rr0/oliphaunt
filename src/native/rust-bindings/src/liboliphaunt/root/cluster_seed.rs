@@ -222,7 +222,8 @@ mod tests {
 
     #[test]
     fn fresh_initdb_uses_fixed_bootstrap_identity_and_packaged_storage() {
-        let args = initdb_args(Path::new("/runtime"), Path::new("/app/database/pgdata"));
+        let runtime = Path::new("/runtime");
+        let args = initdb_args(runtime, Path::new("/app/database/pgdata"));
 
         assert_eq!(args[0], OsStr::new("-D"));
         assert_eq!(args[1], OsStr::new("/app/database/pgdata"));
@@ -232,17 +233,14 @@ mod tests {
         assert!(!args.iter().any(|arg| arg == OsStr::new("--no-sync")));
         assert!(
             args.iter()
-                .any(|arg| arg == OsStr::new("/runtime/share/postgresql"))
+                .any(|arg| arg == runtime.join("share/postgresql").as_os_str())
         );
     }
 
     #[test]
     fn cluster_seed_initdb_sets_icu_data_when_materialized() {
-        let root = std::env::temp_dir().join(format!(
-            "oliphaunt-cluster-seed-icu-{}-{}",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("test")
-        ));
+        let root =
+            std::env::temp_dir().join(format!("oliphaunt-cluster-seed-icu-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let runtime = root.join("runtime");
         let icu_data = runtime.join("share/icu");
@@ -320,9 +318,8 @@ mod tests {
     #[test]
     fn distributed_icu_seed_suppresses_only_host_locale_discovery() {
         let root = std::env::temp_dir().join(format!(
-            "oliphaunt-cluster-seed-mobile-{}-{}",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("test")
+            "oliphaunt-cluster-seed-mobile-{}",
+            std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);
         let runtime = root.join("runtime");
@@ -388,9 +385,8 @@ mod tests {
     #[test]
     fn cluster_seed_config_normalization_forces_posix_host_values() {
         let root = std::env::temp_dir().join(format!(
-            "oliphaunt-cluster-seed-normalize-{}-{}",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("test")
+            "oliphaunt-cluster-seed-normalize-{}",
+            std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
@@ -428,9 +424,8 @@ mod tests {
     #[test]
     fn cluster_seed_config_normalization_uses_windows_dsm_on_windows() {
         let root = std::env::temp_dir().join(format!(
-            "oliphaunt-cluster-seed-normalize-windows-{}-{}",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("test")
+            "oliphaunt-cluster-seed-normalize-windows-{}",
+            std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();

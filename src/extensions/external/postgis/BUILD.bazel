@@ -1,0 +1,35 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/extensions/postgis:modules.bzl", "native_postgis_modules", "postgis_dependency_module_labels")
+load("@oliphaunt_metadata//:metadata.bzl", "EXTENSION_RECIPES", "EXTENSION_SOURCES")
+load("//build_defs/extensions:extensions.bzl", "NATIVE_EXTENSION_CONFIGURATION", "extension_identity", "extension_member_payload", "extension_member_validation_test")
+load("//build_defs/release:shipping.bzl", "shipping_package")
+load("//build_defs/extensions:native_carriers.bzl", "native_external_extension_carriers")
+load("//build_defs/extensions:owner_carriers.bzl", "native_extension_final_contract_test")
+load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["release.toml", "source.toml", "recipe.toml", "upstream-license-data.json"] + glob(["dependencies/*/source.toml"]))
+exports_files(["tools/windows/postgis-compat.h", "tools/windows/flatgeobuf-compat.h"])
+
+native_external_extension_carriers(sql_name = "postgis")
+native_extension_final_contract_test(name = "native_final_contract_test", products = [EXTENSION_SOURCES["postgis"]["product"]], target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
+
+native_postgis_modules(name = "postgis", standalone = "//build_defs/extensions/postgis:postgis",
+                      dependency_module = "//build_defs/extensions/postgis:dependency_module")
+
+_DATA = EXTENSION_RECIPES["postgis"]["artifacts"]["data_files"]
+_CONTRIB_DIRECTORIES = {"/".join(path.split("/")[:-1]): True for path in _DATA if path.endswith(".sql")}.keys()
+
+extension_member_payload(name = "native_payload", sql_name = "postgis", owner = extension_identity("postgis"),
+                         resources = ["//build_defs/extensions/postgis:extension_sql", "//build_defs/extensions/postgis:control"],
+                         data_resources = {"//build_defs/extensions/postgis:data_sql": _CONTRIB_DIRECTORIES[0],
+                                           "//build_defs/extensions/postgis:database": [path for path in _DATA if path.endswith("/proj.db")][0]},
+                         dependency_modules = postgis_dependency_module_labels("//build_defs/extensions/postgis:dependency_module"),
+                         server_module = ":postgis_server_module", embedded_module = ":postgis_embedded_module")
+
+shipping_package(name = "native_member", owner = extension_identity("postgis"), artifacts = [":native_payload"],
+                 ecosystem = "internal", package_name = "postgis", configuration = NATIVE_EXTENSION_CONFIGURATION, role = "extension-member", suppliers = ":native_payload")
+extension_member_validation_test(name = "native_payload_test", payload = ":native_payload", sql_name = "postgis")
+
+source_quality_files()

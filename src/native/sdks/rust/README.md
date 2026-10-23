@@ -8,7 +8,7 @@ Embed native PostgreSQL in a Rust application. Use `AsyncOliphaunt` to keep an a
 cargo add oliphaunt
 ```
 
-The [quickstart](https://oliphaunt.dev/docs/sdk/rust) covers prerequisites and the versions documented by the current site. Pin dependencies in your application manifest or lockfile.
+The [quickstart](https://oliphaunt.dev/docs/sdk/rust) covers prerequisites. Pin dependencies in your application manifest or lockfile.
 
 ## First query
 

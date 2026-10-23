@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 if [[ "${1:-}" != --context ]]; then
   exec bash tools/release/release-please-state.sh "$PWD" HEAD \
-    bash tools/release/with-source.sh HEAD bash tools/ci/with-projects.sh --exec \
+    bash tools/release/with-source.sh HEAD \
     bash tools/release/publication-lock.test.sh --context
 fi
 scratch="$(mktemp -d)"

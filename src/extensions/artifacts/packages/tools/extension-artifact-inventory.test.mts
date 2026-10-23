@@ -22,9 +22,79 @@ import {
 } from '../../../tools/extension-upstream-licenses.mts';
 import {
   EXTENSION_ARTIFACT_PROPERTY_KEYS,
+  nativeDependencyModuleBasenames,
   parseExtensionArtifactProperties,
   validateExtensionArtifactArchive,
 } from './extension-artifact-inventory.mts';
+
+test('canonical native dependency stems project into desktop and mobile host module suffixes', async () => {
+  const recipe = Bun.TOML.parse(
+    await fs.readFile(
+      path.resolve(import.meta.dirname, '../../../external/postgis/recipe.toml'),
+      'utf8',
+    ),
+  );
+  const paths = recipe.artifacts.native_dependency_modules;
+  for (const [target, suffix] of [
+    ['linux-x64-gnu', '.so'],
+    ['linux-arm64-gnu', '.so'],
+    ['macos-arm64', '.dylib'],
+    ['windows-x64-msvc', '.dll'],
+    ['ios-xcframework', '.dylib'],
+    ['android-arm64-v8a', '.so'],
+    ['android-x86_64', '.so'],
+  ]) {
+    assert.deepEqual(
+      nativeDependencyModuleBasenames(paths, target),
+      paths.map((file) => path.posix.basename(file).replace(/\.so$/u, suffix)).sort(),
+    );
+  }
+  for (const invalid of [
+    ['lib/modules/wrong.so'],
+    ['lib/postgresql/nested/wrong.so'],
+    ['lib/postgresql/../wrong.so'],
+    ['lib/postgresql/wrong.txt'],
+  ])
+    assert.throws(
+      () => nativeDependencyModuleBasenames(invalid, 'windows-x64-msvc'),
+      /canonical recipe/u,
+    );
+  assert.deepEqual(
+    nativeDependencyModuleBasenames(
+      paths,
+      'windows-x64-msvc',
+      recipe.artifacts.native_dependency_modules_by_target,
+    ),
+    [],
+  );
+  for (const target of [
+    'linux-x64-gnu',
+    'linux-arm64-gnu',
+    'macos-arm64',
+    'ios-xcframework',
+    'android-arm64-v8a',
+    'android-x86_64',
+  ])
+    assert.deepEqual(
+      nativeDependencyModuleBasenames(
+        paths,
+        target,
+        recipe.artifacts.native_dependency_modules_by_target,
+      ),
+      nativeDependencyModuleBasenames(paths, target),
+    );
+  assert.throws(
+    () =>
+      nativeDependencyModuleBasenames(
+        paths,
+        'wasix-portable',
+        recipe.artifacts.native_dependency_modules_by_target,
+      ),
+    /no desktop/u,
+  );
+  assert.throws(() => nativeDependencyModuleBasenames(paths, 'wasix-portable'), /no desktop/u);
+  assert.deepEqual(nativeDependencyModuleBasenames([], 'ios-xcframework'), []);
+});
 
 function writeString(buffer, offset, length, value) {
   const bytes = Buffer.from(value);
@@ -244,6 +314,58 @@ async function main() {
       nativeRuntimeVersion: '1.2.3',
       label: 'legitimate',
     });
+    for (const target of ['ios-xcframework', 'android-arm64-v8a', 'android-x86_64']) {
+      const mobileEntries = new Map(legitimate);
+      mobileEntries.set('manifest.properties', manifest({ nativeTarget: target }));
+      const file = await writeArchive(root, `${target}-metadata-fixture.tar.gz`, mobileEntries);
+      const mobileContract = {
+        target,
+        archives: [],
+        dependencies: [],
+        symbolPrefix: '',
+        symbolAliases: [],
+      };
+      const mobile = validateExtensionArtifactArchive({
+        file,
+        metadata: pgtapMetadata,
+        target,
+        nativeRuntimeVersion: '1.2.3',
+        mobileContract,
+      });
+      assert.deepEqual(mobile.runtimeFiles, validated.runtimeFiles);
+      assert.throws(
+        () =>
+          validateExtensionArtifactArchive({
+            file,
+            metadata: pgtapMetadata,
+            target,
+            nativeRuntimeVersion: '1.2.3',
+          }),
+        /declared mobile inventory contract/u,
+      );
+      assert.throws(
+        () =>
+          validateExtensionArtifactArchive({
+            file,
+            metadata: pgtapMetadata,
+            target,
+            nativeRuntimeVersion: '1.2.3',
+            mobileContract: { ...mobileContract, target: 'wrong-target' },
+          }),
+        /declared mobile inventory contract/u,
+      );
+      assert.throws(
+        () =>
+          validateExtensionArtifactArchive({
+            file,
+            metadata: pgtapMetadata,
+            target,
+            nativeRuntimeVersion: '1.2.3',
+            mobileContract: { ...mobileContract, dependencies: ['unselected:dependency:wrong.a'] },
+          }),
+        /mobile inventory contract/u,
+      );
+    }
     assert.deepEqual(
       validated.legalFiles.map(({ path: member }) => member),
       [...pgtapLegal.keys()].sort(),
@@ -624,6 +746,65 @@ async function main() {
       validatedPostgis.legalFiles.map(({ path: member }) => member),
       [...postgisLegal.keys()].sort(),
     );
+
+    // These synthetic archive bytes exercise the reader's alias contract;
+    // actual target archives are qualified by the mobile final-carrier roots.
+    for (const target of ['android-arm64-v8a', 'android-x86_64']) {
+      const archive = `mobile-static/${target}/extensions/postgis-3/liboliphaunt_extension_postgis-3.a`;
+      const aliases = [
+        'difference:oliphaunt_static_postgis_3_difference',
+        'pg_finfo_difference:pg_finfo_oliphaunt_static_postgis_3_difference',
+      ];
+      const contract = {
+        target,
+        archives: [`${target}:${archive}`],
+        dependencies: [],
+        symbolPrefix: 'oliphaunt_static_postgis_3',
+        symbolAliases: aliases,
+      };
+      const entries = new Map(postgis);
+      entries.delete('files/lib/modules/postgis-3.so');
+      entries.set(archive, 'synthetic target archive');
+      const properties = {
+        sqlName: 'postgis',
+        nativeTarget: target,
+        nativeModuleStem: 'postgis-3',
+        nativeModuleFile: 'postgis-3.so',
+        dataFiles: postgisMetadata.dataFiles.join(','),
+        extensionSqlFileNames: '',
+        extensionSqlFilePrefixes: postgisMetadata.extensionSqlFilePrefixes.join(','),
+        mobilePrebuilt: 'yes',
+        mobileStaticArchives: contract.archives.join(','),
+        staticSymbolPrefix: contract.symbolPrefix,
+        staticSymbolAliases: aliases.join(','),
+      };
+      const read = async (label, actualAliases) => {
+        entries.set(
+          'manifest.properties',
+          manifest({ ...properties, staticSymbolAliases: [...actualAliases].sort().join(',') }),
+        );
+        const file = await writeArchive(root, `postgis-${target}-${label}.tar.gz`, entries);
+        return () =>
+          validateExtensionArtifactArchive({
+            file,
+            metadata: postgisMetadata,
+            target,
+            nativeRuntimeVersion: '1.2.3',
+            mobileContract: contract,
+          });
+      };
+      (await read('valid', aliases))();
+      for (const [label, actualAliases] of [
+        ['missing', []],
+        ['wrong', aliases.map((value) => `${value}_wrong`)],
+        ['extra', [...aliases, 'extra:oliphaunt_static_postgis_3_extra']],
+      ]) {
+        assert.throws(
+          await read(label, actualAliases),
+          /staticSymbolAliases.*mobile inventory contract/u,
+        );
+      }
+    }
 
     const missingEmbeddedPostgis = new Map(postgis);
     missingEmbeddedPostgis.delete('files/lib/modules/postgis-3.so');

@@ -1,0 +1,6052 @@
+{
+  "schema": "oliphaunt-installed-cargo-fixture-v1",
+  "cargo": "1.93.1",
+  "repository": "index.crates.io-1949cf8c6b5b557f",
+  "target": "x86_64-unknown-linux-gnu",
+  "archives": [
+    {
+      "name": "bitflags",
+      "version": "2.13.2"
+    },
+    {
+      "name": "block-buffer",
+      "version": "0.10.4"
+    },
+    {
+      "name": "cc",
+      "version": "1.7.0"
+    },
+    {
+      "name": "cfg-if",
+      "version": "1.0.5"
+    },
+    {
+      "name": "cpufeatures",
+      "version": "0.2.17"
+    },
+    {
+      "name": "crypto-common",
+      "version": "0.1.7"
+    },
+    {
+      "name": "digest",
+      "version": "0.10.7"
+    },
+    {
+      "name": "equivalent",
+      "version": "1.0.2"
+    },
+    {
+      "name": "errno",
+      "version": "0.3.14"
+    },
+    {
+      "name": "filetime",
+      "version": "0.2.29"
+    },
+    {
+      "name": "find-msvc-tools",
+      "version": "0.1.14"
+    },
+    {
+      "name": "fs2",
+      "version": "0.4.3"
+    },
+    {
+      "name": "generic-array",
+      "version": "0.14.7"
+    },
+    {
+      "name": "getrandom",
+      "version": "0.3.4"
+    },
+    {
+      "name": "hashbrown",
+      "version": "0.17.1"
+    },
+    {
+      "name": "indexmap",
+      "version": "2.14.2"
+    },
+    {
+      "name": "itoa",
+      "version": "1.0.18"
+    },
+    {
+      "name": "jobserver",
+      "version": "0.1.35"
+    },
+    {
+      "name": "libc",
+      "version": "0.2.190"
+    },
+    {
+      "name": "libloading",
+      "version": "0.8.9"
+    },
+    {
+      "name": "liboliphaunt-native-bindings",
+      "version": "0.2.0"
+    },
+    {
+      "name": "liboliphaunt-native-linux-x64-gnu-part-001",
+      "version": "0.3.2"
+    },
+    {
+      "name": "liboliphaunt-native-linux-x64-gnu-part-002",
+      "version": "0.3.2"
+    },
+    {
+      "name": "liboliphaunt-native-linux-x64-gnu-part-003",
+      "version": "0.3.2"
+    },
+    {
+      "name": "liboliphaunt-native-linux-x64-gnu",
+      "version": "0.3.2"
+    },
+    {
+      "name": "linux-raw-sys",
+      "version": "0.12.1"
+    },
+    {
+      "name": "memchr",
+      "version": "2.8.3"
+    },
+    {
+      "name": "oliphaunt-broker-linux-x64-gnu",
+      "version": "0.3.1"
+    },
+    {
+      "name": "oliphaunt-broker",
+      "version": "0.3.1"
+    },
+    {
+      "name": "oliphaunt-build",
+      "version": "0.3.2"
+    },
+    {
+      "name": "oliphaunt-query",
+      "version": "0.1.1"
+    },
+    {
+      "name": "oliphaunt",
+      "version": "0.3.2"
+    },
+    {
+      "name": "pkg-config",
+      "version": "0.3.34"
+    },
+    {
+      "name": "proc-macro2",
+      "version": "1.0.107"
+    },
+    {
+      "name": "quote",
+      "version": "1.0.47"
+    },
+    {
+      "name": "rustix",
+      "version": "1.1.5"
+    },
+    {
+      "name": "serde_core",
+      "version": "1.0.229"
+    },
+    {
+      "name": "serde_derive",
+      "version": "1.0.229"
+    },
+    {
+      "name": "serde_json",
+      "version": "1.0.152"
+    },
+    {
+      "name": "serde_spanned",
+      "version": "1.1.2"
+    },
+    {
+      "name": "serde",
+      "version": "1.0.229"
+    },
+    {
+      "name": "sha2",
+      "version": "0.10.9"
+    },
+    {
+      "name": "shlex",
+      "version": "2.0.1"
+    },
+    {
+      "name": "syn",
+      "version": "3.0.7"
+    },
+    {
+      "name": "tar",
+      "version": "0.4.46"
+    },
+    {
+      "name": "toml_datetime",
+      "version": "0.7.5+spec-1.1.0"
+    },
+    {
+      "name": "toml_parser",
+      "version": "1.1.5+spec-1.1.0"
+    },
+    {
+      "name": "toml_writer",
+      "version": "1.1.3+spec-1.1.0"
+    },
+    {
+      "name": "toml",
+      "version": "0.9.12+spec-1.1.0"
+    },
+    {
+      "name": "typenum",
+      "version": "1.20.1"
+    },
+    {
+      "name": "unicode-ident",
+      "version": "1.0.26"
+    },
+    {
+      "name": "version_check",
+      "version": "0.9.5"
+    },
+    {
+      "name": "winnow",
+      "version": "0.7.15"
+    },
+    {
+      "name": "winnow",
+      "version": "1.0.4"
+    },
+    {
+      "name": "xattr",
+      "version": "1.6.1"
+    },
+    {
+      "name": "zmij",
+      "version": "1.0.23"
+    },
+    {
+      "name": "zstd-safe",
+      "version": "7.3.0"
+    },
+    {
+      "name": "zstd-sys",
+      "version": "2.1.1+zstd.1.5.7"
+    },
+    {
+      "name": "zstd",
+      "version": "0.13.3"
+    }
+  ],
+  "config": {
+    "dl": "https://static.crates.io/crates",
+    "api": "https://crates.io"
+  },
+  "indexes": [
+    {
+      "path": "2/cc",
+      "header": "AwIAAABldGFnOiAiNjFjMjgxZDJhMThiZjU1Y2Y1NGU1YjdmYWEwZDMzODIiAA==",
+      "records": [
+        {
+          "name": "cc",
+          "vers": "1.7.0",
+          "deps": [
+            {
+              "name": "find-msvc-tools",
+              "req": "^0.1.14",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "jobserver",
+              "req": "^0.1.32",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.168",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": "cfg(unix)",
+              "kind": "normal"
+            },
+            {
+              "name": "shlex",
+              "req": "^2.0.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "tempfile",
+              "req": "^3.0.4",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            }
+          ],
+          "cksum": "50a649af8a827553c29fb0cb4bd4a6f1a0dd695bd3232b9bc98bd9c8a3ffbb8b",
+          "features": {
+            "jobserver": []
+          },
+          "features2": {
+            "parallel": ["dep:jobserver", "dep:libc"]
+          },
+          "yanked": false,
+          "rust_version": "1.65.0",
+          "pubtime": "2026-10-10T01:21:09Z",
+          "v": 2
+        }
+      ]
+    },
+    {
+      "path": "3/f/fs2",
+      "header": "AwIAAABldGFnOiAiMWU5NzQ3ZWZlMWJkYThiNDE4OWE1ZjU0MTg5OTMyYzAiAA==",
+      "records": [
+        {
+          "name": "fs2",
+          "vers": "0.4.3",
+          "deps": [
+            {
+              "name": "libc",
+              "req": "^0.2.30",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(unix)",
+              "kind": "normal"
+            },
+            {
+              "name": "tempdir",
+              "req": "^0.3",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "winapi",
+              "req": "^0.3",
+              "features": [
+                "handleapi",
+                "processthreadsapi",
+                "winerror",
+                "fileapi",
+                "winbase",
+                "std"
+              ],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(windows)",
+              "kind": "normal"
+            }
+          ],
+          "cksum": "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213",
+          "features": {},
+          "yanked": false,
+          "pubtime": "2018-01-06T20:18:30Z"
+        }
+      ]
+    },
+    {
+      "path": "3/s/syn",
+      "header": "AwIAAABldGFnOiAiZjY1MzY0YzRhMGMwZjQ0MTNjYWJmYmMwMDZhMGM4ZGYiAA==",
+      "records": [
+        {
+          "name": "syn",
+          "vers": "3.0.7",
+          "deps": [
+            {
+              "name": "anyhow",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "automod",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "flate2",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(not(miri))",
+              "kind": "dev"
+            },
+            {
+              "name": "insta",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "proc-macro2",
+              "req": "^1.0.91",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "quote",
+              "req": "^1.0.35",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "rayon",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(not(miri))",
+              "kind": "dev"
+            },
+            {
+              "name": "ref-cast",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "reqwest",
+              "req": "^0.13",
+              "features": ["blocking"],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(not(miri))",
+              "kind": "dev"
+            },
+            {
+              "name": "rustversion",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "syn-test-suite",
+              "req": "^0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "tar",
+              "req": "^0.4.16",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(not(miri))",
+              "kind": "dev"
+            },
+            {
+              "name": "termcolor",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "unicode-ident",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "walkdir",
+              "req": "^2.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(not(miri))",
+              "kind": "dev"
+            }
+          ],
+          "cksum": "d62a2e0561533f2ca2561d0cf27fd9fedb640a1bf2616ff5d5c80d99017faadc",
+          "features": {
+            "clone-impls": [],
+            "derive": [],
+            "extra-traits": [],
+            "fold": [],
+            "full": [],
+            "parsing": [],
+            "test": ["syn-test-suite/all-features"],
+            "visit": [],
+            "visit-mut": []
+          },
+          "features2": {
+            "default": ["derive", "parsing", "printing", "clone-impls", "proc-macro"],
+            "printing": ["dep:quote"],
+            "proc-macro": ["proc-macro2/proc-macro", "quote?/proc-macro"]
+          },
+          "yanked": false,
+          "rust_version": "1.71",
+          "pubtime": "2026-10-10T02:11:18Z",
+          "v": 2
+        }
+      ]
+    },
+    {
+      "path": "3/t/tar",
+      "header": "AwIAAABldGFnOiAiMzc2ODlhYTNiMzBiNmIwY2E1NzU5Y2JhMzAwZTQ2NTAiAA==",
+      "records": [
+        {
+          "name": "tar",
+          "vers": "0.4.46",
+          "deps": [
+            {
+              "name": "astral-tokio-tar",
+              "req": "^0.6.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "filetime",
+              "req": "^0.2.8",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(unix)",
+              "kind": "normal"
+            },
+            {
+              "name": "rand",
+              "req": "^0.8",
+              "features": ["small_rng"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "tempfile",
+              "req": "^3",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "tokio",
+              "req": "^1",
+              "features": ["macros", "rt"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "tokio-stream",
+              "req": "^0.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "xattr",
+              "req": "^1.1.3",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": "cfg(unix)",
+              "kind": "normal"
+            }
+          ],
+          "cksum": "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840",
+          "features": {
+            "default": ["xattr"]
+          },
+          "yanked": false,
+          "rust_version": "1.63",
+          "pubtime": "2026-05-18T19:12:11Z"
+        }
+      ]
+    },
+    {
+      "path": "bi/tf/bitflags",
+      "header": "AwIAAABldGFnOiAiMmYyMjc0MzNjM2E4MGJlZWM2MmQyM2MzNGJiZWQwYWUiAA==",
+      "records": [
+        {
+          "name": "bitflags",
+          "vers": "2.13.2",
+          "deps": [
+            {
+              "name": "arbitrary",
+              "req": "^1.0",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "arbitrary",
+              "req": "^1.0",
+              "features": ["derive"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "bytemuck",
+              "req": "^1.12",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "bytemuck",
+              "req": "^1.12.2",
+              "features": ["derive"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "rustversion",
+              "req": "^1.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "serde_core",
+              "req": "^1.0.228",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "serde_json",
+              "req": "^1.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "serde_lib",
+              "req": "^1.0.103",
+              "features": ["derive"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev",
+              "package": "serde"
+            },
+            {
+              "name": "serde_test",
+              "req": "^1.0.19",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "trybuild",
+              "req": "^1.0.18",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "zerocopy",
+              "req": "^0.8",
+              "features": ["derive"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            }
+          ],
+          "cksum": "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06",
+          "features": {
+            "example_generated": [],
+            "serde": ["serde_core"],
+            "std": []
+          },
+          "yanked": false,
+          "rust_version": "1.56.0",
+          "pubtime": "2026-09-10T01:11:38Z"
+        }
+      ]
+    },
+    {
+      "path": "bl/oc/block-buffer",
+      "header": "AwIAAABldGFnOiAiMGI2OGE1OWNhZDMyZGVlODdhMTUwMjM3YzQxNmU2NjAiAA==",
+      "records": [
+        {
+          "name": "block-buffer",
+          "vers": "0.10.4",
+          "deps": [
+            {
+              "name": "generic-array",
+              "req": "^0.14",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71",
+          "features": {},
+          "yanked": false,
+          "pubtime": "2023-03-09T02:08:25Z"
+        }
+      ]
+    },
+    {
+      "path": "cf/g-/cfg-if",
+      "header": "AwIAAABldGFnOiAiNjA4MGZiYzc2YjkwZDM1ZWViNjYwMzY1M2I2MzMwZWYiAA==",
+      "records": [
+        {
+          "name": "cfg-if",
+          "vers": "1.0.5",
+          "deps": [
+            {
+              "name": "core",
+              "req": "^1.0.0",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal",
+              "package": "rustc-std-workspace-core"
+            }
+          ],
+          "cksum": "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600",
+          "features": {
+            "rustc-dep-of-std": ["core"]
+          },
+          "yanked": false,
+          "rust_version": "1.32",
+          "pubtime": "2026-09-16T17:36:11Z"
+        }
+      ]
+    },
+    {
+      "path": "cp/uf/cpufeatures",
+      "header": "AwIAAABldGFnOiAiNzllZTI2NTM1MTg4ZmYzMTU4ZjMzOTU2YzU2MjIwN2QiAA==",
+      "records": [
+        {
+          "name": "cpufeatures",
+          "vers": "0.2.17",
+          "deps": [
+            {
+              "name": "libc",
+              "req": "^0.2.155",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "aarch64-linux-android",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.155",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(all(target_arch = \"aarch64\", target_os = \"linux\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.155",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(all(target_arch = \"aarch64\", target_vendor = \"apple\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.155",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(all(target_arch = \"loongarch64\", target_os = \"linux\"))",
+              "kind": "normal"
+            }
+          ],
+          "cksum": "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280",
+          "features": {},
+          "yanked": false,
+          "pubtime": "2025-01-25T01:35:46Z"
+        }
+      ]
+    },
+    {
+      "path": "cr/yp/crypto-common",
+      "header": "AwIAAABldGFnOiAiMTA5NWZjMDg1YTA4YWY4ZjY5ZWUzZDlkNzI1YWEzZDEiAA==",
+      "records": [
+        {
+          "name": "crypto-common",
+          "vers": "0.1.7",
+          "deps": [
+            {
+              "name": "generic-array",
+              "req": "=0.14.7",
+              "features": ["more_lengths"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "rand_core",
+              "req": "^0.6",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "typenum",
+              "req": "^1.14",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a",
+          "features": {
+            "getrandom": ["rand_core/getrandom"],
+            "std": []
+          },
+          "yanked": false,
+          "pubtime": "2025-11-12T14:20:00Z"
+        }
+      ]
+    },
+    {
+      "path": "di/ge/digest",
+      "header": "AwIAAABldGFnOiAiZWU1MWVhZjc4OWExZTE4ZGE5YmQzOTEwNzA5ODVkN2QiAA==",
+      "records": [
+        {
+          "name": "digest",
+          "vers": "0.10.7",
+          "deps": [
+            {
+              "name": "blobby",
+              "req": "^0.3",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "block-buffer",
+              "req": "^0.10",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "const-oid",
+              "req": "^0.9",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "crypto-common",
+              "req": "^0.1.3",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "subtle",
+              "req": "^2.4",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292",
+          "features": {
+            "alloc": [],
+            "core-api": ["block-buffer"],
+            "default": ["core-api"],
+            "dev": ["blobby"],
+            "mac": ["subtle"],
+            "oid": ["const-oid"],
+            "rand_core": ["crypto-common/rand_core"],
+            "std": ["alloc", "crypto-common/std"]
+          },
+          "yanked": false,
+          "pubtime": "2023-05-19T17:11:30Z"
+        }
+      ]
+    },
+    {
+      "path": "eq/ui/equivalent",
+      "header": "AwIAAABldGFnOiAiNDAzYWFhMjg5ZTc2MDhkZjExMDU4MzQ1NGEwZmQ5NTYiAA==",
+      "records": [
+        {
+          "name": "equivalent",
+          "vers": "1.0.2",
+          "deps": [],
+          "cksum": "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f",
+          "features": {},
+          "yanked": false,
+          "rust_version": "1.6",
+          "pubtime": "2025-02-14T22:14:18Z"
+        }
+      ]
+    },
+    {
+      "path": "er/rn/errno",
+      "header": "AwIAAABldGFnOiAiZGJmNTUxMTljNDczZjI2MzI2MTc3NTdjNTNmZThmZjYiAA==",
+      "records": [
+        {
+          "name": "errno",
+          "vers": "0.3.14",
+          "deps": [
+            {
+              "name": "libc",
+              "req": "^0.2",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(target_os=\"hermit\")",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(target_os=\"wasi\")",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(unix)",
+              "kind": "normal"
+            },
+            {
+              "name": "windows-sys",
+              "req": ">=0.52, <0.62",
+              "features": ["Win32_Foundation", "Win32_System_Diagnostics_Debug"],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(windows)",
+              "kind": "normal"
+            }
+          ],
+          "cksum": "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb",
+          "features": {
+            "default": ["std"],
+            "std": ["libc/std"]
+          },
+          "yanked": false,
+          "rust_version": "1.56",
+          "pubtime": "2025-09-09T04:35:15Z"
+        }
+      ]
+    },
+    {
+      "path": "fi/le/filetime",
+      "header": "AwIAAABldGFnOiAiYTZjYjhlZDk3MGY1N2I0ZjQzYWNlNWYzMWFhODcwZDEiAA==",
+      "records": [
+        {
+          "name": "filetime",
+          "vers": "0.2.29",
+          "deps": [
+            {
+              "name": "cfg-if",
+              "req": "^1.0.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.27",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(unix)",
+              "kind": "normal"
+            },
+            {
+              "name": "tempfile",
+              "req": "^3",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            }
+          ],
+          "cksum": "5c287a33c7f0a620c38e641e7f60827713987b3c0f26e8ddc9462cc69cf75759",
+          "features": {},
+          "yanked": false,
+          "rust_version": "1.75.0",
+          "pubtime": "2026-05-12T22:38:22Z"
+        }
+      ]
+    },
+    {
+      "path": "fi/nd/find-msvc-tools",
+      "header": "AwIAAABldGFnOiAiMWE5MmMxMzUyYmQ5NzFmNzJiNjI0NTFkZGE0ZDMzN2UiAA==",
+      "records": [
+        {
+          "name": "find-msvc-tools",
+          "vers": "0.1.14",
+          "deps": [],
+          "cksum": "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484",
+          "features": {},
+          "yanked": false,
+          "rust_version": "1.65.0",
+          "pubtime": "2026-09-25T10:09:48Z"
+        }
+      ]
+    },
+    {
+      "path": "ge/ne/generic-array",
+      "header": "AwIAAABldGFnOiAiOGE0ZTFiYmVmNjI4NjM0Mjc2MzI2NWZiYWUyNGU0ZjEiAA==",
+      "records": [
+        {
+          "name": "generic-array",
+          "vers": "0.14.7",
+          "deps": [
+            {
+              "name": "bincode",
+              "req": "^1.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "serde",
+              "req": "^1.0",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "serde_json",
+              "req": "^1.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "typenum",
+              "req": "^1.12",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "version_check",
+              "req": "^0.9",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            },
+            {
+              "name": "zeroize",
+              "req": "^1",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a",
+          "features": {
+            "more_lengths": []
+          },
+          "yanked": false,
+          "pubtime": "2023-03-28T00:01:29Z"
+        }
+      ]
+    },
+    {
+      "path": "ge/tr/getrandom",
+      "header": "AwIAAABldGFnOiAiNjM1OWY3YmUyMGQ5YjdlYjUxZDIwODNmZTNmYjZlMjQiAA==",
+      "records": [
+        {
+          "name": "getrandom",
+          "vers": "0.3.4",
+          "deps": [
+            {
+              "name": "cfg-if",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "js-sys",
+              "req": "^0.3.77",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": "cfg(all(target_arch = \"wasm32\", any(target_os = \"unknown\", target_os = \"none\"), target_feature = \"atomics\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.154",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(all(any(target_os = \"linux\", target_os = \"android\"), not(any(all(target_os = \"linux\", target_env = \"\"), getrandom_backend = \"custom\", getrandom_backend = \"linux_raw\", getrandom_backend = \"rdrand\", getrandom_backend = \"rndr\"))))",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.154",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(any(target_os = \"dragonfly\", target_os = \"freebsd\", target_os = \"hurd\", target_os = \"illumos\", target_os = \"cygwin\", all(target_os = \"horizon\", target_arch = \"arm\")))",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.154",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(any(target_os = \"haiku\", target_os = \"redox\", target_os = \"nto\", target_os = \"aix\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.154",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(any(target_os = \"ios\", target_os = \"visionos\", target_os = \"watchos\", target_os = \"tvos\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.154",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(any(target_os = \"macos\", target_os = \"openbsd\", target_os = \"vita\", target_os = \"emscripten\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.154",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(target_os = \"netbsd\")",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.154",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(target_os = \"solaris\")",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.154",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(target_os = \"vxworks\")",
+              "kind": "normal"
+            },
+            {
+              "name": "r-efi",
+              "req": "^5.1",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(all(target_os = \"uefi\", getrandom_backend = \"efi_rng\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "wasip2",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(all(target_arch = \"wasm32\", target_os = \"wasi\", target_env = \"p2\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "wasm-bindgen",
+              "req": "^0.2.98",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": "cfg(all(target_arch = \"wasm32\", any(target_os = \"unknown\", target_os = \"none\")))",
+              "kind": "normal"
+            },
+            {
+              "name": "wasm-bindgen-test",
+              "req": "^0.3",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(all(target_arch = \"wasm32\", any(target_os = \"unknown\", target_os = \"none\")))",
+              "kind": "dev"
+            }
+          ],
+          "cksum": "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd",
+          "features": {
+            "std": []
+          },
+          "features2": {
+            "wasm_js": ["dep:wasm-bindgen", "dep:js-sys"]
+          },
+          "yanked": false,
+          "rust_version": "1.63",
+          "pubtime": "2025-10-14T17:47:36Z",
+          "v": 2
+        },
+        {
+          "name": "getrandom",
+          "vers": "0.4.3",
+          "deps": [
+            {
+              "name": "cfg-if",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "js-sys",
+              "req": "^0.3.77",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": "cfg(all(target_family = \"wasm\", any(target_os = \"unknown\", target_os = \"none\"), target_feature = \"atomics\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.154",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(all(any(target_os = \"linux\", target_os = \"android\"), not(any(all(target_os = \"linux\", target_env = \"\"), getrandom_backend = \"custom\", getrandom_backend = \"linux_raw\", getrandom_backend = \"rdrand\", getrandom_backend = \"rndr\"))))",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.154",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(any(target_os = \"dragonfly\", target_os = \"freebsd\", target_os = \"hurd\", target_os = \"illumos\", target_os = \"cygwin\", all(target_os = \"horizon\", target_arch = \"arm\")))",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.154",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(any(target_os = \"haiku\", target_os = \"redox\", target_os = \"nto\", target_os = \"aix\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.154",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(any(target_os = \"ios\", target_os = \"visionos\", target_os = \"watchos\", target_os = \"tvos\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.154",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(any(target_os = \"macos\", target_os = \"openbsd\", target_os = \"vita\", target_os = \"emscripten\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.154",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(target_os = \"netbsd\")",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.154",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(target_os = \"solaris\")",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.154",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(target_os = \"vxworks\")",
+              "kind": "normal"
+            },
+            {
+              "name": "r-efi",
+              "req": "^6",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(all(target_os = \"uefi\", getrandom_backend = \"efi_rng\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "rand_core",
+              "req": "^0.10.0",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "wasm-bindgen",
+              "req": "^0.2.98",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": "cfg(all(target_family = \"wasm\", any(target_os = \"unknown\", target_os = \"none\")))",
+              "kind": "normal"
+            },
+            {
+              "name": "wasm-bindgen-test",
+              "req": "^0.3",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(all(target_family = \"wasm\", any(target_os = \"unknown\", target_os = \"none\")))",
+              "kind": "dev"
+            }
+          ],
+          "cksum": "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099",
+          "features": {
+            "std": []
+          },
+          "features2": {
+            "sys_rng": ["dep:rand_core"],
+            "wasm_js": ["dep:wasm-bindgen", "dep:js-sys"]
+          },
+          "yanked": false,
+          "rust_version": "1.85",
+          "pubtime": "2026-06-17T18:01:59Z",
+          "v": 2
+        }
+      ]
+    },
+    {
+      "path": "ha/sh/hashbrown",
+      "header": "AwIAAABldGFnOiAiZDg0ZDljN2I3NTVmYmRkYzg4OTJlN2M4NWNlMDEwYzQiAA==",
+      "records": [
+        {
+          "name": "hashbrown",
+          "vers": "0.17.1",
+          "deps": [
+            {
+              "name": "alloc",
+              "req": "^1.0.0",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal",
+              "package": "rustc-std-workspace-alloc"
+            },
+            {
+              "name": "allocator-api2",
+              "req": "^0.2.9",
+              "features": ["alloc"],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "bumpalo",
+              "req": "^3.13.0",
+              "features": ["allocator-api2"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "core",
+              "req": "^1.0.0",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal",
+              "package": "rustc-std-workspace-core"
+            },
+            {
+              "name": "criterion",
+              "req": "^0.7",
+              "features": ["html_reports"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "equivalent",
+              "req": "^1.0",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "fnv",
+              "req": "^1.0.7",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "foldhash",
+              "req": "^0.2.0",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.155",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(unix)",
+              "kind": "dev"
+            },
+            {
+              "name": "rand",
+              "req": "^0.9.0",
+              "features": ["small_rng"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "rayon",
+              "req": "^1.9.0",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "rayon",
+              "req": "^1.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "serde",
+              "req": "^1.0.220",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": "cfg(any())",
+              "kind": "normal"
+            },
+            {
+              "name": "serde_core",
+              "req": "^1.0.221",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "serde_test",
+              "req": "^1.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            }
+          ],
+          "cksum": "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a",
+          "features": {
+            "inline-more": [],
+            "raw-entry": [],
+            "rustc-internal-api": []
+          },
+          "features2": {
+            "default": [
+              "default-hasher",
+              "inline-more",
+              "allocator-api2",
+              "equivalent",
+              "raw-entry"
+            ],
+            "default-hasher": ["dep:foldhash"],
+            "nightly": ["foldhash?/nightly", "bumpalo/allocator_api"],
+            "rustc-dep-of-std": ["nightly", "core", "alloc", "rustc-internal-api"],
+            "serde": ["dep:serde_core", "dep:serde"]
+          },
+          "yanked": false,
+          "rust_version": "1.85.0",
+          "pubtime": "2026-05-09T04:35:04Z",
+          "v": 2
+        }
+      ]
+    },
+    {
+      "path": "in/de/indexmap",
+      "header": "AwIAAABldGFnOiAiYjA1YTBkYjBhYTUzMTAzY2NhMDI0ZWFiZGI4NDExOTAiAA==",
+      "records": [
+        {
+          "name": "indexmap",
+          "vers": "2.14.2",
+          "deps": [
+            {
+              "name": "arbitrary",
+              "req": "^1.0",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "borsh",
+              "req": "^1.2",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "equivalent",
+              "req": "^1.0",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "fastrand",
+              "req": "^2",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "fnv",
+              "req": "^1.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "hashbrown",
+              "req": "^0.17",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "itertools",
+              "req": "^0.14",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "quickcheck",
+              "req": "^1.0",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "quickcheck",
+              "req": "^1.1",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "rayon",
+              "req": "^1.9",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "serde",
+              "req": "^1.0.220",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": "cfg(any())",
+              "kind": "normal"
+            },
+            {
+              "name": "serde",
+              "req": "^1.0",
+              "features": ["derive"],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "serde_core",
+              "req": "^1.0.220",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "sval",
+              "req": "^2",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855",
+          "features": {
+            "default": ["std"],
+            "std": [],
+            "test_debug": []
+          },
+          "features2": {
+            "serde": ["dep:serde_core", "dep:serde"]
+          },
+          "yanked": false,
+          "rust_version": "1.85",
+          "pubtime": "2026-09-05T01:53:48Z",
+          "v": 2
+        }
+      ]
+    },
+    {
+      "path": "it/oa/itoa",
+      "header": "AwIAAABldGFnOiAiZWE4NDk0ZDU2MGYxYjgxNzQ0NDM0OTViMzcwZTI3MmYiAA==",
+      "records": [
+        {
+          "name": "itoa",
+          "vers": "1.0.18",
+          "deps": [
+            {
+              "name": "criterion",
+              "req": "^0.8",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(not(miri))",
+              "kind": "dev"
+            },
+            {
+              "name": "no-panic",
+              "req": "^0.1",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682",
+          "features": {},
+          "yanked": false,
+          "rust_version": "1.68",
+          "pubtime": "2026-03-20T00:12:37Z"
+        }
+      ]
+    },
+    {
+      "path": "jo/bs/jobserver",
+      "header": "AwIAAABldGFnOiAiMDEwMTQ0MWVhMzM2M2Q1NTUxNWI1MWEyYTM4ZjcwMGQiAA==",
+      "records": [
+        {
+          "name": "jobserver",
+          "vers": "0.1.35",
+          "deps": [
+            {
+              "name": "getrandom",
+              "req": "^0.4",
+              "features": ["std"],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(windows)",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.171",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(unix)",
+              "kind": "normal"
+            },
+            {
+              "name": "nix",
+              "req": "^0.31.3",
+              "features": ["fs"],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(unix)",
+              "kind": "dev"
+            },
+            {
+              "name": "tempfile",
+              "req": "^3.10.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            }
+          ],
+          "cksum": "1c00acbd29eabad4a2392fa0e921c874934dbbf4194312ad20f04a0ed67a3cb3",
+          "features": {},
+          "yanked": false,
+          "rust_version": "1.85",
+          "pubtime": "2026-07-06T01:43:15Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bc/libc",
+      "header": "AwIAAABldGFnOiAiOGEwODRkZTJkZmRmMDE4Njg2Y2NlYThjZDAzNzlmNjAiAA==",
+      "records": [
+        {
+          "name": "libc",
+          "vers": "0.2.190",
+          "deps": [
+            {
+              "name": "rustc-std-workspace-core",
+              "req": "^1.0.1",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78",
+          "features": {
+            "align": [],
+            "const-extern-fn": [],
+            "default": ["std"],
+            "extra_traits": [],
+            "rustc-dep-of-std": ["align", "rustc-std-workspace-core"],
+            "std": [],
+            "use_std": ["std"]
+          },
+          "yanked": false,
+          "rust_version": "1.65",
+          "pubtime": "2026-10-02T19:33:19Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bl/libloading",
+      "header": "AwIAAABldGFnOiAiZTMxNzYwZjkxZjUwMmQ3NmJkNGFjMWJhMjY3MGIxOGEiAA==",
+      "records": [
+        {
+          "name": "libloading",
+          "vers": "0.8.9",
+          "deps": [
+            {
+              "name": "cfg-if",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(unix)",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "static_assertions",
+              "req": "^1.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "windows-link",
+              "req": "^0.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(windows)",
+              "kind": "normal"
+            },
+            {
+              "name": "windows-sys",
+              "req": "^0.61",
+              "features": ["Win32_Foundation"],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(windows)",
+              "kind": "dev"
+            }
+          ],
+          "cksum": "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55",
+          "features": {},
+          "yanked": false,
+          "rust_version": "1.71.0",
+          "pubtime": "2025-09-21T10:59:30Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bo/liboliphaunt-native-bindings",
+      "header": "AwIAAABldGFnOiAiYjE0YWFiOThjODgyOTM4YmNmZDEzNjIyZTIxYjc3MjYiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-bindings",
+          "vers": "0.2.0",
+          "deps": [
+            {
+              "name": "fs2",
+              "req": "^0.4",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "getrandom",
+              "req": "^0.3",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "libloading",
+              "req": "^0.8",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "serde",
+              "req": "^1",
+              "features": ["derive"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "serde_json",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "sha2",
+              "req": "^0.10",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "tar",
+              "req": "^0.4",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "zstd",
+              "req": "^0.13",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "7b0e758a0af81e354205e9ba8e668175357c974f3c3ad3421e681ad7e07d1ed8",
+          "features": {
+            "internal-native-packaging": []
+          },
+          "yanked": false,
+          "rust_version": "1.93",
+          "pubtime": "2026-10-03T01:03:02Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bo/liboliphaunt-native-linux-arm64-gnu",
+      "header": "AwIAAABldGFnOiAiZWE1NGQ1ZmE3MzNmZTgyNGIwNjM4YjEzM2FmZTgyMGMiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-linux-arm64-gnu",
+          "vers": "0.3.2",
+          "deps": [
+            {
+              "name": "liboliphaunt-native-linux-arm64-gnu-part-001",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            },
+            {
+              "name": "liboliphaunt-native-linux-arm64-gnu-part-002",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            },
+            {
+              "name": "liboliphaunt-native-linux-arm64-gnu-part-003",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            }
+          ],
+          "cksum": "361a5ae2dbc88b1fc41bb453318a4ffe234bdab1e949f0fe9774bac92cc93463",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_liboliphaunt_native_linux_arm64_gnu",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:42:05Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bo/liboliphaunt-native-linux-arm64-gnu-part-001",
+      "header": "AwIAAABldGFnOiAiMGQ4MWRmYmU2YjNhNGZmOWFiNDhiYzM2NGQ0MjQ4MDYiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-linux-arm64-gnu-part-001",
+          "vers": "0.3.2",
+          "deps": [],
+          "cksum": "3d63eaee7f7a5d0bc8aa69ca8bbd0c271de8d222a90beb6c4486ae20ca1a4c77",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_part_liboliphaunt_native_linux_arm64_gnu_001",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:22Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bo/liboliphaunt-native-linux-arm64-gnu-part-002",
+      "header": "AwIAAABldGFnOiAiMzUzNDIzMzNhYTEzY2ZjNGU0NDJiMzVjYTgwZjMwOTAiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-linux-arm64-gnu-part-002",
+          "vers": "0.3.2",
+          "deps": [],
+          "cksum": "c7d836abcef6936f150b797db616a8dd0a09cb9896feeb3354d5bf906dff8c81",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_part_liboliphaunt_native_linux_arm64_gnu_002",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:23Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bo/liboliphaunt-native-linux-arm64-gnu-part-003",
+      "header": "AwIAAABldGFnOiAiMGQ4M2M4ZjllZmIyNGYzNGEwM2Q2MTMwNzU1MzM3Y2YiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-linux-arm64-gnu-part-003",
+          "vers": "0.3.2",
+          "deps": [],
+          "cksum": "9de44447a45dbf350648e408723fea1fd645822eaa48ac2a46e14b86f9fb2397",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_part_liboliphaunt_native_linux_arm64_gnu_003",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:24Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bo/liboliphaunt-native-linux-x64-gnu",
+      "header": "AwIAAABldGFnOiAiNmM5YmVjNTY4ZWRlYzY1YTA0ZGIxNWQwMTJiZTg0NzkiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-linux-x64-gnu",
+          "vers": "0.3.2",
+          "deps": [
+            {
+              "name": "liboliphaunt-native-linux-x64-gnu-part-001",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            },
+            {
+              "name": "liboliphaunt-native-linux-x64-gnu-part-002",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            },
+            {
+              "name": "liboliphaunt-native-linux-x64-gnu-part-003",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            }
+          ],
+          "cksum": "5a7c2c09940e87552b9a483570e5b16d0e6ce702161b3c9ef63668fc24501801",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_liboliphaunt_native_linux_x64_gnu",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:42:05Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bo/liboliphaunt-native-linux-x64-gnu-part-001",
+      "header": "AwIAAABldGFnOiAiYjE0YjVkYjA2MTZhMmY1YjE1ZDU4NWNjYjIxZDFkNmUiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-linux-x64-gnu-part-001",
+          "vers": "0.3.2",
+          "deps": [],
+          "cksum": "1ca82664bbf83523f8673652351e6ae44547df8f19ade7afe9f9d2413f6d42c7",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_part_liboliphaunt_native_linux_x64_gnu_001",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:24Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bo/liboliphaunt-native-linux-x64-gnu-part-002",
+      "header": "AwIAAABldGFnOiAiN2RlMmE5ZjZiZTNkMmUxNzFmMjk5Y2MwZDc3NDU5ZTYiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-linux-x64-gnu-part-002",
+          "vers": "0.3.2",
+          "deps": [],
+          "cksum": "c6c5e1b3f3ec9bafcccb9ffc8837b819df573d9f35cbaad4d84f93b2c8bb0cbc",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_part_liboliphaunt_native_linux_x64_gnu_002",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:26Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bo/liboliphaunt-native-linux-x64-gnu-part-003",
+      "header": "AwIAAABldGFnOiAiMTA1YWQyMDBkMTA0NjAyNGY0MjEwMGJkOTI4YWY4NTAiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-linux-x64-gnu-part-003",
+          "vers": "0.3.2",
+          "deps": [],
+          "cksum": "acc036be00ee895312635a689f084a6de692fc5e1b23bc00127f5dd775b5cdd1",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_part_liboliphaunt_native_linux_x64_gnu_003",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:26Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bo/liboliphaunt-native-macos-arm64",
+      "header": "AwIAAABldGFnOiAiYjY3YjZkODIwOTRmNDA3YjA4Mzc4Y2M0YTQ5YjAxYWIiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-macos-arm64",
+          "vers": "0.3.2",
+          "deps": [
+            {
+              "name": "liboliphaunt-native-macos-arm64-part-001",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            },
+            {
+              "name": "liboliphaunt-native-macos-arm64-part-002",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            },
+            {
+              "name": "liboliphaunt-native-macos-arm64-part-003",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            }
+          ],
+          "cksum": "839f8e89997162f69776c459ea635604064aefbaac17888a409b037fc7afc0a9",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_liboliphaunt_native_macos_arm64",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:42:06Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bo/liboliphaunt-native-macos-arm64-part-001",
+      "header": "AwIAAABldGFnOiAiZmRjODUyODU2OGEyMTZlNGU2ODJiODI4NjRhY2E3N2IiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-macos-arm64-part-001",
+          "vers": "0.3.2",
+          "deps": [],
+          "cksum": "38600004aca0b01f6c1236b7933b48a9077d14f4773520ae3b29ab8e0d3c333f",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_part_liboliphaunt_native_macos_arm64_001",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:27Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bo/liboliphaunt-native-macos-arm64-part-002",
+      "header": "AwIAAABldGFnOiAiZDU4MWQ5MGVjOTRmYTA5MTY4M2YyMzU5Mzg4MzI3NzkiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-macos-arm64-part-002",
+          "vers": "0.3.2",
+          "deps": [],
+          "cksum": "741985b9a87d5b522ded00d381b394217600d0068e6c5ac11224e0f46fb0ef52",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_part_liboliphaunt_native_macos_arm64_002",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:28Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bo/liboliphaunt-native-macos-arm64-part-003",
+      "header": "AwIAAABldGFnOiAiY2M2NzJlMGRkMDI0NTc3ZmQyZjAwYWY1NmEwZWJmODMiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-macos-arm64-part-003",
+          "vers": "0.3.2",
+          "deps": [],
+          "cksum": "49ca042fde617a17b49ec813e98314add7dd13a84e6bcae6dd89fc0a1d47e81a",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_part_liboliphaunt_native_macos_arm64_003",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:29Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bo/liboliphaunt-native-windows-x64-msvc",
+      "header": "AwIAAABldGFnOiAiZTZjNjZhNDA3NjM0NGU4ZTE0Y2YwMjU0ZmUxZWEwOTkiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-windows-x64-msvc",
+          "vers": "0.3.2",
+          "deps": [
+            {
+              "name": "liboliphaunt-native-windows-x64-msvc-part-001",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            },
+            {
+              "name": "liboliphaunt-native-windows-x64-msvc-part-002",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            },
+            {
+              "name": "liboliphaunt-native-windows-x64-msvc-part-003",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            },
+            {
+              "name": "liboliphaunt-native-windows-x64-msvc-part-004",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            },
+            {
+              "name": "liboliphaunt-native-windows-x64-msvc-part-005",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            },
+            {
+              "name": "liboliphaunt-native-windows-x64-msvc-part-006",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            },
+            {
+              "name": "liboliphaunt-native-windows-x64-msvc-part-007",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            },
+            {
+              "name": "liboliphaunt-native-windows-x64-msvc-part-008",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            },
+            {
+              "name": "liboliphaunt-native-windows-x64-msvc-part-009",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            }
+          ],
+          "cksum": "3ec4b8d474c573c7c7d31c4f32d5fcebb463b9cbfb85594f223c2dafc971bfa2",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_liboliphaunt_native_windows_x64_msvc",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:42:13Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bo/liboliphaunt-native-windows-x64-msvc-part-001",
+      "header": "AwIAAABldGFnOiAiODNmYTM2NWQ1YzY3YzBkNjQxNzE5ZTJhODVhYzk4MjEiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-windows-x64-msvc-part-001",
+          "vers": "0.3.2",
+          "deps": [],
+          "cksum": "837c7b766bd87a90107a61cc8f858883d58037a5a9bc410bac38f6ed0356aa9a",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_part_liboliphaunt_native_windows_x64_msvc_001",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:29Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bo/liboliphaunt-native-windows-x64-msvc-part-002",
+      "header": "AwIAAABldGFnOiAiMDAwOWNiZTdkMjg1YTA5NTc3ZjdhNzU4ZWM4YTZjNGMiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-windows-x64-msvc-part-002",
+          "vers": "0.3.2",
+          "deps": [],
+          "cksum": "b303124aebd76a582dd671b96ee464a932c23b5da7c883143a4189a1349ebf1e",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_part_liboliphaunt_native_windows_x64_msvc_002",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:30Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bo/liboliphaunt-native-windows-x64-msvc-part-003",
+      "header": "AwIAAABldGFnOiAiY2NlY2M5NzhiYWIyNzkxNWY0OGE1ZjcxMTE2ZmU3N2QiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-windows-x64-msvc-part-003",
+          "vers": "0.3.2",
+          "deps": [],
+          "cksum": "37504ef3cbc6418ee270704e412ced9b41dc4213e56fefaf6f3f7cd485c6a4b8",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_part_liboliphaunt_native_windows_x64_msvc_003",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:31Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bo/liboliphaunt-native-windows-x64-msvc-part-004",
+      "header": "AwIAAABldGFnOiAiNjMyZmIwOTg2ZjllOTY1YzRlZjI0M2NkNGU0M2UxNTQiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-windows-x64-msvc-part-004",
+          "vers": "0.3.2",
+          "deps": [],
+          "cksum": "8df97608a8dcd90e58ddc18b96ae5bc535010c91f6882dedcf8839b32064bb19",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_part_liboliphaunt_native_windows_x64_msvc_004",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:31Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bo/liboliphaunt-native-windows-x64-msvc-part-005",
+      "header": "AwIAAABldGFnOiAiOGUzNThmZTgzOGM2MWJkMDlhYzRkNjMxNWI3MjE1NjAiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-windows-x64-msvc-part-005",
+          "vers": "0.3.2",
+          "deps": [],
+          "cksum": "8fa5b98de5e495e4b33bc726f7b3f943fd46c952d99d88c5c7eecdb7dc847388",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_part_liboliphaunt_native_windows_x64_msvc_005",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:32Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bo/liboliphaunt-native-windows-x64-msvc-part-006",
+      "header": "AwIAAABldGFnOiAiYjMyNDY5NzNhNWI3MWU0ZmE3MDliODEyYzBkNDgxMTMiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-windows-x64-msvc-part-006",
+          "vers": "0.3.2",
+          "deps": [],
+          "cksum": "d5d38b84b2066661d3e5aceafd6c235bc686e1dba970d529a3e94ca52bf9c54b",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_part_liboliphaunt_native_windows_x64_msvc_006",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:33Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bo/liboliphaunt-native-windows-x64-msvc-part-007",
+      "header": "AwIAAABldGFnOiAiOWY2M2IxNjIzY2I3YTdlYjg1OWI0ZWQ4MTdlNDJjNmIiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-windows-x64-msvc-part-007",
+          "vers": "0.3.2",
+          "deps": [],
+          "cksum": "ee3f10e55ca1b32fc3131abafa5ee51f68c582526c9719fada95020ca7e0b15c",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_part_liboliphaunt_native_windows_x64_msvc_007",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:34Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bo/liboliphaunt-native-windows-x64-msvc-part-008",
+      "header": "AwIAAABldGFnOiAiNzdlZTAxMjMzYjIwNzA4YjA1MGU0MTcwMzk2NmUxZDQiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-windows-x64-msvc-part-008",
+          "vers": "0.3.2",
+          "deps": [],
+          "cksum": "e8d5e4d399a7ac9af36d04d49955ef189a182390cb826e90f1b7f892f0316d1f",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_part_liboliphaunt_native_windows_x64_msvc_008",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:35Z"
+        }
+      ]
+    },
+    {
+      "path": "li/bo/liboliphaunt-native-windows-x64-msvc-part-009",
+      "header": "AwIAAABldGFnOiAiYzBhMzZmYjE0NmM5YjkxMWRhODM2OTgyZGZmZTNiM2QiAA==",
+      "records": [
+        {
+          "name": "liboliphaunt-native-windows-x64-msvc-part-009",
+          "vers": "0.3.2",
+          "deps": [],
+          "cksum": "179073da938834110fcf82a7a09a1ca0446f69e9b54c12c05dc46f577c45ca4c",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_part_liboliphaunt_native_windows_x64_msvc_009",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:36Z"
+        }
+      ]
+    },
+    {
+      "path": "li/nu/linux-raw-sys",
+      "header": "AwIAAABldGFnOiAiN2Q4N2ZlNTc2NGExYmU2YmQ0ZTc4NWJkOWQ0NTU2NzAiAA==",
+      "records": [
+        {
+          "name": "linux-raw-sys",
+          "vers": "0.12.1",
+          "deps": [
+            {
+              "name": "core",
+              "req": "^1.0.0",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal",
+              "package": "rustc-std-workspace-core"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.100",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "static_assertions",
+              "req": "^1.1.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            }
+          ],
+          "cksum": "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53",
+          "features": {
+            "auxvec": [],
+            "bootparam": [],
+            "btrfs": [],
+            "default": ["std", "general", "errno"],
+            "elf": [],
+            "elf_uapi": [],
+            "errno": [],
+            "general": [],
+            "if_arp": [],
+            "if_ether": [],
+            "if_packet": [],
+            "if_tun": [],
+            "image": [],
+            "io_uring": [],
+            "ioctl": [],
+            "landlock": [],
+            "loop_device": [],
+            "mempolicy": [],
+            "net": [],
+            "netlink": [],
+            "no_std": [],
+            "prctl": [],
+            "ptrace": [],
+            "rustc-dep-of-std": ["core", "no_std"],
+            "std": [],
+            "system": [],
+            "vm_sockets": [],
+            "xdp": []
+          },
+          "yanked": false,
+          "rust_version": "1.63",
+          "pubtime": "2025-12-23T00:00:07Z"
+        }
+      ]
+    },
+    {
+      "path": "me/mc/memchr",
+      "header": "AwIAAABldGFnOiAiYjgwNzAzZTViODExMTA4NjlkOTQ1ZGM3ZDkxOWE5YzEiAA==",
+      "records": [
+        {
+          "name": "memchr",
+          "vers": "2.8.3",
+          "deps": [
+            {
+              "name": "core",
+              "req": "^1.0.0",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal",
+              "package": "rustc-std-workspace-core"
+            },
+            {
+              "name": "log",
+              "req": "^0.4.20",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "quickcheck",
+              "req": "^1.0.3",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "dev"
+            }
+          ],
+          "cksum": "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98",
+          "features": {
+            "alloc": [],
+            "default": ["std"],
+            "libc": [],
+            "rustc-dep-of-std": ["core"],
+            "std": ["alloc"],
+            "use_std": ["std"]
+          },
+          "features2": {
+            "logging": ["dep:log"]
+          },
+          "yanked": false,
+          "rust_version": "1.61",
+          "pubtime": "2026-07-08T00:49:54Z",
+          "v": 2
+        }
+      ]
+    },
+    {
+      "path": "ol/ip/oliphaunt",
+      "header": "AwIAAABldGFnOiAiMDdmZmMzYmQzY2ZkYTEyNTRhNTgxNTZmNzk3ZWRlNWQiAA==",
+      "records": [
+        {
+          "name": "oliphaunt",
+          "vers": "0.3.2",
+          "deps": [
+            {
+              "name": "getrandom",
+              "req": "^0.3",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "liboliphaunt-native-bindings",
+              "req": "^0.2.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "liboliphaunt-native-linux-arm64-gnu",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(all(target_os = \"linux\", target_arch = \"aarch64\", target_env = \"gnu\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "liboliphaunt-native-linux-x64-gnu",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(all(target_os = \"linux\", target_arch = \"x86_64\", target_env = \"gnu\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "liboliphaunt-native-macos-arm64",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(all(target_os = \"macos\", target_arch = \"aarch64\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "liboliphaunt-native-windows-x64-msvc",
+              "req": "=0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(all(target_os = \"windows\", target_arch = \"x86_64\", target_env = \"msvc\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "oliphaunt-broker",
+              "req": "^0.3.1",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "oliphaunt-broker-linux-arm64-gnu",
+              "req": "=0.3.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(all(target_os = \"linux\", target_arch = \"aarch64\", target_env = \"gnu\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "oliphaunt-broker-linux-x64-gnu",
+              "req": "=0.3.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(all(target_os = \"linux\", target_arch = \"x86_64\", target_env = \"gnu\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "oliphaunt-broker-macos-arm64",
+              "req": "=0.3.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(all(target_os = \"macos\", target_arch = \"aarch64\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "oliphaunt-broker-windows-x64-msvc",
+              "req": "=0.3.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(all(target_os = \"windows\", target_arch = \"x86_64\", target_env = \"msvc\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "oliphaunt-build",
+              "req": "^0.3.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            },
+            {
+              "name": "oliphaunt-query",
+              "req": "^0.1.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "serde",
+              "req": "^1",
+              "features": ["derive"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "serde_json",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "tokio",
+              "req": "^1",
+              "features": ["rt", "time"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            }
+          ],
+          "cksum": "f66cc378f5512a12e58b927b0ac013510c08d8d3f803d76ecce96fa07606faa5",
+          "features": {},
+          "features2": {
+            "default": ["desktop"],
+            "desktop": ["dep:oliphaunt-broker", "dep:getrandom"],
+            "mobile-bindings": ["dep:oliphaunt-broker", "dep:libc"]
+          },
+          "yanked": false,
+          "links": "oliphaunt_artifact_relay",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:42:17Z",
+          "v": 2
+        }
+      ]
+    },
+    {
+      "path": "ol/ip/oliphaunt-broker",
+      "header": "AwIAAABldGFnOiAiMzNmMTA4ZDE4Mjk3ZjZmZGNlY2I5MTBmZDkwZDFkZjIiAA==",
+      "records": [
+        {
+          "name": "oliphaunt-broker",
+          "vers": "0.3.1",
+          "deps": [
+            {
+              "name": "getrandom",
+              "req": "^0.3",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "liboliphaunt-native-bindings",
+              "req": "^0.2.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "oliphaunt-query",
+              "req": "^0.1.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "76788356082fcb1e935fc13c16d8f3fff3d240867291229d0714a982ee2a53a9",
+          "features": {},
+          "yanked": false,
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:55Z"
+        }
+      ]
+    },
+    {
+      "path": "ol/ip/oliphaunt-broker-linux-arm64-gnu",
+      "header": "AwIAAABldGFnOiAiNGRjNWM5NGZiNzYyMjE5YzI2NGEzZmRkNDZlMTQwNmYiAA==",
+      "records": [
+        {
+          "name": "oliphaunt-broker-linux-arm64-gnu",
+          "vers": "0.3.1",
+          "deps": [],
+          "cksum": "06c00cd2397ecdb8c386d635795c57b596b86c4599836749d7d29b60b96d33c2",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_broker_linux_arm64_gnu",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:54Z"
+        }
+      ]
+    },
+    {
+      "path": "ol/ip/oliphaunt-broker-linux-x64-gnu",
+      "header": "AwIAAABldGFnOiAiZDNhMmZkM2ExNWNjZWM5ZTFjZTM3ZTIxZTE0ZTUzN2YiAA==",
+      "records": [
+        {
+          "name": "oliphaunt-broker-linux-x64-gnu",
+          "vers": "0.3.1",
+          "deps": [],
+          "cksum": "72f29d435fc06ebd24044a3ff3c4fb5247849a2957bb2e075c536f7fa0928cf8",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_broker_linux_x64_gnu",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:54Z"
+        }
+      ]
+    },
+    {
+      "path": "ol/ip/oliphaunt-broker-macos-arm64",
+      "header": "AwIAAABldGFnOiAiMjc3MTZkZTVmN2EyNzU5YjYwMWVlNWY3ZDEyNjdmZTYiAA==",
+      "records": [
+        {
+          "name": "oliphaunt-broker-macos-arm64",
+          "vers": "0.3.1",
+          "deps": [],
+          "cksum": "c233022e9fd0957cebd01b07da67502bd90d589cc8849d243ef88ad54ea78364",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_broker_macos_arm64",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:55Z"
+        }
+      ]
+    },
+    {
+      "path": "ol/ip/oliphaunt-broker-windows-x64-msvc",
+      "header": "AwIAAABldGFnOiAiOWY1NTMzNGQwZTJjZjYwMWY2NjFkNzRhYWI2NDI0MDkiAA==",
+      "records": [
+        {
+          "name": "oliphaunt-broker-windows-x64-msvc",
+          "vers": "0.3.1",
+          "deps": [],
+          "cksum": "136d2fb6262d793d3cac04daf04a3f8354d91de50719bb6045f649234cfbbee0",
+          "features": {},
+          "yanked": false,
+          "links": "oliphaunt_artifact_broker_windows_x64_msvc",
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:40:55Z"
+        }
+      ]
+    },
+    {
+      "path": "ol/ip/oliphaunt-build",
+      "header": "AwIAAABldGFnOiAiOTUzOGIxZTVlZjNmNzNiYmRjNWJjZDM0N2M0YjU2YzAiAA==",
+      "records": [
+        {
+          "name": "oliphaunt-build",
+          "vers": "0.3.2",
+          "deps": [
+            {
+              "name": "serde",
+              "req": "^1",
+              "features": ["derive"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "sha2",
+              "req": "^0.10",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "tempfile",
+              "req": "^3",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "toml",
+              "req": "^0.9",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "5a2a676749df3756473b4fd0deea7ef194a5d78bbcfb6fb46f5ae1da8f058f82",
+          "features": {},
+          "yanked": false,
+          "rust_version": "1.93",
+          "pubtime": "2026-10-07T07:42:02Z"
+        }
+      ]
+    },
+    {
+      "path": "ol/ip/oliphaunt-query",
+      "header": "AwIAAABldGFnOiAiNDk3ZWM1ZGNjZmQyOTIyNTY1ODM2ZWQ3YTZlMDRkZTUiAA==",
+      "records": [
+        {
+          "name": "oliphaunt-query",
+          "vers": "0.1.1",
+          "deps": [],
+          "cksum": "523a7416f6a830ef02928994a2a89e9fd9d01e4fe67b22f0480d377d5f9b235c",
+          "features": {},
+          "yanked": false,
+          "rust_version": "1.93",
+          "pubtime": "2026-10-03T01:03:22Z"
+        }
+      ]
+    },
+    {
+      "path": "pk/g-/pkg-config",
+      "header": "AwIAAABldGFnOiAiZjJiODI5OWQ4MmIxMDhmNDNkOGQxODViYTMyNzRiNDgiAA==",
+      "records": [
+        {
+          "name": "pkg-config",
+          "vers": "0.3.34",
+          "deps": [],
+          "cksum": "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548",
+          "features": {},
+          "yanked": false,
+          "rust_version": "1.63",
+          "pubtime": "2026-08-14T08:27:51Z"
+        }
+      ]
+    },
+    {
+      "path": "pr/oc/proc-macro2",
+      "header": "AwIAAABldGFnOiAiYWJhYmI1OTE1N2M2ZTlhNzE0YTliMWNiMzAyZTg0MmUiAA==",
+      "records": [
+        {
+          "name": "proc-macro2",
+          "vers": "1.0.107",
+          "deps": [
+            {
+              "name": "flate2",
+              "req": "^1.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "quote",
+              "req": "^1.0",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "rayon",
+              "req": "^1.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "rustversion",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "tar",
+              "req": "^0.4",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "unicode-ident",
+              "req": "^1.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9",
+          "features": {
+            "default": ["proc-macro"],
+            "nightly": [],
+            "proc-macro": [],
+            "span-locations": []
+          },
+          "yanked": false,
+          "rust_version": "1.71",
+          "pubtime": "2026-07-19T00:18:25Z"
+        }
+      ]
+    },
+    {
+      "path": "qu/ot/quote",
+      "header": "AwIAAABldGFnOiAiNzI5NmI3Yzk0OGUyODExNjhiMGVhZTc0NjVmZTM5MTgiAA==",
+      "records": [
+        {
+          "name": "quote",
+          "vers": "1.0.47",
+          "deps": [
+            {
+              "name": "proc-macro2",
+              "req": "^1.0.80",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "rustversion",
+              "req": "^1.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "trybuild",
+              "req": "^1.0.108",
+              "features": ["diff"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            }
+          ],
+          "cksum": "1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001",
+          "features": {
+            "default": ["proc-macro"],
+            "proc-macro": ["proc-macro2/proc-macro"]
+          },
+          "yanked": false,
+          "rust_version": "1.71",
+          "pubtime": "2026-07-19T00:16:57Z"
+        }
+      ]
+    },
+    {
+      "path": "r-/ef/r-efi",
+      "header": "AwIAAABldGFnOiAiNDdiZGU4NjlmOWVjMzhmNzdkZjI2YjJlZTQxZGQ1ZTYiAA==",
+      "records": [
+        {
+          "name": "r-efi",
+          "vers": "5.3.0",
+          "deps": [
+            {
+              "name": "core",
+              "req": "^1.0.0",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal",
+              "package": "rustc-std-workspace-core"
+            }
+          ],
+          "cksum": "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f",
+          "features": {
+            "efiapi": [],
+            "examples": ["native"],
+            "native": [],
+            "rustc-dep-of-std": ["core"]
+          },
+          "yanked": false,
+          "rust_version": "1.68",
+          "pubtime": "2025-06-17T09:12:38Z"
+        },
+        {
+          "name": "r-efi",
+          "vers": "6.0.0",
+          "deps": [
+            {
+              "name": "core",
+              "req": "^1.0.0",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal",
+              "package": "rustc-std-workspace-core"
+            }
+          ],
+          "cksum": "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf",
+          "features": {
+            "native": [],
+            "rustc-dep-of-std": ["core"]
+          },
+          "yanked": false,
+          "rust_version": "1.68",
+          "pubtime": "2026-02-03T09:53:46Z"
+        }
+      ]
+    },
+    {
+      "path": "ru/st/rustix",
+      "header": "AwIAAABldGFnOiAiMTRkZDQxMTBiMGY3MDMwNWU2MGU0ZjI2OGIxZDE3NmQiAA==",
+      "records": [
+        {
+          "name": "rustix",
+          "vers": "1.1.5",
+          "deps": [
+            {
+              "name": "bitflags",
+              "req": "^2.4.0",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "core",
+              "req": "^1.0.0",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal",
+              "package": "rustc-std-workspace-core"
+            },
+            {
+              "name": "criterion",
+              "req": "^0.4",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(all(criterion, not(any(target_os = \"emscripten\", target_os = \"wasi\"))))",
+              "kind": "dev"
+            },
+            {
+              "name": "flate2",
+              "req": "^1.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.182",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(all(not(windows), any(rustix_use_libc, miri, not(all(target_os = \"linux\", any(target_endian = \"little\", any(target_arch = \"s390x\", target_arch = \"powerpc\")), any(target_arch = \"arm\", all(target_arch = \"aarch64\", target_pointer_width = \"64\"), target_arch = \"riscv64\", all(rustix_use_experimental_asm, target_arch = \"powerpc\"), all(rustix_use_experimental_asm, target_arch = \"powerpc64\"), all(rustix_use_experimental_asm, target_arch = \"s390x\"), all(rustix_use_experimental_asm, target_arch = \"mips\"), all(rustix_use_experimental_asm, target_arch = \"mips32r6\"), all(rustix_use_experimental_asm, target_arch = \"mips64\"), all(rustix_use_experimental_asm, target_arch = \"mips64r6\"), target_arch = \"x86\", all(target_arch = \"x86_64\", target_pointer_width = \"64\")))))))",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.182",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": "cfg(all(not(rustix_use_libc), not(miri), target_os = \"linux\", any(target_endian = \"little\", any(target_arch = \"s390x\", target_arch = \"powerpc\")), any(target_arch = \"arm\", all(target_arch = \"aarch64\", target_pointer_width = \"64\"), target_arch = \"riscv64\", all(rustix_use_experimental_asm, target_arch = \"powerpc\"), all(rustix_use_experimental_asm, target_arch = \"powerpc64\"), all(rustix_use_experimental_asm, target_arch = \"s390x\"), all(rustix_use_experimental_asm, target_arch = \"mips\"), all(rustix_use_experimental_asm, target_arch = \"mips32r6\"), all(rustix_use_experimental_asm, target_arch = \"mips64\"), all(rustix_use_experimental_asm, target_arch = \"mips64r6\"), target_arch = \"x86\", all(target_arch = \"x86_64\", target_pointer_width = \"64\"))))",
+              "kind": "normal"
+            },
+            {
+              "name": "libc",
+              "req": "^0.2.171",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "libc_errno",
+              "req": "^0.3.10",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(all(not(windows), any(rustix_use_libc, miri, not(all(target_os = \"linux\", any(target_endian = \"little\", any(target_arch = \"s390x\", target_arch = \"powerpc\")), any(target_arch = \"arm\", all(target_arch = \"aarch64\", target_pointer_width = \"64\"), target_arch = \"riscv64\", all(rustix_use_experimental_asm, target_arch = \"powerpc\"), all(rustix_use_experimental_asm, target_arch = \"powerpc64\"), all(rustix_use_experimental_asm, target_arch = \"s390x\"), all(rustix_use_experimental_asm, target_arch = \"mips\"), all(rustix_use_experimental_asm, target_arch = \"mips32r6\"), all(rustix_use_experimental_asm, target_arch = \"mips64\"), all(rustix_use_experimental_asm, target_arch = \"mips64r6\"), target_arch = \"x86\", all(target_arch = \"x86_64\", target_pointer_width = \"64\")))))))",
+              "kind": "normal",
+              "package": "errno"
+            },
+            {
+              "name": "libc_errno",
+              "req": "^0.3.10",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(windows)",
+              "kind": "normal",
+              "package": "errno"
+            },
+            {
+              "name": "libc_errno",
+              "req": "^0.3.10",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": "cfg(all(not(rustix_use_libc), not(miri), target_os = \"linux\", any(target_endian = \"little\", any(target_arch = \"s390x\", target_arch = \"powerpc\")), any(target_arch = \"arm\", all(target_arch = \"aarch64\", target_pointer_width = \"64\"), target_arch = \"riscv64\", all(rustix_use_experimental_asm, target_arch = \"powerpc\"), all(rustix_use_experimental_asm, target_arch = \"powerpc64\"), all(rustix_use_experimental_asm, target_arch = \"s390x\"), all(rustix_use_experimental_asm, target_arch = \"mips\"), all(rustix_use_experimental_asm, target_arch = \"mips32r6\"), all(rustix_use_experimental_asm, target_arch = \"mips64\"), all(rustix_use_experimental_asm, target_arch = \"mips64r6\"), target_arch = \"x86\", all(target_arch = \"x86_64\", target_pointer_width = \"64\"))))",
+              "kind": "normal",
+              "package": "errno"
+            },
+            {
+              "name": "libc_errno",
+              "req": "^0.3.10",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "dev",
+              "package": "errno"
+            },
+            {
+              "name": "linux-raw-sys",
+              "req": "^0.12",
+              "features": ["general", "ioctl", "no_std"],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(all(any(target_os = \"linux\", target_os = \"android\"), any(rustix_use_libc, miri, not(all(target_os = \"linux\", any(target_endian = \"little\", any(target_arch = \"s390x\", target_arch = \"powerpc\")), any(target_arch = \"arm\", all(target_arch = \"aarch64\", target_pointer_width = \"64\"), target_arch = \"riscv64\", all(rustix_use_experimental_asm, target_arch = \"powerpc\"), all(rustix_use_experimental_asm, target_arch = \"powerpc64\"), all(rustix_use_experimental_asm, target_arch = \"s390x\"), all(rustix_use_experimental_asm, target_arch = \"mips\"), all(rustix_use_experimental_asm, target_arch = \"mips32r6\"), all(rustix_use_experimental_asm, target_arch = \"mips64\"), all(rustix_use_experimental_asm, target_arch = \"mips64r6\"), target_arch = \"x86\", all(target_arch = \"x86_64\", target_pointer_width = \"64\")))))))",
+              "kind": "normal"
+            },
+            {
+              "name": "linux-raw-sys",
+              "req": "^0.12",
+              "features": ["auxvec", "general", "errno", "ioctl", "no_std", "elf"],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(all(not(rustix_use_libc), not(miri), target_os = \"linux\", any(target_endian = \"little\", any(target_arch = \"s390x\", target_arch = \"powerpc\")), any(target_arch = \"arm\", all(target_arch = \"aarch64\", target_pointer_width = \"64\"), target_arch = \"riscv64\", all(rustix_use_experimental_asm, target_arch = \"powerpc\"), all(rustix_use_experimental_asm, target_arch = \"powerpc64\"), all(rustix_use_experimental_asm, target_arch = \"s390x\"), all(rustix_use_experimental_asm, target_arch = \"mips\"), all(rustix_use_experimental_asm, target_arch = \"mips32r6\"), all(rustix_use_experimental_asm, target_arch = \"mips64\"), all(rustix_use_experimental_asm, target_arch = \"mips64r6\"), target_arch = \"x86\", all(target_arch = \"x86_64\", target_pointer_width = \"64\"))))",
+              "kind": "normal"
+            },
+            {
+              "name": "memoffset",
+              "req": "^0.9.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "once_cell",
+              "req": "^1.20.3",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(windows)",
+              "kind": "dev"
+            },
+            {
+              "name": "rustc-std-workspace-alloc",
+              "req": "^1.0.0",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "serial_test",
+              "req": "^2.0.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "static_assertions",
+              "req": "^1.1.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "tempfile",
+              "req": "^3.5.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "windows-sys",
+              "req": ">=0.52, <0.62",
+              "features": ["Win32_Foundation", "Win32_Networking_WinSock"],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(windows)",
+              "kind": "normal"
+            }
+          ],
+          "cksum": "891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d",
+          "features": {
+            "all-apis": [
+              "event",
+              "fs",
+              "io_uring",
+              "mm",
+              "mount",
+              "net",
+              "param",
+              "pipe",
+              "process",
+              "pty",
+              "rand",
+              "runtime",
+              "shm",
+              "stdio",
+              "system",
+              "termios",
+              "thread",
+              "time"
+            ],
+            "alloc": [],
+            "event": [],
+            "fs": [],
+            "io_uring": ["event", "fs", "net", "thread", "linux-raw-sys/io_uring"],
+            "linux_4_11": [],
+            "linux_5_1": ["linux_4_11"],
+            "linux_5_11": ["linux_5_1"],
+            "linux_latest": ["linux_5_11"],
+            "mm": [],
+            "mount": [],
+            "net": [
+              "linux-raw-sys/net",
+              "linux-raw-sys/netlink",
+              "linux-raw-sys/if_ether",
+              "linux-raw-sys/xdp"
+            ],
+            "param": [],
+            "pipe": [],
+            "process": ["linux-raw-sys/prctl"],
+            "pty": ["fs"],
+            "rand": [],
+            "runtime": ["linux-raw-sys/prctl"],
+            "rustc-dep-of-std": [
+              "core",
+              "rustc-std-workspace-alloc",
+              "linux-raw-sys/rustc-dep-of-std",
+              "bitflags/rustc-dep-of-std"
+            ],
+            "shm": ["fs"],
+            "stdio": [],
+            "system": ["linux-raw-sys/system"],
+            "termios": [],
+            "thread": ["linux-raw-sys/prctl"],
+            "time": [],
+            "try_close": [],
+            "use-explicitly-provided-auxv": [],
+            "use-libc": ["libc_errno", "libc"],
+            "use-libc-auxv": []
+          },
+          "features2": {
+            "default": ["std"],
+            "std": ["bitflags/std", "alloc", "libc?/std", "libc_errno?/std"]
+          },
+          "yanked": false,
+          "rust_version": "1.65",
+          "pubtime": "2026-09-16T23:05:02Z",
+          "v": 2
+        }
+      ]
+    },
+    {
+      "path": "se/rd/serde",
+      "header": "AwIAAABldGFnOiAiOTcxZTFhNzFkN2Q2YWZiZmM5MGEyM2FkOTE5MzExMDMiAA==",
+      "records": [
+        {
+          "name": "serde",
+          "vers": "1.0.229",
+          "deps": [
+            {
+              "name": "serde_core",
+              "req": "=1.0.229",
+              "features": ["result"],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "serde_derive",
+              "req": "^1",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba",
+          "features": {
+            "alloc": ["serde_core/alloc"],
+            "default": ["std"],
+            "derive": ["serde_derive"],
+            "rc": ["serde_core/rc"],
+            "std": ["serde_core/std"],
+            "unstable": ["serde_core/unstable"]
+          },
+          "yanked": false,
+          "rust_version": "1.56",
+          "pubtime": "2026-07-18T23:05:13Z"
+        }
+      ]
+    },
+    {
+      "path": "se/rd/serde_core",
+      "header": "AwIAAABldGFnOiAiMDY3N2FlODQ2MzcwZWVmNTdkMDBkYjRhZjdhYjM5ZmMiAA==",
+      "records": [
+        {
+          "name": "serde_core",
+          "vers": "1.0.229",
+          "deps": [
+            {
+              "name": "serde",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "serde_derive",
+              "req": "=1.0.229",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(any())",
+              "kind": "normal"
+            },
+            {
+              "name": "serde_derive",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            }
+          ],
+          "cksum": "67dca2c9c51e58a4791a4b1ed58308b39c64224d349a935ab5039aa360942a48",
+          "features": {
+            "alloc": [],
+            "default": ["std", "result"],
+            "rc": [],
+            "result": [],
+            "std": [],
+            "unstable": []
+          },
+          "yanked": false,
+          "rust_version": "1.56",
+          "pubtime": "2026-07-18T23:05:10Z"
+        }
+      ]
+    },
+    {
+      "path": "se/rd/serde_derive",
+      "header": "AwIAAABldGFnOiAiOWM3YjkyYmFjZWE4YmNhMTdlZTI2MzBiNjQyZjA2ZTUiAA==",
+      "records": [
+        {
+          "name": "serde_derive",
+          "vers": "1.0.229",
+          "deps": [
+            {
+              "name": "proc-macro2",
+              "req": "^1.0.74",
+              "features": ["proc-macro"],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "quote",
+              "req": "^1.0.35",
+              "features": ["proc-macro"],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "serde",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "syn",
+              "req": "^3",
+              "features": ["clone-impls", "derive", "parsing", "printing", "proc-macro"],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348",
+          "features": {
+            "default": [],
+            "deserialize_in_place": []
+          },
+          "yanked": false,
+          "rust_version": "1.71",
+          "pubtime": "2026-07-18T23:05:07Z"
+        }
+      ]
+    },
+    {
+      "path": "se/rd/serde_json",
+      "header": "AwIAAABldGFnOiAiNzAxZjRjM2IyZGU3NTVmYTg2YzViM2JiZjUwZGZlNzYiAA==",
+      "records": [
+        {
+          "name": "serde_json",
+          "vers": "1.0.152",
+          "deps": [
+            {
+              "name": "automod",
+              "req": "^1.0.11",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "indexmap",
+              "req": "^2.2.3",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "indoc",
+              "req": "^2.0.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "itoa",
+              "req": "^1.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "memchr",
+              "req": "^2",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "ref-cast",
+              "req": "^1.0.18",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "rustversion",
+              "req": "^1.0.13",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "serde",
+              "req": "^1.0.220",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(any())",
+              "kind": "normal"
+            },
+            {
+              "name": "serde",
+              "req": "^1.0.194",
+              "features": ["derive"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "serde_bytes",
+              "req": "^0.11.10",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "serde_core",
+              "req": "^1.0.220",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "serde_derive",
+              "req": "^1.0.166",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "serde_stacker",
+              "req": "^0.1.8",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "trybuild",
+              "req": "^1.0.108",
+              "features": ["diff"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "zmij",
+              "req": "^1.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "1741ab7a6cc54a03a89b5d563ed60075c277d9e3cfa73ad0c1f23f23974703c6",
+          "features": {
+            "alloc": ["serde_core/alloc"],
+            "arbitrary_precision": [],
+            "default": ["std"],
+            "float_roundtrip": [],
+            "preserve_order": ["indexmap", "std"],
+            "raw_value": [],
+            "std": ["memchr/std", "serde_core/std"],
+            "unbounded_depth": []
+          },
+          "yanked": false,
+          "rust_version": "1.71",
+          "pubtime": "2026-10-10T17:04:20Z"
+        }
+      ]
+    },
+    {
+      "path": "se/rd/serde_spanned",
+      "header": "AwIAAABldGFnOiAiY2EyZmZlMWQ1MTMxMGU2MmU3YWQ0ODdkOGJjMTgzNWEiAA==",
+      "records": [
+        {
+          "name": "serde_spanned",
+          "vers": "1.1.2",
+          "deps": [
+            {
+              "name": "serde",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "serde-untagged",
+              "req": "^0.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "serde_core",
+              "req": "^1.0.228",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "serde_derive",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            }
+          ],
+          "cksum": "4e7523beb55eece201a2356bee0bbca0d1ab466c14c07703b2e0ee6d42cb0c2c",
+          "features": {},
+          "features2": {
+            "alloc": ["serde_core?/alloc"],
+            "default": ["std", "serde"],
+            "serde": ["dep:serde_core"],
+            "std": ["alloc", "serde_core?/std"]
+          },
+          "yanked": false,
+          "rust_version": "1.85",
+          "pubtime": "2026-10-08T00:54:02Z",
+          "v": 2
+        }
+      ]
+    },
+    {
+      "path": "sh/a2/sha2",
+      "header": "AwIAAABldGFnOiAiZWYwMzI4MTFlOTZmMThhNWEzZjQ3NTkwNDRmM2NlZmMiAA==",
+      "records": [
+        {
+          "name": "sha2",
+          "vers": "0.10.9",
+          "deps": [
+            {
+              "name": "cfg-if",
+              "req": "^1.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "cpufeatures",
+              "req": "^0.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(any(target_arch = \"aarch64\", target_arch = \"x86_64\", target_arch = \"x86\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "digest",
+              "req": "^0.10.7",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "digest",
+              "req": "^0.10.7",
+              "features": ["dev"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "hex-literal",
+              "req": "^0.2.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "sha2-asm",
+              "req": "^0.6.1",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": "cfg(any(target_arch = \"aarch64\", target_arch = \"x86_64\", target_arch = \"x86\"))",
+              "kind": "normal"
+            }
+          ],
+          "cksum": "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283",
+          "features": {
+            "asm": ["sha2-asm"],
+            "asm-aarch64": ["asm"],
+            "compress": [],
+            "default": ["std"],
+            "force-soft": [],
+            "force-soft-compact": [],
+            "loongarch64_asm": [],
+            "oid": ["digest/oid"],
+            "std": ["digest/std"]
+          },
+          "yanked": false,
+          "pubtime": "2025-04-30T14:38:09Z"
+        }
+      ]
+    },
+    {
+      "path": "sh/le/shlex",
+      "header": "AwIAAABldGFnOiAiMzU1MWFhZTM0MTRhOWUyYWY2MDhkNTU1NzkzNzg0NWEiAA==",
+      "records": [
+        {
+          "name": "shlex",
+          "vers": "2.0.1",
+          "deps": [],
+          "cksum": "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba",
+          "features": {
+            "default": ["std"],
+            "std": []
+          },
+          "yanked": false,
+          "rust_version": "1.46.0",
+          "pubtime": "2026-05-17T18:56:12Z"
+        }
+      ]
+    },
+    {
+      "path": "to/ml/toml",
+      "header": "AwIAAABldGFnOiAiNTBhM2E4MTE5NGM5MDU0NmMwOTg1Y2M0YTgxNmEyYjkiAA==",
+      "records": [
+        {
+          "name": "toml",
+          "vers": "0.9.12+spec-1.1.0",
+          "deps": [
+            {
+              "name": "anstream",
+              "req": "^0.6.20",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "anstyle",
+              "req": "^1.0.11",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "foldhash",
+              "req": "^0.2.0",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "indexmap",
+              "req": "^2.11.4",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "itertools",
+              "req": "^0.14.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "serde",
+              "req": "^1.0.225",
+              "features": ["derive"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "serde-untagged",
+              "req": "^0.1.9",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "serde_core",
+              "req": "^1.0.225",
+              "features": ["alloc"],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "serde_json",
+              "req": "^1.0.145",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "serde_spanned",
+              "req": "^1.0.4",
+              "features": ["alloc"],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "snapbox",
+              "req": "^0.6.21",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "toml-test-data",
+              "req": "^2.3.3",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "toml-test-harness",
+              "req": "^1.3.3",
+              "features": ["snapshot"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "toml_datetime",
+              "req": "^0.7.5",
+              "features": ["alloc"],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "toml_parser",
+              "req": "^1.0.7",
+              "features": ["alloc"],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "toml_writer",
+              "req": "^1.0.6",
+              "features": ["alloc"],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "walkdir",
+              "req": "^2.5.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "winnow",
+              "req": "^0.7.13",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "cf92845e79fc2e2def6a5d828f0801e29a2f8acc037becc5ab08595c7d5e9863",
+          "features": {
+            "unbounded": []
+          },
+          "features2": {
+            "debug": ["std", "toml_parser?/debug", "dep:anstream", "dep:anstyle"],
+            "default": ["std", "serde", "parse", "display"],
+            "display": ["dep:toml_writer"],
+            "fast_hash": ["preserve_order", "dep:foldhash"],
+            "parse": ["dep:toml_parser", "dep:winnow"],
+            "preserve_order": ["dep:indexmap", "std"],
+            "serde": ["dep:serde_core", "toml_datetime/serde", "serde_spanned/serde"],
+            "std": [
+              "indexmap?/std",
+              "serde_core?/std",
+              "toml_parser?/std",
+              "toml_writer?/std",
+              "toml_datetime/std",
+              "serde_spanned/std"
+            ]
+          },
+          "yanked": false,
+          "rust_version": "1.76",
+          "pubtime": "2026-02-10T18:10:32Z",
+          "v": 2
+        }
+      ]
+    },
+    {
+      "path": "to/ml/toml_datetime",
+      "header": "AwIAAABldGFnOiAiMjg4ZGUzNzkwNjcwMWU0YTA1ZjAxMTM2ZGQxOWFlZjYiAA==",
+      "records": [
+        {
+          "name": "toml_datetime",
+          "vers": "0.7.5+spec-1.1.0",
+          "deps": [
+            {
+              "name": "serde_core",
+              "req": "^1.0.225",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "snapbox",
+              "req": "^0.6.21",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            }
+          ],
+          "cksum": "92e1cfed4a3038bc5a127e35a2d360f145e1f4b971b551a2ba5fd7aedf7e1347",
+          "features": {},
+          "features2": {
+            "alloc": ["serde_core?/alloc"],
+            "default": ["std"],
+            "serde": ["dep:serde_core"],
+            "std": ["alloc", "serde_core?/std"]
+          },
+          "yanked": false,
+          "rust_version": "1.76",
+          "pubtime": "2025-12-18T13:26:19Z",
+          "v": 2
+        }
+      ]
+    },
+    {
+      "path": "to/ml/toml_parser",
+      "header": "AwIAAABldGFnOiAiOWViOWE2MWYxN2Q2YzZkMTk1NTlmNzkxZDE0YmM0NGMiAA==",
+      "records": [
+        {
+          "name": "toml_parser",
+          "vers": "1.1.5+spec-1.1.0",
+          "deps": [
+            {
+              "name": "anstream",
+              "req": "^1.0.0",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "anstream",
+              "req": "^1.0.0",
+              "features": ["test"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "anstyle",
+              "req": "^1.0.14",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "snapbox",
+              "req": "^1.1.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "winnow",
+              "req": "^1.0.0",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c",
+          "features": {
+            "alloc": [],
+            "default": ["std"],
+            "simd": ["winnow/simd"],
+            "std": ["alloc"],
+            "unsafe": []
+          },
+          "features2": {
+            "debug": ["std", "dep:anstream", "dep:anstyle"]
+          },
+          "yanked": false,
+          "rust_version": "1.85",
+          "pubtime": "2026-10-09T02:46:29Z",
+          "v": 2
+        }
+      ]
+    },
+    {
+      "path": "to/ml/toml_writer",
+      "header": "AwIAAABldGFnOiAiNDk0MmU4YTk4YjUxNWY2N2ZlZWFkN2NhMzc2ZjgwZjciAA==",
+      "records": [
+        {
+          "name": "toml_writer",
+          "vers": "1.1.3+spec-1.1.0",
+          "deps": [
+            {
+              "name": "proptest",
+              "req": "^1.10.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "snapbox",
+              "req": "^1.1.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "toml_old",
+              "req": "^0.5.11",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev",
+              "package": "toml"
+            }
+          ],
+          "cksum": "06bdbd8cfc056b8d2e2e85f29b56a3bdbecb527cef81eb39e3e7b98af4652770",
+          "features": {
+            "alloc": [],
+            "default": ["std"],
+            "std": ["alloc"]
+          },
+          "yanked": false,
+          "rust_version": "1.85",
+          "pubtime": "2026-10-08T00:54:04Z"
+        }
+      ]
+    },
+    {
+      "path": "ty/pe/typenum",
+      "header": "AwIAAABldGFnOiAiZmZmMGQ5NjAyZjc2NDVmZmZmMzBhYTMzYzRmYzhmYTIiAA==",
+      "records": [
+        {
+          "name": "typenum",
+          "vers": "1.20.1",
+          "deps": [
+            {
+              "name": "scale-info",
+              "req": "^1.0",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20",
+          "features": {
+            "const-generics": [],
+            "i128": [],
+            "scale_info": ["scale-info/derive"],
+            "strict": []
+          },
+          "yanked": false,
+          "rust_version": "1.41.0",
+          "pubtime": "2026-05-29T16:00:41Z"
+        }
+      ]
+    },
+    {
+      "path": "un/ic/unicode-ident",
+      "header": "AwIAAABldGFnOiAiYjcxNThlNzgzOGU5ZmYwZmYyNWQ5NmM3N2VmODlmNzkiAA==",
+      "records": [
+        {
+          "name": "unicode-ident",
+          "vers": "1.0.26",
+          "deps": [
+            {
+              "name": "criterion",
+              "req": "^0.8",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(not(miri))",
+              "kind": "dev"
+            },
+            {
+              "name": "fst",
+              "req": "^0.4",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "rand",
+              "req": "^0.10",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "roaring",
+              "req": "^0.11",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "ucd-trie",
+              "req": "^0.1",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "unicode-xid",
+              "req": "^0.2.6",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            }
+          ],
+          "cksum": "d245f478577f809a851594d02313b640fb437e0bb33866753cff937863096954",
+          "features": {},
+          "yanked": false,
+          "rust_version": "1.71",
+          "pubtime": "2026-09-17T06:18:03Z"
+        }
+      ]
+    },
+    {
+      "path": "ve/rs/version_check",
+      "header": "AwIAAABldGFnOiAiMTdiMWIzYzA4ZjNkMjY4OTdmYTgyODg4YzU0MDljZmEiAA==",
+      "records": [
+        {
+          "name": "version_check",
+          "vers": "0.9.5",
+          "deps": [],
+          "cksum": "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a",
+          "features": {},
+          "yanked": false,
+          "pubtime": "2024-07-25T23:38:14Z"
+        }
+      ]
+    },
+    {
+      "path": "wa/si/wasip2",
+      "header": "AwIAAABldGFnOiAiMmE1MWY4ZTc1N2NjZGE5NTU5OTVkZWMyODg5ODQ5YzciAA==",
+      "records": [
+        {
+          "name": "wasip2",
+          "vers": "1.0.4+wasi-0.2.12",
+          "deps": [
+            {
+              "name": "alloc",
+              "req": "^1.0",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal",
+              "package": "rustc-std-workspace-alloc"
+            },
+            {
+              "name": "core",
+              "req": "^1.0",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal",
+              "package": "rustc-std-workspace-core"
+            },
+            {
+              "name": "wit-bindgen",
+              "req": "^0.57.1",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "b67efb37e106e55ce722a510d6b5f9c17f083e5fc79afc2badeb12cc313d9487",
+          "features": {
+            "bitflags": ["wit-bindgen/bitflags"],
+            "default": ["std", "bitflags"],
+            "rustc-dep-of-std": ["core", "alloc", "wit-bindgen/rustc-dep-of-std"],
+            "std": []
+          },
+          "yanked": false,
+          "rust_version": "1.87.0",
+          "pubtime": "2026-06-12T17:42:43Z"
+        }
+      ]
+    },
+    {
+      "path": "wi/na/winapi",
+      "header": "AwIAAABldGFnOiAiN2IxNTA1MzFhZDhjMjc3MDUxM2UyN2QyMDk3NjJlNzYiAA==",
+      "records": [
+        {
+          "name": "winapi",
+          "vers": "0.3.9",
+          "deps": [
+            {
+              "name": "winapi-i686-pc-windows-gnu",
+              "req": "^0.4",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "i686-pc-windows-gnu",
+              "kind": "normal"
+            },
+            {
+              "name": "winapi-x86_64-pc-windows-gnu",
+              "req": "^0.4",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "x86_64-pc-windows-gnu",
+              "kind": "normal"
+            }
+          ],
+          "cksum": "5c839a674fcd7a98952e593242ea400abe93992746761e38641405d28b00f419",
+          "features": {
+            "accctrl": [],
+            "aclapi": [],
+            "activation": [],
+            "adhoc": [],
+            "appmgmt": [],
+            "audioclient": [],
+            "audiosessiontypes": [],
+            "avrt": [],
+            "basetsd": [],
+            "bcrypt": [],
+            "bits": [],
+            "bits10_1": [],
+            "bits1_5": [],
+            "bits2_0": [],
+            "bits2_5": [],
+            "bits3_0": [],
+            "bits4_0": [],
+            "bits5_0": [],
+            "bitscfg": [],
+            "bitsmsg": [],
+            "bluetoothapis": [],
+            "bluetoothleapis": [],
+            "bthdef": [],
+            "bthioctl": [],
+            "bthledef": [],
+            "bthsdpdef": [],
+            "bugcodes": [],
+            "cderr": [],
+            "cfg": [],
+            "cfgmgr32": [],
+            "cguid": [],
+            "combaseapi": [],
+            "coml2api": [],
+            "commapi": [],
+            "commctrl": [],
+            "commdlg": [],
+            "commoncontrols": [],
+            "consoleapi": [],
+            "corecrt": [],
+            "corsym": [],
+            "d2d1": [],
+            "d2d1_1": [],
+            "d2d1_2": [],
+            "d2d1_3": [],
+            "d2d1effectauthor": [],
+            "d2d1effects": [],
+            "d2d1effects_1": [],
+            "d2d1effects_2": [],
+            "d2d1svg": [],
+            "d2dbasetypes": [],
+            "d3d": [],
+            "d3d10": [],
+            "d3d10_1": [],
+            "d3d10_1shader": [],
+            "d3d10effect": [],
+            "d3d10misc": [],
+            "d3d10sdklayers": [],
+            "d3d10shader": [],
+            "d3d11": [],
+            "d3d11_1": [],
+            "d3d11_2": [],
+            "d3d11_3": [],
+            "d3d11_4": [],
+            "d3d11on12": [],
+            "d3d11sdklayers": [],
+            "d3d11shader": [],
+            "d3d11tokenizedprogramformat": [],
+            "d3d12": [],
+            "d3d12sdklayers": [],
+            "d3d12shader": [],
+            "d3d9": [],
+            "d3d9caps": [],
+            "d3d9types": [],
+            "d3dcommon": [],
+            "d3dcompiler": [],
+            "d3dcsx": [],
+            "d3dkmdt": [],
+            "d3dkmthk": [],
+            "d3dukmdt": [],
+            "d3dx10core": [],
+            "d3dx10math": [],
+            "d3dx10mesh": [],
+            "datetimeapi": [],
+            "davclnt": [],
+            "dbghelp": [],
+            "dbt": [],
+            "dcommon": [],
+            "dcomp": [],
+            "dcompanimation": [],
+            "dcomptypes": [],
+            "dde": [],
+            "ddraw": [],
+            "ddrawi": [],
+            "ddrawint": [],
+            "debug": ["impl-debug"],
+            "debugapi": [],
+            "devguid": [],
+            "devicetopology": [],
+            "devpkey": [],
+            "devpropdef": [],
+            "dinput": [],
+            "dinputd": [],
+            "dispex": [],
+            "dmksctl": [],
+            "dmusicc": [],
+            "docobj": [],
+            "documenttarget": [],
+            "dot1x": [],
+            "dpa_dsa": [],
+            "dpapi": [],
+            "dsgetdc": [],
+            "dsound": [],
+            "dsrole": [],
+            "dvp": [],
+            "dwmapi": [],
+            "dwrite": [],
+            "dwrite_1": [],
+            "dwrite_2": [],
+            "dwrite_3": [],
+            "dxdiag": [],
+            "dxfile": [],
+            "dxgi": [],
+            "dxgi1_2": [],
+            "dxgi1_3": [],
+            "dxgi1_4": [],
+            "dxgi1_5": [],
+            "dxgi1_6": [],
+            "dxgidebug": [],
+            "dxgiformat": [],
+            "dxgitype": [],
+            "dxva2api": [],
+            "dxvahd": [],
+            "eaptypes": [],
+            "enclaveapi": [],
+            "endpointvolume": [],
+            "errhandlingapi": [],
+            "everything": [],
+            "evntcons": [],
+            "evntprov": [],
+            "evntrace": [],
+            "excpt": [],
+            "exdisp": [],
+            "fibersapi": [],
+            "fileapi": [],
+            "functiondiscoverykeys_devpkey": [],
+            "gl-gl": [],
+            "guiddef": [],
+            "handleapi": [],
+            "heapapi": [],
+            "hidclass": [],
+            "hidpi": [],
+            "hidsdi": [],
+            "hidusage": [],
+            "highlevelmonitorconfigurationapi": [],
+            "hstring": [],
+            "http": [],
+            "ifdef": [],
+            "ifmib": [],
+            "imm": [],
+            "impl-debug": [],
+            "impl-default": [],
+            "in6addr": [],
+            "inaddr": [],
+            "inspectable": [],
+            "interlockedapi": [],
+            "intsafe": [],
+            "ioapiset": [],
+            "ipexport": [],
+            "iphlpapi": [],
+            "ipifcons": [],
+            "ipmib": [],
+            "iprtrmib": [],
+            "iptypes": [],
+            "jobapi": [],
+            "jobapi2": [],
+            "knownfolders": [],
+            "ks": [],
+            "ksmedia": [],
+            "ktmtypes": [],
+            "ktmw32": [],
+            "l2cmn": [],
+            "libloaderapi": [],
+            "limits": [],
+            "lmaccess": [],
+            "lmalert": [],
+            "lmapibuf": [],
+            "lmat": [],
+            "lmcons": [],
+            "lmdfs": [],
+            "lmerrlog": [],
+            "lmjoin": [],
+            "lmmsg": [],
+            "lmremutl": [],
+            "lmrepl": [],
+            "lmserver": [],
+            "lmshare": [],
+            "lmstats": [],
+            "lmsvc": [],
+            "lmuse": [],
+            "lmwksta": [],
+            "lowlevelmonitorconfigurationapi": [],
+            "lsalookup": [],
+            "memoryapi": [],
+            "minschannel": [],
+            "minwinbase": [],
+            "minwindef": [],
+            "mmdeviceapi": [],
+            "mmeapi": [],
+            "mmreg": [],
+            "mmsystem": [],
+            "mprapidef": [],
+            "msaatext": [],
+            "mscat": [],
+            "mschapp": [],
+            "mssip": [],
+            "mstcpip": [],
+            "mswsock": [],
+            "mswsockdef": [],
+            "namedpipeapi": [],
+            "namespaceapi": [],
+            "nb30": [],
+            "ncrypt": [],
+            "netioapi": [],
+            "nldef": [],
+            "ntddndis": [],
+            "ntddscsi": [],
+            "ntddser": [],
+            "ntdef": [],
+            "ntlsa": [],
+            "ntsecapi": [],
+            "ntstatus": [],
+            "oaidl": [],
+            "objbase": [],
+            "objidl": [],
+            "objidlbase": [],
+            "ocidl": [],
+            "ole2": [],
+            "oleauto": [],
+            "olectl": [],
+            "oleidl": [],
+            "opmapi": [],
+            "pdh": [],
+            "perflib": [],
+            "physicalmonitorenumerationapi": [],
+            "playsoundapi": [],
+            "portabledevice": [],
+            "portabledeviceapi": [],
+            "portabledevicetypes": [],
+            "powerbase": [],
+            "powersetting": [],
+            "powrprof": [],
+            "processenv": [],
+            "processsnapshot": [],
+            "processthreadsapi": [],
+            "processtopologyapi": [],
+            "profileapi": [],
+            "propidl": [],
+            "propkey": [],
+            "propkeydef": [],
+            "propsys": [],
+            "prsht": [],
+            "psapi": [],
+            "qos": [],
+            "realtimeapiset": [],
+            "reason": [],
+            "restartmanager": [],
+            "restrictederrorinfo": [],
+            "rmxfguid": [],
+            "roapi": [],
+            "robuffer": [],
+            "roerrorapi": [],
+            "rpc": [],
+            "rpcdce": [],
+            "rpcndr": [],
+            "rtinfo": [],
+            "sapi": [],
+            "sapi51": [],
+            "sapi53": [],
+            "sapiddk": [],
+            "sapiddk51": [],
+            "schannel": [],
+            "sddl": [],
+            "securityappcontainer": [],
+            "securitybaseapi": [],
+            "servprov": [],
+            "setupapi": [],
+            "shellapi": [],
+            "shellscalingapi": [],
+            "shlobj": [],
+            "shobjidl": [],
+            "shobjidl_core": [],
+            "shtypes": [],
+            "softpub": [],
+            "spapidef": [],
+            "spellcheck": [],
+            "sporder": [],
+            "sql": [],
+            "sqlext": [],
+            "sqltypes": [],
+            "sqlucode": [],
+            "sspi": [],
+            "std": [],
+            "stralign": [],
+            "stringapiset": [],
+            "strmif": [],
+            "subauth": [],
+            "synchapi": [],
+            "sysinfoapi": [],
+            "systemtopologyapi": [],
+            "taskschd": [],
+            "tcpestats": [],
+            "tcpmib": [],
+            "textstor": [],
+            "threadpoolapiset": [],
+            "threadpoollegacyapiset": [],
+            "timeapi": [],
+            "timezoneapi": [],
+            "tlhelp32": [],
+            "transportsettingcommon": [],
+            "tvout": [],
+            "udpmib": [],
+            "unknwnbase": [],
+            "urlhist": [],
+            "urlmon": [],
+            "usb": [],
+            "usbioctl": [],
+            "usbiodef": [],
+            "usbscan": [],
+            "usbspec": [],
+            "userenv": [],
+            "usp10": [],
+            "utilapiset": [],
+            "uxtheme": [],
+            "vadefs": [],
+            "vcruntime": [],
+            "vsbackup": [],
+            "vss": [],
+            "vsserror": [],
+            "vswriter": [],
+            "wbemads": [],
+            "wbemcli": [],
+            "wbemdisp": [],
+            "wbemprov": [],
+            "wbemtran": [],
+            "wct": [],
+            "werapi": [],
+            "winbase": [],
+            "wincodec": [],
+            "wincodecsdk": [],
+            "wincon": [],
+            "wincontypes": [],
+            "wincred": [],
+            "wincrypt": [],
+            "windef": [],
+            "windot11": [],
+            "windowsceip": [],
+            "windowsx": [],
+            "winefs": [],
+            "winerror": [],
+            "winevt": [],
+            "wingdi": [],
+            "winhttp": [],
+            "wininet": [],
+            "winineti": [],
+            "winioctl": [],
+            "winnetwk": [],
+            "winnls": [],
+            "winnt": [],
+            "winreg": [],
+            "winsafer": [],
+            "winscard": [],
+            "winsmcrd": [],
+            "winsock2": [],
+            "winspool": [],
+            "winstring": [],
+            "winsvc": [],
+            "wintrust": [],
+            "winusb": [],
+            "winusbio": [],
+            "winuser": [],
+            "winver": [],
+            "wlanapi": [],
+            "wlanihv": [],
+            "wlanihvtypes": [],
+            "wlantypes": [],
+            "wlclient": [],
+            "wmistr": [],
+            "wnnc": [],
+            "wow64apiset": [],
+            "wpdmtpextensions": [],
+            "ws2bth": [],
+            "ws2def": [],
+            "ws2ipdef": [],
+            "ws2spi": [],
+            "ws2tcpip": [],
+            "wtsapi32": [],
+            "wtypes": [],
+            "wtypesbase": [],
+            "xinput": []
+          },
+          "yanked": false,
+          "pubtime": "2020-06-26T11:34:33Z"
+        }
+      ]
+    },
+    {
+      "path": "wi/na/winapi-i686-pc-windows-gnu",
+      "header": "AwIAAABldGFnOiAiMDU5MmJiOTZmNGY2MGI2OWY4ZmVjY2IzZWQ1NzE4NTIiAA==",
+      "records": [
+        {
+          "name": "winapi-i686-pc-windows-gnu",
+          "vers": "0.4.0",
+          "deps": [],
+          "cksum": "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6",
+          "features": {},
+          "yanked": false,
+          "pubtime": "2018-01-18T00:55:38Z"
+        }
+      ]
+    },
+    {
+      "path": "wi/na/winapi-x86_64-pc-windows-gnu",
+      "header": "AwIAAABldGFnOiAiZDE5NmU3ZTU1OTUxZWZjYWM4NDIyMjJlMzFjOGM0ODYiAA==",
+      "records": [
+        {
+          "name": "winapi-x86_64-pc-windows-gnu",
+          "vers": "0.4.0",
+          "deps": [],
+          "cksum": "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f",
+          "features": {},
+          "yanked": false,
+          "pubtime": "2018-01-18T00:55:12Z"
+        }
+      ]
+    },
+    {
+      "path": "wi/nd/windows-link",
+      "header": "AwIAAABldGFnOiAiOGExMzljNWFiOGJmMzhhNTUxM2I0OTYxZGU4MmYwY2MiAA==",
+      "records": [
+        {
+          "name": "windows-link",
+          "vers": "0.2.1",
+          "deps": [],
+          "cksum": "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5",
+          "features": {},
+          "yanked": false,
+          "rust_version": "1.71",
+          "pubtime": "2025-10-06T17:35:08Z"
+        }
+      ]
+    },
+    {
+      "path": "wi/nd/windows-sys",
+      "header": "AwIAAABldGFnOiAiZjZmOGFlYTIyYzM4NmY3ZTI2YWUyNWRmNjljYWNkMzYiAA==",
+      "records": [
+        {
+          "name": "windows-sys",
+          "vers": "0.61.2",
+          "deps": [
+            {
+              "name": "windows-link",
+              "req": "^0.2.1",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc",
+          "features": {
+            "Wdk": ["Win32_Foundation"],
+            "Wdk_Devices": ["Wdk"],
+            "Wdk_Devices_Bluetooth": ["Wdk_Devices"],
+            "Wdk_Devices_HumanInterfaceDevice": ["Wdk_Devices"],
+            "Wdk_Foundation": ["Wdk"],
+            "Wdk_Graphics": ["Wdk"],
+            "Wdk_Graphics_Direct3D": ["Wdk_Graphics"],
+            "Wdk_NetworkManagement": ["Wdk"],
+            "Wdk_NetworkManagement_Ndis": ["Wdk_NetworkManagement"],
+            "Wdk_NetworkManagement_WindowsFilteringPlatform": ["Wdk_NetworkManagement"],
+            "Wdk_Storage": ["Wdk"],
+            "Wdk_Storage_FileSystem": ["Wdk_Storage"],
+            "Wdk_Storage_FileSystem_Minifilters": ["Wdk_Storage_FileSystem"],
+            "Wdk_System": ["Wdk"],
+            "Wdk_System_IO": ["Wdk_System"],
+            "Wdk_System_Memory": ["Wdk_System"],
+            "Wdk_System_OfflineRegistry": ["Wdk_System"],
+            "Wdk_System_Registry": ["Wdk_System"],
+            "Wdk_System_SystemInformation": ["Wdk_System"],
+            "Wdk_System_SystemServices": ["Wdk_System"],
+            "Wdk_System_Threading": ["Wdk_System"],
+            "Win32": ["Win32_Foundation"],
+            "Win32_Data": ["Win32"],
+            "Win32_Data_HtmlHelp": ["Win32_Data"],
+            "Win32_Data_RightsManagement": ["Win32_Data"],
+            "Win32_Devices": ["Win32"],
+            "Win32_Devices_AllJoyn": ["Win32_Devices"],
+            "Win32_Devices_Beep": ["Win32_Devices"],
+            "Win32_Devices_BiometricFramework": ["Win32_Devices"],
+            "Win32_Devices_Bluetooth": ["Win32_Devices"],
+            "Win32_Devices_Cdrom": ["Win32_Devices"],
+            "Win32_Devices_Communication": ["Win32_Devices"],
+            "Win32_Devices_DeviceAndDriverInstallation": ["Win32_Devices"],
+            "Win32_Devices_DeviceQuery": ["Win32_Devices"],
+            "Win32_Devices_Display": ["Win32_Devices"],
+            "Win32_Devices_Dvd": ["Win32_Devices"],
+            "Win32_Devices_Enumeration": ["Win32_Devices"],
+            "Win32_Devices_Enumeration_Pnp": ["Win32_Devices_Enumeration"],
+            "Win32_Devices_Fax": ["Win32_Devices"],
+            "Win32_Devices_HumanInterfaceDevice": ["Win32_Devices"],
+            "Win32_Devices_Nfc": ["Win32_Devices"],
+            "Win32_Devices_Nfp": ["Win32_Devices"],
+            "Win32_Devices_PortableDevices": ["Win32_Devices"],
+            "Win32_Devices_Properties": ["Win32_Devices"],
+            "Win32_Devices_Pwm": ["Win32_Devices"],
+            "Win32_Devices_Sensors": ["Win32_Devices"],
+            "Win32_Devices_SerialCommunication": ["Win32_Devices"],
+            "Win32_Devices_Tapi": ["Win32_Devices"],
+            "Win32_Devices_Usb": ["Win32_Devices"],
+            "Win32_Devices_WebServicesOnDevices": ["Win32_Devices"],
+            "Win32_Foundation": ["Win32"],
+            "Win32_Gaming": ["Win32"],
+            "Win32_Globalization": ["Win32"],
+            "Win32_Graphics": ["Win32"],
+            "Win32_Graphics_Dwm": ["Win32_Graphics"],
+            "Win32_Graphics_Gdi": ["Win32_Graphics"],
+            "Win32_Graphics_GdiPlus": ["Win32_Graphics"],
+            "Win32_Graphics_Hlsl": ["Win32_Graphics"],
+            "Win32_Graphics_OpenGL": ["Win32_Graphics"],
+            "Win32_Graphics_Printing": ["Win32_Graphics"],
+            "Win32_Graphics_Printing_PrintTicket": ["Win32_Graphics_Printing"],
+            "Win32_Management": ["Win32"],
+            "Win32_Management_MobileDeviceManagementRegistration": ["Win32_Management"],
+            "Win32_Media": ["Win32"],
+            "Win32_Media_Audio": ["Win32_Media"],
+            "Win32_Media_DxMediaObjects": ["Win32_Media"],
+            "Win32_Media_KernelStreaming": ["Win32_Media"],
+            "Win32_Media_Multimedia": ["Win32_Media"],
+            "Win32_Media_Streaming": ["Win32_Media"],
+            "Win32_Media_WindowsMediaFormat": ["Win32_Media"],
+            "Win32_NetworkManagement": ["Win32"],
+            "Win32_NetworkManagement_Dhcp": ["Win32_NetworkManagement"],
+            "Win32_NetworkManagement_Dns": ["Win32_NetworkManagement"],
+            "Win32_NetworkManagement_InternetConnectionWizard": ["Win32_NetworkManagement"],
+            "Win32_NetworkManagement_IpHelper": ["Win32_NetworkManagement"],
+            "Win32_NetworkManagement_Multicast": ["Win32_NetworkManagement"],
+            "Win32_NetworkManagement_Ndis": ["Win32_NetworkManagement"],
+            "Win32_NetworkManagement_NetBios": ["Win32_NetworkManagement"],
+            "Win32_NetworkManagement_NetManagement": ["Win32_NetworkManagement"],
+            "Win32_NetworkManagement_NetShell": ["Win32_NetworkManagement"],
+            "Win32_NetworkManagement_NetworkDiagnosticsFramework": ["Win32_NetworkManagement"],
+            "Win32_NetworkManagement_P2P": ["Win32_NetworkManagement"],
+            "Win32_NetworkManagement_QoS": ["Win32_NetworkManagement"],
+            "Win32_NetworkManagement_Rras": ["Win32_NetworkManagement"],
+            "Win32_NetworkManagement_Snmp": ["Win32_NetworkManagement"],
+            "Win32_NetworkManagement_WNet": ["Win32_NetworkManagement"],
+            "Win32_NetworkManagement_WebDav": ["Win32_NetworkManagement"],
+            "Win32_NetworkManagement_WiFi": ["Win32_NetworkManagement"],
+            "Win32_NetworkManagement_WindowsConnectionManager": ["Win32_NetworkManagement"],
+            "Win32_NetworkManagement_WindowsFilteringPlatform": ["Win32_NetworkManagement"],
+            "Win32_NetworkManagement_WindowsFirewall": ["Win32_NetworkManagement"],
+            "Win32_NetworkManagement_WindowsNetworkVirtualization": ["Win32_NetworkManagement"],
+            "Win32_Networking": ["Win32"],
+            "Win32_Networking_ActiveDirectory": ["Win32_Networking"],
+            "Win32_Networking_Clustering": ["Win32_Networking"],
+            "Win32_Networking_HttpServer": ["Win32_Networking"],
+            "Win32_Networking_Ldap": ["Win32_Networking"],
+            "Win32_Networking_WebSocket": ["Win32_Networking"],
+            "Win32_Networking_WinHttp": ["Win32_Networking"],
+            "Win32_Networking_WinInet": ["Win32_Networking"],
+            "Win32_Networking_WinSock": ["Win32_Networking"],
+            "Win32_Networking_WindowsWebServices": ["Win32_Networking"],
+            "Win32_Security": ["Win32"],
+            "Win32_Security_AppLocker": ["Win32_Security"],
+            "Win32_Security_Authentication": ["Win32_Security"],
+            "Win32_Security_Authentication_Identity": ["Win32_Security_Authentication"],
+            "Win32_Security_Authorization": ["Win32_Security"],
+            "Win32_Security_Credentials": ["Win32_Security"],
+            "Win32_Security_Cryptography": ["Win32_Security"],
+            "Win32_Security_Cryptography_Catalog": ["Win32_Security_Cryptography"],
+            "Win32_Security_Cryptography_Certificates": ["Win32_Security_Cryptography"],
+            "Win32_Security_Cryptography_Sip": ["Win32_Security_Cryptography"],
+            "Win32_Security_Cryptography_UI": ["Win32_Security_Cryptography"],
+            "Win32_Security_DiagnosticDataQuery": ["Win32_Security"],
+            "Win32_Security_DirectoryServices": ["Win32_Security"],
+            "Win32_Security_EnterpriseData": ["Win32_Security"],
+            "Win32_Security_ExtensibleAuthenticationProtocol": ["Win32_Security"],
+            "Win32_Security_Isolation": ["Win32_Security"],
+            "Win32_Security_LicenseProtection": ["Win32_Security"],
+            "Win32_Security_NetworkAccessProtection": ["Win32_Security"],
+            "Win32_Security_WinTrust": ["Win32_Security"],
+            "Win32_Security_WinWlx": ["Win32_Security"],
+            "Win32_Storage": ["Win32"],
+            "Win32_Storage_Cabinets": ["Win32_Storage"],
+            "Win32_Storage_CloudFilters": ["Win32_Storage"],
+            "Win32_Storage_Compression": ["Win32_Storage"],
+            "Win32_Storage_DistributedFileSystem": ["Win32_Storage"],
+            "Win32_Storage_FileHistory": ["Win32_Storage"],
+            "Win32_Storage_FileSystem": ["Win32_Storage"],
+            "Win32_Storage_Imapi": ["Win32_Storage"],
+            "Win32_Storage_IndexServer": ["Win32_Storage"],
+            "Win32_Storage_InstallableFileSystems": ["Win32_Storage"],
+            "Win32_Storage_IscsiDisc": ["Win32_Storage"],
+            "Win32_Storage_Jet": ["Win32_Storage"],
+            "Win32_Storage_Nvme": ["Win32_Storage"],
+            "Win32_Storage_OfflineFiles": ["Win32_Storage"],
+            "Win32_Storage_OperationRecorder": ["Win32_Storage"],
+            "Win32_Storage_Packaging": ["Win32_Storage"],
+            "Win32_Storage_Packaging_Appx": ["Win32_Storage_Packaging"],
+            "Win32_Storage_ProjectedFileSystem": ["Win32_Storage"],
+            "Win32_Storage_StructuredStorage": ["Win32_Storage"],
+            "Win32_Storage_Vhd": ["Win32_Storage"],
+            "Win32_Storage_Xps": ["Win32_Storage"],
+            "Win32_System": ["Win32"],
+            "Win32_System_AddressBook": ["Win32_System"],
+            "Win32_System_Antimalware": ["Win32_System"],
+            "Win32_System_ApplicationInstallationAndServicing": ["Win32_System"],
+            "Win32_System_ApplicationVerifier": ["Win32_System"],
+            "Win32_System_ClrHosting": ["Win32_System"],
+            "Win32_System_Com": ["Win32_System"],
+            "Win32_System_Com_Marshal": ["Win32_System_Com"],
+            "Win32_System_Com_StructuredStorage": ["Win32_System_Com"],
+            "Win32_System_Com_Urlmon": ["Win32_System_Com"],
+            "Win32_System_ComponentServices": ["Win32_System"],
+            "Win32_System_Console": ["Win32_System"],
+            "Win32_System_CorrelationVector": ["Win32_System"],
+            "Win32_System_DataExchange": ["Win32_System"],
+            "Win32_System_DeploymentServices": ["Win32_System"],
+            "Win32_System_DeveloperLicensing": ["Win32_System"],
+            "Win32_System_Diagnostics": ["Win32_System"],
+            "Win32_System_Diagnostics_Ceip": ["Win32_System_Diagnostics"],
+            "Win32_System_Diagnostics_Debug": ["Win32_System_Diagnostics"],
+            "Win32_System_Diagnostics_Debug_Extensions": ["Win32_System_Diagnostics_Debug"],
+            "Win32_System_Diagnostics_Etw": ["Win32_System_Diagnostics"],
+            "Win32_System_Diagnostics_ProcessSnapshotting": ["Win32_System_Diagnostics"],
+            "Win32_System_Diagnostics_ToolHelp": ["Win32_System_Diagnostics"],
+            "Win32_System_Diagnostics_TraceLogging": ["Win32_System_Diagnostics"],
+            "Win32_System_DistributedTransactionCoordinator": ["Win32_System"],
+            "Win32_System_Environment": ["Win32_System"],
+            "Win32_System_ErrorReporting": ["Win32_System"],
+            "Win32_System_EventCollector": ["Win32_System"],
+            "Win32_System_EventLog": ["Win32_System"],
+            "Win32_System_EventNotificationService": ["Win32_System"],
+            "Win32_System_GroupPolicy": ["Win32_System"],
+            "Win32_System_HostCompute": ["Win32_System"],
+            "Win32_System_HostComputeNetwork": ["Win32_System"],
+            "Win32_System_HostComputeSystem": ["Win32_System"],
+            "Win32_System_Hypervisor": ["Win32_System"],
+            "Win32_System_IO": ["Win32_System"],
+            "Win32_System_Iis": ["Win32_System"],
+            "Win32_System_Ioctl": ["Win32_System"],
+            "Win32_System_JobObjects": ["Win32_System"],
+            "Win32_System_Js": ["Win32_System"],
+            "Win32_System_Kernel": ["Win32_System"],
+            "Win32_System_LibraryLoader": ["Win32_System"],
+            "Win32_System_Mailslots": ["Win32_System"],
+            "Win32_System_Mapi": ["Win32_System"],
+            "Win32_System_Memory": ["Win32_System"],
+            "Win32_System_Memory_NonVolatile": ["Win32_System_Memory"],
+            "Win32_System_MessageQueuing": ["Win32_System"],
+            "Win32_System_MixedReality": ["Win32_System"],
+            "Win32_System_Ole": ["Win32_System"],
+            "Win32_System_PasswordManagement": ["Win32_System"],
+            "Win32_System_Performance": ["Win32_System"],
+            "Win32_System_Performance_HardwareCounterProfiling": ["Win32_System_Performance"],
+            "Win32_System_Pipes": ["Win32_System"],
+            "Win32_System_Power": ["Win32_System"],
+            "Win32_System_ProcessStatus": ["Win32_System"],
+            "Win32_System_Recovery": ["Win32_System"],
+            "Win32_System_Registry": ["Win32_System"],
+            "Win32_System_RemoteDesktop": ["Win32_System"],
+            "Win32_System_RemoteManagement": ["Win32_System"],
+            "Win32_System_RestartManager": ["Win32_System"],
+            "Win32_System_Restore": ["Win32_System"],
+            "Win32_System_Rpc": ["Win32_System"],
+            "Win32_System_Search": ["Win32_System"],
+            "Win32_System_Search_Common": ["Win32_System_Search"],
+            "Win32_System_SecurityCenter": ["Win32_System"],
+            "Win32_System_Services": ["Win32_System"],
+            "Win32_System_SetupAndMigration": ["Win32_System"],
+            "Win32_System_Shutdown": ["Win32_System"],
+            "Win32_System_StationsAndDesktops": ["Win32_System"],
+            "Win32_System_SubsystemForLinux": ["Win32_System"],
+            "Win32_System_SystemInformation": ["Win32_System"],
+            "Win32_System_SystemServices": ["Win32_System"],
+            "Win32_System_Threading": ["Win32_System"],
+            "Win32_System_Time": ["Win32_System"],
+            "Win32_System_TpmBaseServices": ["Win32_System"],
+            "Win32_System_UserAccessLogging": ["Win32_System"],
+            "Win32_System_Variant": ["Win32_System"],
+            "Win32_System_VirtualDosMachines": ["Win32_System"],
+            "Win32_System_WindowsProgramming": ["Win32_System"],
+            "Win32_System_Wmi": ["Win32_System"],
+            "Win32_UI": ["Win32"],
+            "Win32_UI_Accessibility": ["Win32_UI"],
+            "Win32_UI_ColorSystem": ["Win32_UI"],
+            "Win32_UI_Controls": ["Win32_UI"],
+            "Win32_UI_Controls_Dialogs": ["Win32_UI_Controls"],
+            "Win32_UI_HiDpi": ["Win32_UI"],
+            "Win32_UI_Input": ["Win32_UI"],
+            "Win32_UI_Input_Ime": ["Win32_UI_Input"],
+            "Win32_UI_Input_KeyboardAndMouse": ["Win32_UI_Input"],
+            "Win32_UI_Input_Pointer": ["Win32_UI_Input"],
+            "Win32_UI_Input_Touch": ["Win32_UI_Input"],
+            "Win32_UI_Input_XboxController": ["Win32_UI_Input"],
+            "Win32_UI_InteractionContext": ["Win32_UI"],
+            "Win32_UI_Magnification": ["Win32_UI"],
+            "Win32_UI_Shell": ["Win32_UI"],
+            "Win32_UI_Shell_Common": ["Win32_UI_Shell"],
+            "Win32_UI_Shell_PropertiesSystem": ["Win32_UI_Shell"],
+            "Win32_UI_TabletPC": ["Win32_UI"],
+            "Win32_UI_TextServices": ["Win32_UI"],
+            "Win32_UI_WindowsAndMessaging": ["Win32_UI"],
+            "Win32_Web": ["Win32"],
+            "Win32_Web_InternetExplorer": ["Win32_Web"],
+            "default": [],
+            "docs": []
+          },
+          "yanked": false,
+          "rust_version": "1.71",
+          "pubtime": "2025-10-06T19:18:30Z"
+        }
+      ]
+    },
+    {
+      "path": "wi/nn/winnow",
+      "header": "AwIAAABldGFnOiAiM2JlZmY0ZTJiOWI1OGQwNjUyYmFhMGY3ZGVlY2VmYTUiAA==",
+      "records": [
+        {
+          "name": "winnow",
+          "vers": "0.7.15",
+          "deps": [
+            {
+              "name": "annotate-snippets",
+              "req": "^0.11.4",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "anstream",
+              "req": "^0.6.15",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "anstyle",
+              "req": "^1.0.8",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "anyhow",
+              "req": "^1.0.100",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "automod",
+              "req": "^1.0.15",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "circular",
+              "req": "^0.3.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "criterion",
+              "req": "^0.5.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "is_terminal_polyfill",
+              "req": "^1.48.1",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "lexopt",
+              "req": "^0.3.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "memchr",
+              "req": "^2.7",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "proptest",
+              "req": "^1.6.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "rustc-hash",
+              "req": "^2.1.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "snapbox",
+              "req": "^0.6.21",
+              "features": ["examples"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "term-transcript",
+              "req": "^0.2.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "terminal_size",
+              "req": "^0.4.3",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945",
+          "features": {
+            "alloc": [],
+            "unstable-recover": []
+          },
+          "features2": {
+            "debug": [
+              "std",
+              "dep:anstream",
+              "dep:anstyle",
+              "dep:is_terminal_polyfill",
+              "dep:terminal_size"
+            ],
+            "default": ["std"],
+            "simd": ["dep:memchr"],
+            "std": ["alloc", "memchr?/std"],
+            "unstable-doc": ["alloc", "std", "simd", "unstable-recover"]
+          },
+          "yanked": false,
+          "rust_version": "1.65.0",
+          "pubtime": "2026-03-05T19:00:42Z",
+          "v": 2
+        },
+        {
+          "name": "winnow",
+          "vers": "1.0.4",
+          "deps": [
+            {
+              "name": "annotate-snippets",
+              "req": "^0.11.4",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "anstream",
+              "req": "^0.6.15",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "anstyle",
+              "req": "^1.0.8",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "anyhow",
+              "req": "^1.0.100",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "automod",
+              "req": "^1.0.15",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "circular",
+              "req": "^0.3.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "criterion",
+              "req": "^0.5.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "is_terminal_polyfill",
+              "req": "^1.48.1",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "lexopt",
+              "req": "^0.3.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "memchr",
+              "req": "^2.7",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "proptest",
+              "req": "^1.6.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "rustc-hash",
+              "req": "^2.1.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "snapbox",
+              "req": "^0.6.21",
+              "features": ["examples"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "term-transcript",
+              "req": "^0.2.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "terminal_size",
+              "req": "^0.4.3",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81",
+          "features": {
+            "alloc": [],
+            "ascii": ["parser"],
+            "binary": ["parser"],
+            "parser": [],
+            "unstable-recover": ["parser"]
+          },
+          "features2": {
+            "debug": [
+              "std",
+              "dep:anstream",
+              "dep:anstyle",
+              "dep:is_terminal_polyfill",
+              "dep:terminal_size"
+            ],
+            "default": ["std", "ascii", "binary"],
+            "simd": ["dep:memchr"],
+            "std": ["alloc", "memchr?/std"],
+            "unstable-doc": ["alloc", "std", "ascii", "binary", "simd", "unstable-recover"]
+          },
+          "yanked": false,
+          "rust_version": "1.65.0",
+          "pubtime": "2026-07-13T14:31:41Z",
+          "v": 2
+        }
+      ]
+    },
+    {
+      "path": "wi/t-/wit-bindgen",
+      "header": "AwIAAABldGFnOiAiNGZiMDE4ZDEzZjBlMzY3N2Y1NGVmZDE3OTQ1OGQzNGEiAA==",
+      "records": [
+        {
+          "name": "wit-bindgen",
+          "vers": "0.57.1",
+          "deps": [
+            {
+              "name": "alloc",
+              "req": "^1.0",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal",
+              "package": "rustc-std-workspace-alloc"
+            },
+            {
+              "name": "bitflags",
+              "req": "^2.11.1",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "core",
+              "req": "^1.0",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal",
+              "package": "rustc-std-workspace-core"
+            },
+            {
+              "name": "futures",
+              "req": "^0.3.30",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "wit-bindgen-rust-macro",
+              "req": "^0.57.1",
+              "features": [],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e",
+          "features": {
+            "async": [],
+            "inter-task-wakeup": ["async"],
+            "realloc": [],
+            "std": []
+          },
+          "features2": {
+            "async-spawn": ["async", "dep:futures", "std"],
+            "bitflags": ["dep:bitflags"],
+            "default": ["macros", "realloc", "async", "std", "bitflags", "macro-string"],
+            "futures-stream": ["async", "dep:futures"],
+            "macro-string": ["wit-bindgen-rust-macro?/macro-string"],
+            "macros": ["dep:wit-bindgen-rust-macro"],
+            "rustc-dep-of-std": ["dep:core", "dep:alloc"]
+          },
+          "yanked": false,
+          "rust_version": "1.85.0",
+          "pubtime": "2026-04-17T17:49:55Z",
+          "v": 2
+        }
+      ]
+    },
+    {
+      "path": "xa/tt/xattr",
+      "header": "AwIAAABldGFnOiAiZDFiOTMzNmU1Y2U1YTA4ZWMyOWYzOThkMTVkZjFkNzkiAA==",
+      "records": [
+        {
+          "name": "xattr",
+          "vers": "1.6.1",
+          "deps": [
+            {
+              "name": "libc",
+              "req": "^0.2.150",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": "cfg(any(target_os = \"freebsd\", target_os = \"netbsd\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "rustix",
+              "req": "^1.0.0",
+              "features": ["fs", "std"],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(any(target_os = \"android\", target_os = \"linux\", target_os = \"macos\", target_os = \"hurd\"))",
+              "kind": "normal"
+            },
+            {
+              "name": "tempfile",
+              "req": "^3",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            }
+          ],
+          "cksum": "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156",
+          "features": {
+            "default": ["unsupported"],
+            "unsupported": []
+          },
+          "yanked": false,
+          "pubtime": "2025-09-21T02:52:23Z"
+        }
+      ]
+    },
+    {
+      "path": "zm/ij/zmij",
+      "header": "AwIAAABldGFnOiAiMGY1ODQ4NzI1ZWIwZmQyODY3OGY0YTdjNWM5M2M4MzMiAA==",
+      "records": [
+        {
+          "name": "zmij",
+          "vers": "1.0.23",
+          "deps": [
+            {
+              "name": "criterion",
+              "req": "^0.8",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": "cfg(not(miri))",
+              "kind": "dev"
+            },
+            {
+              "name": "no-panic",
+              "req": "^0.1.36",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "normal"
+            },
+            {
+              "name": "num-bigint",
+              "req": "^0.5",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "num-integer",
+              "req": "^0.1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "num_cpus",
+              "req": "^1.8",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "opt-level",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "rand",
+              "req": "^0.10",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "ryu",
+              "req": "^1",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            }
+          ],
+          "cksum": "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b",
+          "features": {},
+          "yanked": false,
+          "rust_version": "1.71",
+          "pubtime": "2026-07-13T12:58:53Z"
+        }
+      ]
+    },
+    {
+      "path": "zs/td/zstd",
+      "header": "AwIAAABldGFnOiAiZWU4ZDc2NjU1YjRlMjQxNDAzZWMyN2FlNzMxMTVkMjgiAA==",
+      "records": [
+        {
+          "name": "zstd",
+          "vers": "0.13.3",
+          "deps": [
+            {
+              "name": "clap",
+              "req": "^4.0",
+              "features": ["derive"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "humansize",
+              "req": "^2.0",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "partial-io",
+              "req": "^0.5",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "walkdir",
+              "req": "^2.2",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "dev"
+            },
+            {
+              "name": "zstd-safe",
+              "req": "^7.1.0",
+              "features": ["std"],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a",
+          "features": {
+            "arrays": ["zstd-safe/arrays"],
+            "bindgen": ["zstd-safe/bindgen"],
+            "debug": ["zstd-safe/debug"],
+            "default": ["legacy", "arrays", "zdict_builder"],
+            "doc-cfg": [],
+            "experimental": ["zstd-safe/experimental"],
+            "fat-lto": ["zstd-safe/fat-lto"],
+            "legacy": ["zstd-safe/legacy"],
+            "no_asm": ["zstd-safe/no_asm"],
+            "pkg-config": ["zstd-safe/pkg-config"],
+            "thin": ["zstd-safe/thin"],
+            "thin-lto": ["zstd-safe/thin-lto"],
+            "wasm": [],
+            "zdict_builder": ["zstd-safe/zdict_builder"],
+            "zstdmt": ["zstd-safe/zstdmt"]
+          },
+          "yanked": false,
+          "rust_version": "1.64",
+          "pubtime": "2025-02-20T21:43:13Z"
+        }
+      ]
+    },
+    {
+      "path": "zs/td/zstd-safe",
+      "header": "AwIAAABldGFnOiAiMmFiZGFlNDdjZmI4ODIxYTkwZTg4NWNmZjk0OWZjMTMiAA==",
+      "records": [
+        {
+          "name": "zstd-safe",
+          "vers": "7.3.0",
+          "deps": [
+            {
+              "name": "zstd-sys",
+              "req": "^2.0.15",
+              "features": [],
+              "optional": false,
+              "default_features": false,
+              "target": null,
+              "kind": "normal"
+            }
+          ],
+          "cksum": "64d80649ab6db9d9f6f9c80a40becd948eda4714a0a5ac8c4d157a32231c7882",
+          "features": {
+            "arrays": [],
+            "bindgen": ["zstd-sys/bindgen"],
+            "debug": ["zstd-sys/debug"],
+            "default": ["legacy", "arrays", "zdict_builder"],
+            "doc-cfg": [],
+            "experimental": ["zstd-sys/experimental"],
+            "fat-lto": ["zstd-sys/fat-lto"],
+            "legacy": ["zstd-sys/legacy"],
+            "no_asm": ["zstd-sys/no_asm"],
+            "pkg-config": ["zstd-sys/pkg-config"],
+            "seekable": ["zstd-sys/seekable"],
+            "std": ["zstd-sys/std"],
+            "thin": ["zstd-sys/thin"],
+            "thin-lto": ["zstd-sys/thin-lto"],
+            "zdict_builder": ["zstd-sys/zdict_builder"],
+            "zstdmt": ["zstd-sys/zstdmt"]
+          },
+          "yanked": false,
+          "rust_version": "1.64",
+          "pubtime": "2026-09-04T14:31:21Z"
+        }
+      ]
+    },
+    {
+      "path": "zs/td/zstd-sys",
+      "header": "AwIAAABldGFnOiAiMTg5MDU1YTAwMGI5YjQ3YzRiYjEwMjEwYTk3NWIyMDUiAA==",
+      "records": [
+        {
+          "name": "zstd-sys",
+          "vers": "2.1.1+zstd.1.5.7",
+          "deps": [
+            {
+              "name": "bindgen",
+              "req": "^0.73.2",
+              "features": ["runtime"],
+              "optional": true,
+              "default_features": false,
+              "target": null,
+              "kind": "build"
+            },
+            {
+              "name": "cc",
+              "req": "^1.0.45",
+              "features": ["parallel"],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            },
+            {
+              "name": "cmake",
+              "req": "^0.1",
+              "features": [],
+              "optional": true,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            },
+            {
+              "name": "pkg-config",
+              "req": "^0.3.28",
+              "features": [],
+              "optional": false,
+              "default_features": true,
+              "target": null,
+              "kind": "build"
+            }
+          ],
+          "cksum": "aeec9eaf2dffbbd09201e23bd0ffcbaa33bb8e9266a10734fd7ed90a85eca078",
+          "features": {
+            "debug": [],
+            "default": ["legacy", "zdict_builder"],
+            "experimental": [],
+            "fat-lto": [],
+            "legacy": [],
+            "no_asm": [],
+            "no_wasm_shim": [],
+            "non-cargo": [],
+            "pkg-config": [],
+            "seekable": [],
+            "std": [],
+            "thin": [],
+            "thin-lto": [],
+            "vendored": [],
+            "zdict_builder": [],
+            "zstdmt": []
+          },
+          "features2": {
+            "cmake": ["dep:cmake"]
+          },
+          "yanked": false,
+          "links": "zstd",
+          "rust_version": "1.64",
+          "pubtime": "2026-10-09T14:57:47Z",
+          "v": 2
+        }
+      ]
+    }
+  ]
+}

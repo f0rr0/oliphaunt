@@ -40,7 +40,10 @@ fileGroups:
 
 tasks:
   format:
-    command: "cargo fmt -p oliphaunt-build -p oliphaunt"
+    script: |
+      set -e
+      cargo fmt --manifest-path src/native/sdks/rust/Cargo.toml
+      cargo fmt --manifest-path src/native/sdks/rust/crates/oliphaunt-build/Cargo.toml
     options:
       cache: false
       runInCI: false
@@ -50,7 +53,8 @@ tasks:
     tags: ["build", "requires-rust"]
     script: |
       set -e
-      cargo build -p oliphaunt -p oliphaunt-build --locked
+      cargo build --manifest-path src/native/sdks/rust/Cargo.toml --locked
+      cargo build --manifest-path src/native/sdks/rust/crates/oliphaunt-build/Cargo.toml --locked
     outputs: ["/target/debug/liboliphaunt.rlib", "/target/debug/liboliphaunt_build.rlib"]
     env:
       CARGO_TARGET_DIR: "target"
@@ -76,7 +80,7 @@ tasks:
       fi
       "$CARGO_TARGET_DIR/build-script-tests"
       cargo test -p oliphaunt --doc --locked
-      cargo test -p oliphaunt-build --locked
+      cargo test --manifest-path src/native/sdks/rust/crates/oliphaunt-build/Cargo.toml --locked
       cargo nextest run -p oliphaunt --locked --profile ci --no-tests=fail --test-threads=1
     env:
       # Cargo releases its build lock before rustdoc consumes the compiled libraries.
@@ -174,13 +178,19 @@ tasks:
 
   format-check:
     tags: ["quality", "static", "format", "requires-rust"]
-    command: "cargo fmt -p oliphaunt-build -p oliphaunt --check"
+    script: |
+      set -e
+      cargo fmt --manifest-path src/native/sdks/rust/Cargo.toml --check
+      cargo fmt --manifest-path src/native/sdks/rust/crates/oliphaunt-build/Cargo.toml --check
     inputs: ["/src/native/sdks/rust/crates/oliphaunt-build/**/*.rs","/src/native/sdks/rust/crates/oliphaunt-build/Cargo.toml","/src/native/sdks/rust/**/*.rs","/src/native/sdks/rust/Cargo.toml","/clippy.toml","@group(cargo-workspace)"]
     options:
       runFromWorkspaceRoot: true
   lint:
     tags: ["quality", "static", "requires-rust"]
-    command: "cargo clippy -p oliphaunt-build -p oliphaunt --all-targets --locked -- -D warnings"
+    script: |
+      set -e
+      cargo clippy --manifest-path src/native/sdks/rust/Cargo.toml --all-targets --locked -- -D warnings
+      cargo clippy --manifest-path src/native/sdks/rust/crates/oliphaunt-build/Cargo.toml --all-targets --locked -- -D warnings
     env:
       CARGO_TARGET_DIR: "target"
     deps:

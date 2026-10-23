@@ -8,7 +8,7 @@ Run native PostgreSQL in Node.js, Bun, Deno, or Electron. For browsers, choose [
 npm install @oliphaunt/ts
 ```
 
-The [quickstart](https://oliphaunt.dev/docs/sdk/typescript) covers prerequisites and the versions documented by the current site. Pin dependencies in your application manifest or lockfile.
+The [quickstart](https://oliphaunt.dev/docs/sdk/typescript) covers prerequisites. Pin dependencies in your application manifest or lockfile.
 
 ## First query
 

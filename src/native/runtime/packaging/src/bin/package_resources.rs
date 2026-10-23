@@ -6,6 +6,7 @@ use liboliphaunt_native_bindings::Extension;
 use oliphaunt_native_packaging::{
     Error, MobileStaticRegistryState, NativePrebuiltExtensionArtifact, NativeRuntimeFeature,
     NativeRuntimeResourceOptions, Result, build_native_runtime_resources,
+    validate_runtime_cache_identity,
 };
 
 fn main() {
@@ -44,6 +45,9 @@ fn run_with_package_args(args: PackageArgs) -> Result<()> {
         .extension_target(extension_target);
     if let Some(version) = args.liboliphaunt_version {
         options = options.native_runtime_version(version);
+    }
+    if let Some(identity) = args.runtime_cache_identity {
+        options = options.runtime_cache_identity(identity);
     }
     for name in args.extensions {
         let extension = Extension::by_sql_name(&name).ok_or_else(|| Error::InvalidConfig(format!("unknown built-in extension {name}; supply external artifacts with --prebuilt-extension")))?;
@@ -140,6 +144,7 @@ struct PackageArgs {
     force: bool,
     require_mobile_static_registry: bool,
     liboliphaunt_version: Option<String>,
+    runtime_cache_identity: Option<String>,
     help: bool,
 }
 impl PackageArgs {
@@ -165,6 +170,7 @@ impl PackageArgs {
             force: false,
             require_mobile_static_registry: false,
             liboliphaunt_version: native_runtime_version,
+            runtime_cache_identity: None,
             help: false,
         };
         let mut args = args.into_iter();
@@ -193,6 +199,21 @@ impl PackageArgs {
                 "--require-mobile-static-registry" => parsed.require_mobile_static_registry = true,
                 "--output" | "-o" => parsed.output_dir = Some(PathBuf::from(value()?)),
                 "--liboliphaunt-native-version" => parsed.liboliphaunt_version = Some(value()?),
+                "--runtime-cache-identity" => {
+                    if parsed.runtime_cache_identity.is_some() {
+                        return Err(Error::InvalidConfig(
+                            "--runtime-cache-identity may be supplied only once".to_owned(),
+                        ));
+                    }
+                    let identity = value()?;
+                    if inline.is_none() && identity.starts_with("--") {
+                        return Err(Error::InvalidConfig(
+                            "--runtime-cache-identity requires a value; use '=' for an identity starting with '--'".to_owned(),
+                        ));
+                    }
+                    validate_runtime_cache_identity(&identity)?;
+                    parsed.runtime_cache_identity = Some(identity);
+                }
                 "--extension" => push_extension_names(&mut parsed.extensions, &value()?),
                 "--runtime-feature" | "--runtime-features" => {
                     push_runtime_feature_names(&mut parsed.runtime_features, &value()?)?
@@ -277,7 +298,7 @@ fn default_extension_artifact_target() -> String {
 
 fn print_help() {
     println!(
-        "oliphaunt-resources --output <dir> [--runtime-feature icu] [--extension name] [--prebuilt-extension artifact] [--liboliphaunt-native-version version] [--extension-target target] [--mobile-static-module module] [--require-mobile-static-registry] [--force]"
+        "oliphaunt-resources --output <dir> [--runtime-feature icu] [--extension name] [--prebuilt-extension artifact] [--liboliphaunt-native-version version] [--extension-target target] [--runtime-cache-identity identity] [--mobile-static-module module] [--require-mobile-static-registry] [--force]"
     );
 }
 
@@ -294,6 +315,55 @@ mod tests {
 
     #[cfg(unix)]
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    #[test]
+    fn runtime_cache_identity_option_is_optional_and_preserves_the_exact_token() {
+        let parsed = PackageArgs::parse_with_native_runtime_version(Vec::new(), None).unwrap();
+        assert_eq!(parsed.runtime_cache_identity, None);
+        for (args, expected) in [
+            (
+                strings(["--runtime-cache-identity", "bazel-runtime_18.4"]),
+                "bazel-runtime_18.4",
+            ),
+            (
+                strings(["--runtime-cache-identity=bazel-runtime_18.4"]),
+                "bazel-runtime_18.4",
+            ),
+            (strings(["--runtime-cache-identity=--key"]), "--key"),
+        ] {
+            let parsed = PackageArgs::parse_with_native_runtime_version(args, None).unwrap();
+            assert_eq!(parsed.runtime_cache_identity.as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn runtime_cache_identity_option_rejects_invalid_repeated_and_missing_values() {
+        for args in [
+            strings(["--runtime-cache-identity"]),
+            strings(["--runtime-cache-identity", "--force"]),
+            strings(["--runtime-cache-identity="]),
+            strings(["--runtime-cache-identity=."]),
+            strings(["--runtime-cache-identity=.."]),
+            strings(["--runtime-cache-identity=a/b"]),
+            strings(["--runtime-cache-identity=a b"]),
+            strings(["--runtime-cache-identity=é"]),
+            vec![format!("--runtime-cache-identity={}", "a".repeat(129))],
+            strings([
+                "--runtime-cache-identity=first",
+                "--runtime-cache-identity=second",
+            ]),
+            strings([
+                "--runtime-cache-identity",
+                "first",
+                "--runtime-cache-identity=second",
+            ]),
+        ] {
+            assert!(
+                PackageArgs::parse_with_native_runtime_version(args.clone(), None).is_err(),
+                "accepted {args:?}"
+            );
+        }
+    }
 
     #[test]
     fn value_options_preserve_equals_and_flags_reject_values() {
@@ -389,6 +459,47 @@ mod tests {
                 "optional PostgreSQL tool leaked into the core runtime: {tool}"
             );
         }
+
+        let override_output = temp.join("override-output");
+        let args = PackageArgs::parse_with_native_runtime_version(
+            strings([
+                "--output",
+                override_output.to_str().unwrap(),
+                "--prebuilt-extension",
+                artifact.to_str().unwrap(),
+                "--extension-target",
+                "test-target",
+                "--liboliphaunt-native-version",
+                "1.2.3",
+                "--runtime-cache-identity",
+                "bazel-runtime_18.4",
+            ]),
+            None,
+        )
+        .unwrap();
+        run_with_package_args(args).unwrap();
+        let original_key = manifest
+            .lines()
+            .find_map(|line| line.strip_prefix("cacheKey="))
+            .unwrap();
+        assert!(!original_key.is_empty());
+        let identity_manifest =
+            fs::read_to_string(override_output.join("oliphaunt/runtime/manifest.properties"))
+                .unwrap();
+        let derived_key = identity_manifest
+            .lines()
+            .find_map(|line| line.strip_prefix("cacheKey="))
+            .unwrap();
+        assert!(derived_key.starts_with("runtime-"));
+        assert_ne!(derived_key, "bazel-runtime_18.4");
+        validate_runtime_cache_identity(derived_key).unwrap();
+        assert_eq!(
+            identity_manifest,
+            manifest.replace(
+                &format!("cacheKey={original_key}\n"),
+                &format!("cacheKey={derived_key}\n")
+            )
+        );
 
         let _ = fs::remove_dir_all(temp);
     }

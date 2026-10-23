@@ -1187,8 +1187,14 @@ fn validate_cluster_seed_manifest_metadata(
         "embedded cluster seed has an incompatible WASIX physical identity"
     );
     ensure!(
-        manifest.runtime.consumer_sha256 == manifest.runtime.producer_sha256,
-        "embedded cluster seed producer and consumer runtime digests differ"
+        [
+            &manifest.runtime.consumer_sha256,
+            &manifest.runtime.producer_sha256,
+            &manifest.runtime.initdb_sha256,
+        ]
+        .iter()
+        .all(|digest| digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())),
+        "embedded cluster seed runtime digests are invalid"
     );
     ensure!(
         !manifest.archive.path.is_empty()
@@ -2376,6 +2382,14 @@ mod tests {
         });
         let seed = ClusterSeed::new(archive.as_slice(), serde_json::to_vec(&manifest)?);
         validate_selected_cluster_seed(&seed, CatalogProfile::Standard)?;
+        manifest["runtime"]["producerSha256"] = "a".repeat(64).into();
+        manifest["runtime"]["initdbSha256"] = "b".repeat(64).into();
+        let adopted = ClusterSeed::new(archive.as_slice(), serde_json::to_vec(&manifest)?);
+        validate_selected_cluster_seed(&adopted, CatalogProfile::Standard)?;
+        manifest["runtime"]["producerSha256"] = "invalid-original-producer".into();
+        let malformed = ClusterSeed::new(archive.as_slice(), serde_json::to_vec(&manifest)?);
+        assert!(validate_selected_cluster_seed(&malformed, CatalogProfile::Standard).is_err());
+        manifest["runtime"]["producerSha256"] = "a".repeat(64).into();
         assert!(validate_selected_cluster_seed(&seed, CatalogProfile::Icu).is_err());
         let changed = ClusterSeed::new(b"changed resource bytes".as_slice(), seed.manifest.clone());
         assert!(validate_selected_cluster_seed(&changed, CatalogProfile::Standard).is_err());

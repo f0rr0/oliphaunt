@@ -1041,9 +1041,24 @@ async function writeArtifactDirectory(artifactRoot, args) {
 }
 
 export async function validateExactArtifactBinaryContract(artifactRoot, args) {
-  if (args.nativeModuleStem === undefined || !DESKTOP_NATIVE_TARGETS.has(args.nativeTarget)) {
+  if (args.nativeModuleStem === undefined) {
     return;
   }
+  if (args.nativeTarget === 'android-arm64-v8a' || args.nativeTarget === 'android-x86_64') {
+    const primary = path.join(
+      artifactRoot,
+      mobileStaticArchiveRelativePath(args.nativeTarget, args.nativeModuleStem),
+    );
+    if (!(await isFile(primary))) {
+      fail(
+        `missing staged ${args.nativeTarget} static archive for ${args.nativeModuleStem}: ${primary}`,
+      );
+    }
+    return inspectPlatformBinaryTree(path.join(artifactRoot, 'mobile-static', args.nativeTarget), {
+      target: args.nativeTarget,
+    });
+  }
+  if (!DESKTOP_NATIVE_TARGETS.has(args.nativeTarget)) return;
   if (args.nativeTarget === 'windows-x64-msvc') {
     return validateWindowsExtensionArtifactBinaryContract({
       artifactRoot,

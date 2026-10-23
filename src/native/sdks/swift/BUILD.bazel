@@ -1,0 +1,194 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/apple:slices.bzl", "apple_slice_filegroup")
+load("//build_defs/languages/swift:bindings.bzl", "uniffi_swift", "uniffi_output")
+load("//build_defs/languages/swift:xcframework.bzl", "bindings_xcframework", "bindings_envelope")
+load("//build_defs/languages/swift:source.bzl", "swift_source_package")
+load("//build_defs/languages/swift:compiled-inputs-test.bzl", "swift_compiled_inputs_test")
+load("//build_defs/languages/swift:consumer.bzl", "swift_package_consumer_test")
+load("//build_defs/languages/swift:ios-compile.bzl", "swift_ios_compile_test")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_swift//swift:swift_library.bzl", "swift_library")
+load("@rules_swift//swift:swift_interop_hint.bzl", "swift_interop_hint")
+load("@rules_swift//swift:swift_binary.bzl", "swift_binary")
+load("@rules_swift//swift:swift_test.bzl", "swift_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# Package.swift's source modules and unit suite are portable to Linux. The
+# packaged Apple carriers retain their narrower constraints below.
+SOURCE_COMPATIBILITY = select({
+    "@platforms//os:linux": [],
+    "@platforms//os:macos": ["@platforms//cpu:aarch64", "//build_defs/host:apple_package"],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+exports_files(["Package.swift", "VERSION", "LIBOLIPHAUNT_VERSION", "tools/swift-native-carrier-contract.mts", "tools/native-legal-source-basis.mts", "tools/swift-xcframework-contract.mts", "tools/swift-release-manifest.mts", "tools/prepare-swift-release-consumer.mts"])
+exports_files(["tools/ios-carrier-manifest.mts"])
+exports_files(["tools/swift-source-fixture-contract.mts"])
+exports_files(["tools/swift-extension-release-consumer-inputs.mts", "tools/swift-source-carrier-contract.mts", "tools/extension-release-consumer.mts"])
+exports_files(["Tests/OliphauntTests/AsyncStringSignal.swift"])
+
+filegroup(name = "broker_templates", srcs = glob(["Templates/OliphauntBroker/*"]))
+
+uniffi_swift(
+    name = "generated_bindings",
+    generator = "//src/native/mobile-bindings:bindgen",
+    library = "//src/native/mobile-bindings:lib",
+    configuration = "//src/native/mobile-bindings:uniffi.toml",
+)
+uniffi_output(name = "generated_swift", bindings = ":generated_bindings", group = "swift")
+uniffi_output(name = "generated_ffi_header", bindings = ":generated_bindings", group = "header")
+uniffi_output(name = "generated_ffi_modulemap", bindings = ":generated_bindings", group = "modulemap")
+
+swift_ios_compile_test(
+    name = "ios_compile_test",
+    sources = glob(["Sources/OliphauntCore/*.swift", "Sources/Oliphaunt/*.swift", "Sources/OliphauntBroker/*.swift", "Sources/OliphauntBrokerExtension/*.swift"]),
+    generated_swift = ":generated_swift",
+    ffi_header = ":generated_ffi_header",
+    ffi_modulemap = ":generated_ffi_modulemap",
+    c_header = "Sources/COliphaunt/include/COliphaunt.h",
+    c_modulemap = "Sources/COliphaunt/include/module.modulemap",
+    extension_template = "Templates/OliphauntBroker/OliphauntBroker.swift.template",
+    host_template = "Templates/OliphauntBroker/OliphauntBrokerHost.swift.template",
+    target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64", "//build_defs/host:apple_package"],
+    size = "large",
+    timeout = "long",
+    tags = ["no-remote"],
+)
+
+bindings_xcframework(
+    name = "bindings_xcframework_intermediate",
+    library = "//src/native/mobile-bindings:static",
+    header = ":generated_ffi_header",
+)
+bindings_envelope(name = "bindings_release_assets", intermediate = ":bindings_xcframework_intermediate")
+apple_slice_filegroup(name = "bindings_archive", src = ":bindings_release_assets", output_group = "archive")
+
+swift_source_package(
+    name = "source_package",
+    sources = glob(["Sources/**/*", "Templates/**/*", "Tests/**/*", "README.md", "CHANGELOG.md"]) + ["Package.swift", "VERSION", "LIBOLIPHAUNT_VERSION", "//:LICENSE", "//:THIRD_PARTY_NOTICES.md"],
+    generated_swift = ":generated_swift",
+    bindings_archive = ":bindings_archive",
+    bindings_release_assets = ":bindings_release_assets",
+)
+swift_compiled_inputs_test(
+    name = "compiled_supplier_analysis_test",
+    target_under_test = ":source_package_compiled_shipping_export",
+    bindings = ":bindings_release_assets",
+    target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64", "//build_defs/host:apple_package"],
+    size = "small",
+)
+filegroup(name = "generator_sources", srcs = ["tools/extension-resource-inventory.mts", "tools/render-extension-products.mts", "tools/swift-carrier-resolver.mts"])
+swift_package_consumer_test(
+    name = "installed_consumer_test",
+    archive = ":release_input_Oliphaunt-source_zip",
+    source_tree = ":release_input_release-tree",
+    bindings = ":bindings_archive",
+    consumer = "Tests/PublicApiConsumer/Sources/OliphauntPublicApiConsumer/main.swift",
+    target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64", "//build_defs/host:apple_package"],
+    size = "large",
+    timeout = "long",
+    tags = ["no-remote"],
+)
+
+swift_interop_hint(
+    name = "bindings_ffi_module",
+    module_name = "OliphauntNativeBindingsFFI",
+    module_map = ":generated_ffi_modulemap",
+)
+
+cc_library(
+    name = "bindings_ffi",
+    hdrs = [":generated_ffi_header"],
+    deps = ["//src/native/mobile-bindings:static"],
+    aspect_hints = [":bindings_ffi_module"],
+)
+swift_library(
+    name = "OliphauntNativeBindings",
+    module_name = "OliphauntNativeBindings",
+    package_name = "Oliphaunt",
+    srcs = [":generated_swift"],
+    deps = [":bindings_ffi"],
+    copts = ["-swift-version", "6"],
+    target_compatible_with = SOURCE_COMPATIBILITY,
+)
+
+swift_interop_hint(name = "COliphaunt_module", module_name = "COliphaunt", module_map = "Sources/COliphaunt/include/module.modulemap")
+cc_library(
+    name = "COliphaunt",
+    srcs = ["Sources/COliphaunt/link.c"],
+    hdrs = glob(["Sources/COliphaunt/include/*.h"]) + ["//src/native/runtime:include/oliphaunt.h"],
+    includes = ["Sources/COliphaunt/include"],
+    aspect_hints = [":COliphaunt_module"],
+)
+
+# These are the same public modules and direct dependencies as Package.swift.
+# Native source construction uses the conventional package's source tree.
+MODULES = {
+    "OliphauntCore": [":OliphauntNativeBindings"],
+    "Oliphaunt": [":COliphaunt", ":OliphauntCore", ":OliphauntNativeBindings"],
+    "OliphauntBroker": [":OliphauntCore", ":OliphauntNativeBindings"],
+    "OliphauntBrokerExtension": [":Oliphaunt", ":OliphauntCore", ":OliphauntNativeBindings"],
+    "OliphauntExtensionSupport": [":COliphaunt", ":Oliphaunt"],
+}
+
+[swift_library(
+    name = module,
+    module_name = module,
+    package_name = "Oliphaunt",
+    srcs = glob(["Sources/" + module + "/*.swift"]),
+    deps = dependencies,
+    copts = ["-swift-version", "6"],
+    features = ["swift.enable_testing"] if module in ["Oliphaunt", "OliphauntCore"] else [],
+    target_compatible_with = SOURCE_COMPATIBILITY,
+) for module, dependencies in MODULES.items()]
+
+filegroup(name = "sdk_modules", srcs = [":" + module for module in MODULES] + [":OliphauntNativeBindings"])
+
+# The rule's standard discovery runner supports both XCTest and Swift Testing.
+# Keep the complete conventional test target, including its explicitly gated
+# native-runtime suite, rather than maintaining a second list of assertions.
+swift_test(
+    name = "unit_test",
+    module_name = "OliphauntTests",
+    package_name = "Oliphaunt",
+    srcs = glob(["Tests/OliphauntTests/*.swift"]),
+    deps = [":Oliphaunt", ":OliphauntCore"],
+    data = [
+        "//src/test-fixtures:protocol/query-response-cases.json",
+        "//src/test-fixtures:protocol/structured-sql-cases.json",
+        "//src/test-fixtures:storage/database-root.json",
+        "//src/database-resources:cluster_seed_contract_fixtures",
+    ] + select({
+        "@platforms//os:macos": ["@native_apple_sdk//:swift_test_runtime"],
+        "//conditions:default": [],
+    }),
+    copts = ["-swift-version", "6"],
+    env = {"LIBDISPATCH_COOPERATIVE_POOL_STRICT": "1"},
+    target_compatible_with = SOURCE_COMPATIBILITY,
+    size = "small",
+    tags = ["no-remote"],
+)
+
+swift_binary(
+    name = "public_api_consumer",
+    srcs = ["Tests/PublicApiConsumer/Sources/OliphauntPublicApiConsumer/main.swift"],
+    deps = [":Oliphaunt"],
+    copts = ["-parse-as-library"],
+    target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64", "//build_defs/host:apple_package"],
+)
+sh_test(
+    name = "public_api_consumer_test",
+    srcs = ["//build_defs/host:sdk-smoke.sh"],
+    args = ["$(location :public_api_consumer)"],
+    data = [":public_api_consumer"],
+    target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64", "//build_defs/host:apple_package"],
+    size = "small",
+)
+
+source_quality_files()
+
+# Source-only inputs for the existing SDK package policy tests.
+exports_files([
+    "tools/swift-extension-fixture-consumer.mts",
+], visibility = ["//visibility:public"])

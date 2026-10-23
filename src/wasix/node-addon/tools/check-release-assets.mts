@@ -4,9 +4,23 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { workspaceCarrierManifest } from './workspace-runtime-contract.mts';
+import { resolveCargoWorkspaceInheritance } from '../../../../tools/packaging/cargo-manifest.mts';
 import { finalizeHelperAssets } from '../../../../tools/packaging/finalize-helper-assets.mts';
-import { inspectPlatformBinaryEntries } from '../../../../tools/packaging/platform-binary-contract.mts';
+import {
+  assertWasixNapiCarrierManifest as assertCarrierManifest,
+  assertSingleWasixNapiAddonMember,
+  assertWasixNapiConstructionData,
+  assertWasixNapiPlatformEntries,
+  WASIX_NAPI_SOURCE_PATCH_MEMBER,
+  wasixNapiReleaseSqlNames,
+} from './carrier-contract.mts';
+import { workspaceCarrierManifest } from './workspace-runtime-contract.mts';
+
+export {
+  assertSingleWasixNapiAddonMember,
+  assertWasixNapiPlatformEntries,
+} from './carrier-contract.mts';
+
 import { readPortableArchiveEntries } from '../../../../tools/packaging/portable-archive.mts';
 import {
   assertFileExists,
@@ -18,10 +32,6 @@ import {
   assertReleaseNoticesInEntries,
   releaseProfilePackageLicense,
 } from '../../../../tools/packaging/release-notices.mts';
-import {
-  WINDOWS_VC_RUNTIME_DLLS,
-  WINDOWS_VC_RUNTIME_RECEIPT,
-} from '../../../../tools/packaging/windows-vc-runtime-closure.mts';
 import {
   artifactTargets,
   compareText,
@@ -38,7 +48,6 @@ const PREFIX = 'check-wasix-napi-release-assets.mts';
 const PRODUCT = 'oliphaunt-wasix-napi';
 const KIND = 'wasix-napi-addon';
 const PROFILE = 'wasix-napi-addon';
-const PACKAGE_LICENSE = releaseProfilePackageLicense(PROFILE).spdx;
 const BINARY = 'oliphaunt_wasix_napi.node';
 const PRODUCT_MANIFEST = JSON.parse(
   readFileSync(path.join(ROOT, 'src/wasix/node-addon/package.json'), 'utf8'),
@@ -214,158 +223,91 @@ export function assertWasixNapiCarrierManifest(
   label = 'carrier',
   contract = PRODUCT_MANIFEST.oliphaunt,
 ) {
-  if (manifest.name !== target.npmPackage || manifest.version !== version) {
-    throw new Error(`${label} must identify ${target.npmPackage}@${version}`);
-  }
-  if (manifest.license !== PACKAGE_LICENSE) {
-    throw new Error(
-      `${label} package license must be ${PACKAGE_LICENSE}, got ${JSON.stringify(manifest.license)}`,
-    );
-  }
-  if (
-    manifest.oliphaunt?.target !== target.target ||
-    manifest.oliphaunt?.runtimeProduct !== PRODUCT_MANIFEST.oliphaunt.runtimeProduct ||
-    manifest.oliphaunt?.runtimeVersion !== contract.runtimeVersion ||
-    manifest.oliphaunt?.qualificationOnly !== contract.qualificationOnly ||
-    manifest.oliphaunt?.addonAbiVersion !== PRODUCT_MANIFEST.oliphaunt.addonAbiVersion ||
-    manifest.oliphaunt?.nodeApiVersion !== PRODUCT_MANIFEST.oliphaunt.nodeApiVersion ||
-    JSON.stringify(manifest.oliphaunt?.profiles) !== JSON.stringify(['standard', 'icu'])
-  ) {
-    throw new Error(`${label} has incompatible WASIX Node-API target/runtime/ABI/profile metadata`);
-  }
-  if (
-    JSON.stringify(manifest.os) !== JSON.stringify([target.npmOs]) ||
-    JSON.stringify(manifest.cpu) !== JSON.stringify([target.npmCpu]) ||
-    (target.npmLibc === undefined
-      ? Object.hasOwn(manifest, 'libc')
-      : JSON.stringify(manifest.libc) !== JSON.stringify([target.npmLibc])) ||
-    manifest.optional !== true ||
-    manifest.type !== 'commonjs' ||
-    Object.hasOwn(manifest, 'scripts')
-  ) {
-    throw new Error(`${label} has incompatible npm platform or lifecycle metadata`);
-  }
-  const expectedFiles = [
-    'prebuilds',
-    'artifact-provenance.json',
-    'README.md',
-    'LICENSE',
-    'THIRD_PARTY_NOTICES.md',
-    'THIRD_PARTY_NOTICES.oliphaunt-wasix.md',
-    'THIRD_PARTY_LICENSES',
-  ];
-  if (JSON.stringify(manifest.files) !== JSON.stringify(expectedFiles)) {
-    throw new Error(`${label} must declare the exact one-addon package file surface`);
-  }
-  if (
-    manifest.exports?.[`./${BINARY}`] !== `./prebuilds/${BINARY}` ||
-    JSON.stringify(Object.keys(manifest.exports ?? {})) !==
-      JSON.stringify([`./${BINARY}`, './artifact-provenance.json', './package.json'])
-  ) {
-    throw new Error(`${label} must expose exactly one stable addon binary subpath`);
-  }
-  return manifest;
-}
-
-export function assertSingleWasixNapiAddonMember(entries, binaryMember, label = 'carrier') {
-  const nativeMembers = [...entries.keys()].filter((name) => name.endsWith('.node'));
-  if (JSON.stringify(nativeMembers) !== JSON.stringify([binaryMember])) {
-    throw new Error(
-      `${label} must contain exactly one native addon member ${binaryMember}; got ${nativeMembers.join(', ')}`,
-    );
-  }
-}
-
-export function assertWasixNapiPlatformEntries(
-  entries,
-  { target, label = 'carrier', prefix = '', binaryDirectory = '' },
-) {
-  inspectPlatformBinaryEntries(
-    [...entries].map(([name, entry]) => ({ name, ...entry })),
-    { target, rootLabel: label },
-  );
-  if (target !== 'windows-x64-msvc') return;
-
-  const sibling = (name) => [prefix, binaryDirectory, name].filter(Boolean).join('/');
-  const runtimeNames = new Set(WINDOWS_VC_RUNTIME_DLLS);
-  const actualRuntimeMembers = [...entries]
-    .filter(
-      ([name, entry]) => entry?.isFile && runtimeNames.has(path.posix.basename(name).toLowerCase()),
-    )
-    .map(([name]) => name)
-    .sort(compareText);
-  const expectedRuntimeMembers = WINDOWS_VC_RUNTIME_DLLS.filter((name) =>
-    entries.has(sibling(name)),
-  )
-    .map((name) => sibling(name))
-    .sort(compareText);
-  if (JSON.stringify(actualRuntimeMembers) !== JSON.stringify(expectedRuntimeMembers)) {
-    throw new Error(
-      `${label} must place its exact app-local VC runtime closure beside ${sibling(BINARY)}`,
-    );
-  }
-
-  const expectedReceiptMember = sibling(WINDOWS_VC_RUNTIME_RECEIPT);
-  const actualReceiptMembers = [...entries.keys()]
-    .filter((name) => path.posix.basename(name).toLowerCase() === WINDOWS_VC_RUNTIME_RECEIPT)
-    .sort(compareText);
-  const expectedReceiptMembers = expectedRuntimeMembers.length > 0 ? [expectedReceiptMember] : [];
-  if (JSON.stringify(actualReceiptMembers) !== JSON.stringify(expectedReceiptMembers)) {
-    throw new Error(`${label} must carry one VC runtime receipt beside its app-local closure`);
-  }
-  if (expectedRuntimeMembers.length === 0) return;
-
-  const receipt = entries.get(expectedReceiptMember);
-  if (!receipt?.isFile || receipt.isSymbolicLink) {
-    throw new Error(`${label} is missing regular member ${expectedReceiptMember}`);
-  }
-  const expectedReceipt = expectedRuntimeMembers
-    .map((member) => `${entrySha256(entries.get(member))}  ${path.posix.basename(member)}\n`)
-    .join('');
-  if (Buffer.from(receipt.data()).toString('utf8') !== expectedReceipt) {
-    throw new Error(`${label} ${expectedReceiptMember} does not bind its exact VC runtime bytes`);
-  }
+  return assertCarrierManifest(manifest, target, version, label, {
+    ...PRODUCT_MANIFEST.oliphaunt,
+    ...contract,
+    packageLicense: releaseProfilePackageLicense(PROFILE).spdx,
+  });
 }
 
 function assertPayload(entries, { prefix = '', label, target, version, npm = false, contract }) {
   assertReleaseNoticesInEntries(entries, { profile: PROFILE, prefix, label });
   const member = (name) => (prefix ? `${prefix}/${name}` : name);
   const provenance = archiveJson(entries, member('artifact-provenance.json'), label);
-  if (
-    provenance.schema !== 'oliphaunt-wasix-napi-provenance-v1' ||
-    provenance.product !== PRODUCT ||
-    provenance.target !== target.target ||
-    !/^[0-9a-f]{40}$/u.test(provenance.sourceSha ?? '') ||
-    !/^[0-9a-f]{40}$/u.test(provenance.artifactSourceSha ?? '')
-  ) {
-    throw new Error(`${label} has incompatible WASIX Node-API provenance`);
-  }
-  if (provenance.sourceSha !== provenance.artifactSourceSha) {
-    throw new Error(
-      `${label} provenance must bind addon source and embedded artifacts to one commit`,
-    );
-  }
-  const expectedBuild = {
-    cargoProfile: 'release',
-    incremental: false,
-    codegenUnits: 1,
-    lto: 'thin',
-    strip: 'symbols',
-    features: ['release'],
-    targetTriple: target.triple,
-  };
-  if (JSON.stringify(provenance.build) !== JSON.stringify(expectedBuild)) {
-    throw new Error(
-      `${label} provenance must record the exact optimized addon build: ${JSON.stringify(expectedBuild)}`,
-    );
-  }
-  assertBuildInputs(provenance.buildInputs, target, label);
   const binaryMember = member(npm ? `prebuilds/${BINARY}` : BINARY);
   const entry = entries.get(binaryMember);
   if (!entry?.isFile || entry.isSymbolicLink || entry.size <= 0) {
     throw new Error(`${label} is missing non-empty regular ${binaryMember}`);
   }
   const actual = entrySha256(entry);
+  if (
+    provenance.schema === 'oliphaunt-wasix-napi-construction-data-v2' ||
+    provenance.schema === 'oliphaunt-wasix-napi-construction-data-v3'
+  ) {
+    const cargo = Bun.TOML.parse(
+      readFileSync(path.join(ROOT, 'src/wasix/node-addon/Cargo.toml'), 'utf8'),
+    );
+    const workspace = Bun.TOML.parse(readFileSync(path.join(ROOT, 'Cargo.toml'), 'utf8'));
+    const sdk = resolveCargoWorkspaceInheritance(cargo, workspace.workspace).dependencies[
+      'oliphaunt-wasix'
+    ];
+    const legacy = provenance.schema === 'oliphaunt-wasix-napi-construction-data-v2';
+    const patch = legacy
+      ? readFileSync(path.join(ROOT, 'build_defs/wasix/held-wasix-relocatable-includes.patch'))
+      : undefined;
+    const sdkVersion = legacy
+      ? (typeof sdk === 'string' ? sdk : sdk.version).replace(/^=/u, '')
+      : Bun.TOML.parse(readFileSync(path.join(ROOT, 'src/wasix/sdks/rust/Cargo.toml'), 'utf8'))
+          .package.version;
+    assertWasixNapiConstructionData(provenance, target.target, actual, {
+      targetTriple: target.triple,
+      runtimeVersion: (contract ?? PRODUCT_MANIFEST.oliphaunt).runtimeVersion,
+      sdkVersion,
+      sqlNames: wasixNapiReleaseSqlNames(
+        cargo,
+        extensionSqlNames('oliphaunt-extension-contrib-pg18', PREFIX),
+      ),
+      ...(patch
+        ? {
+            sourcePatch: {
+              path: WASIX_NAPI_SOURCE_PATCH_MEMBER,
+              sha256: createHash('sha256').update(patch).digest('hex'),
+              size: patch.length,
+            },
+          }
+        : {}),
+    });
+  } else {
+    if (
+      provenance.schema !== 'oliphaunt-wasix-napi-provenance-v1' ||
+      provenance.product !== PRODUCT ||
+      provenance.target !== target.target ||
+      !/^[0-9a-f]{40}$/u.test(provenance.sourceSha ?? '') ||
+      !/^[0-9a-f]{40}$/u.test(provenance.artifactSourceSha ?? '')
+    ) {
+      throw new Error(`${label} has incompatible WASIX Node-API provenance`);
+    }
+    if (provenance.sourceSha !== provenance.artifactSourceSha) {
+      throw new Error(
+        `${label} provenance must bind addon source and embedded artifacts to one commit`,
+      );
+    }
+    const expectedBuild = {
+      cargoProfile: 'release',
+      incremental: false,
+      codegenUnits: 1,
+      lto: 'thin',
+      strip: 'symbols',
+      features: ['release'],
+      targetTriple: target.triple,
+    };
+    if (JSON.stringify(provenance.build) !== JSON.stringify(expectedBuild)) {
+      throw new Error(
+        `${label} provenance must record the exact optimized addon build: ${JSON.stringify(expectedBuild)}`,
+      );
+    }
+    assertBuildInputs(provenance.buildInputs, target, label);
+  }
   if (
     provenance.binary?.filename !== BINARY ||
     provenance.binary?.sha256 !== actual ||

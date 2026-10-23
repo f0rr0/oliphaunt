@@ -64,3 +64,82 @@ excerpt="$(oliphaunt_tail_log_excerpt "$log" 10 200)"
 printf '%s\n' "$excerpt" | awk 'length($0) > 221 { exit 1 }'
 
 printf "native symbol, target, and bounded-log probes passed\n"
+
+source_enumeration_work="$(mktemp -d)"
+trap 'rm -f "$log"; rm -rf "$source_enumeration_work"' EXIT
+for caller in build-macos-extension-archives.sh build-postgres18-ios-device.sh build-postgres18-ios-simulator.sh build-postgres18-android-arm64.sh; do
+  for mode in failure intermediate_failure success; do
+    case_dir="$source_enumeration_work/$caller-$mode"
+    mkdir -p "$case_dir/source"
+    : > "$case_dir/source/createas.c"
+    : > "$case_dir/source/pg_ivm.c"
+    if "$BASH" -s -- "$root" "$caller" "$case_dir" "$mode" > "$case_dir/output.log" 2>&1 <<'SH'
+set -euo pipefail
+root="$1"
+caller="$2"
+case_dir="$3"
+mode="$4"
+. "$root/src/native/runtime/bin/mobile-static-extensions.sh"
+case "$caller" in
+  build-macos-extension-archives.sh) build_function=build_static_extension_objects ;;
+  *) build_function=build_mobile_static_extension_objects ;;
+esac
+eval "$(awk -v name="$build_function" '$0 == name "() {" { printing=1 } printing { print } printing && /^\}/ { exit }' "$root/src/native/runtime/bin/$caller")"
+fail() { exit 1; }
+oliphaunt_mobile_static_extension_module_stem() { printf 'fixture\n'; }
+oliphaunt_mobile_static_extension_source_dir() { printf '%s\n' "$case_dir/source"; }
+oliphaunt_mobile_static_extension_include_dirs() { :; }
+oliphaunt_mobile_static_extension_cflags() { :; }
+oliphaunt_mobile_static_extension_kind() { printf 'external\n'; }
+oliphaunt_mobile_static_extension_source_files() {
+  printf '%s\n' "$case_dir/source/createas.c"
+  [ "$mode" != failure ] || return 37
+  if [ "$mode" = intermediate_failure ]; then false; fi
+  printf '%s\n' "$case_dir/source/pg_ivm.c"
+}
+compile_spy() {
+  local previous='' source='' object='' argument
+  for argument in "$@"; do
+    case "$previous" in -c) source="$argument" ;; -o) object="$argument" ;; esac
+    previous="$argument"
+  done
+  printf '%s\n' "$source" >> "$case_dir/compiled.list"
+  printf '%s\n' "$@" > "$case_dir/$(basename "$source").args"
+  : > "$object"
+}
+archive_mobile_static_extension_objects() { : > "$case_dir/archive.called"; }
+repo_root="$root"
+build_dir="$case_dir/build"
+out_dir="$case_dir/out"
+mobile_static_extensions=(fixture)
+mobile_static_objects=()
+cc=(compile_spy)
+pg_extension_cflags='-O2 -DOLIPHAUNT_EMBEDDED'
+pg_extension_cflag_args=(-O2 -DOLIPHAUNT_EMBEDDED)
+"$build_function"
+SH
+    then
+      status=0
+    else
+      status=$?
+    fi
+    if [ "$mode" != success ]; then
+      expected_status=37
+      [ "$mode" != intermediate_failure ] || expected_status=1
+      if [ "$status" -ne "$expected_status" ] || [ -e "$case_dir/compiled.list" ] || [ -e "$case_dir/archive.called" ]; then
+        echo "$caller compiled or archived a partial source enumeration" >&2
+        exit 1
+      fi
+    else
+      [ "$status" -eq 0 ] || { echo "$caller rejected complete source enumeration" >&2; exit 1; }
+      printf '%s\n' "$case_dir/source/createas.c" "$case_dir/source/pg_ivm.c" > "$case_dir/expected.list"
+      cmp -s "$case_dir/compiled.list" "$case_dir/expected.list"
+      [ -e "$case_dir/archive.called" ]
+      for source in createas.c pg_ivm.c; do
+        grep -F -x -- '-DPg_magic_func=oliphaunt_static_fixture_Pg_magic_func' "$case_dir/$source.args" >/dev/null
+        grep -F -x -- '-D_PG_init=oliphaunt_static_fixture__PG_init' "$case_dir/$source.args" >/dev/null
+      done
+    fi
+  done
+done
+printf 'checked static extension source enumeration passed\n'

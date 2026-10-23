@@ -1,0 +1,11 @@
+diff --git a/crosstool/cc_toolchain_config.bzl b/crosstool/cc_toolchain_config.bzl
+--- a/crosstool/cc_toolchain_config.bzl
++++ b/crosstool/cc_toolchain_config.bzl
+@@ -1934,6 +1934,7 @@
+                     ACTION_NAMES.linkstamp_compile,
+                     ACTION_NAMES.cpp_compile,
+                     ACTION_NAMES.cpp_module_compile,
++                    ACTION_NAMES.objcpp_compile,
+                 ],
+                 flag_groups = ([
+                     flag_group(

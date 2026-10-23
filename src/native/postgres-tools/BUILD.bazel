@@ -1,0 +1,123 @@
+load("//build_defs/quality:sources.bzl", "rust_quality_files", "source_quality_files")
+load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
+load("//build_defs/languages:rust.bzl", "cargo_generator", "cargo_integration_test", "cargo_library", "cargo_library_test", "cargo_package_env")
+load("//build_defs/native/carriers:defs.bzl", "native_desktop_carriers", "native_tools_facades")
+load("//build_defs/native/carriers:release-family.bzl", "native_release_checksum_family")
+load("//build_defs/native/carriers:tests.bzl", "native_cargo_consumer_test", "native_installed_carrier_test")
+load("//build_defs/native:platform_config.bzl", "NATIVE_COMPATIBLE")
+load("//build_defs/native:rust-runtime-test.bzl", "native_rust_runtime_test")
+
+package(default_visibility = ["//visibility:public"])
+
+native_release_checksum_family(product = "postgres-tools-native")
+exports_files(["release.toml", "tools/package-cargo-artifacts.mts"])
+exports_files(glob(["npm/*", "npm-platforms/*/package.json", "npm-platforms/*/README.md", "crates/tools/**"], exclude = ["**/target/**"]))
+
+native_desktop_carriers(
+    product = "postgres-tools-native",
+    root_mappings = [],
+    runtime_mappings = ["//src/native/runtime:tools_binaries", "//src/native/runtime:runtime_libpq"],
+    binary_mappings = ["//src/native/runtime:tools_binaries", "//src/native/runtime:runtime_libpq"],
+    qualification = [":installed_cargo_test", ":installed_carrier_test"],
+)
+
+native_tools_facades(qualification = [
+    ":tools_cargo_unit_test",
+    ":tools_build_support_test",
+    ":logical_round_trip_test",
+    ":installed_carrier_test",
+])
+
+cargo_package_env(name = "tools_cargo_env", package_name = "src/native/postgres-tools/crates/tools")
+cargo_generator(
+    name = "tools_cargo_build_script",
+    package_name = "src/native/postgres-tools/crates/tools",
+    cargo_env = ":tools_cargo_env",
+    srcs = ["crates/tools/build_support.rs"],
+)
+cargo_library(
+    name = "tools_cargo_lib",
+    package_name = "src/native/postgres-tools/crates/tools",
+    cargo_env = ":tools_cargo_env",
+    build_script = ":tools_cargo_build_script",
+)
+cargo_library_test(
+    name = "tools_cargo_unit_test",
+    package_name = "src/native/postgres-tools/crates/tools",
+    cargo_env = ":tools_cargo_env",
+    crate = ":tools_cargo_lib",
+    data = ["//src/test-fixtures:rust_fixtures"],
+    tags = ["manual"],
+)
+cargo_integration_test(
+    name = "tools_build_support_test",
+    package_name = "src/native/postgres-tools/crates/tools",
+    cargo_env = ":tools_cargo_env",
+    source = "crates/tools/tests/build_support.rs",
+    srcs = ["crates/tools/build_support.rs"],
+    crate = ":tools_cargo_lib",
+    tags = ["manual"],
+)
+
+cargo_package_env(name = "proof_cargo_env", package_name = "src/native/postgres-tools/tests")
+cargo_library(
+    name = "proof_cargo_lib",
+    package_name = "src/native/postgres-tools/tests",
+    cargo_env = ":proof_cargo_env",
+)
+cargo_library_test(
+    name = "proof_cargo_unit_test",
+    package_name = "src/native/postgres-tools/tests",
+    cargo_env = ":proof_cargo_env",
+    crate = ":proof_cargo_lib",
+    path_dependencies = {
+        "oliphaunt": "//src/native/sdks/rust:lib",
+        "oliphaunt-tools": ":tools_cargo_lib",
+    },
+    data = ["//src/test-fixtures:rust_fixtures"],
+    tags = ["manual"],
+)
+
+native_rust_runtime_test(
+    name = "logical_round_trip_test",
+    binary = ":proof_cargo_unit_test",
+    extensions = ["//src/extensions/external/pgtap:native_payload"],
+    test_args = ["--ignored", "--test-threads=1", "--nocapture"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "large",
+    timeout = "long",
+)
+
+rust_clippy_test(
+    name = "clippy_test",
+    targets = [
+        ":tools_cargo_lib",
+        ":tools_cargo_unit_test",
+        ":tools_cargo_build_script_",
+        ":tools_build_support_test",
+        ":proof_cargo_lib",
+        ":proof_cargo_unit_test",
+    ],
+    transitive = False,
+    size = "small",
+    tags = ["quality", "static"],
+)
+
+native_cargo_consumer_test(
+    name = "installed_cargo_test",
+    packages = ":cargo_packages",
+    archive = ":github_archive",
+    target_compatible_with = NATIVE_COMPATIBLE,
+    size = "medium",
+)
+
+native_installed_carrier_test(
+    name = "installed_carrier_test",
+    inputs = ["//src/native/runtime:github_archive", "//src/native/runtime:npm", ":github_archive", ":npm_facade", ":npm", "//src/native/runtime:profile_smoke", "//build_defs/native/carriers:tools-consumer.mts", "//src/test-fixtures:postgres/logical-tools.json"],
+    target_compatible_with = NATIVE_COMPATIBLE,
+    size = "medium",
+)
+
+source_quality_files()
+
+rust_quality_files()

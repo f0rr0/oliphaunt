@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import path from 'node:path';
+import { readPortableArchiveEntries } from '../../../../../tools/packaging/portable-archive.mts';
 import {
   archiveZipNames,
   fail,
@@ -9,9 +11,7 @@ import {
   walkFiles,
 } from '../../../../../tools/packaging/release-carrier.mts';
 import { compareText } from '../../../../../tools/release/release-artifact-targets.mts';
-import path from 'node:path';
-import { readPortableArchiveEntries } from '../../../../../tools/packaging/portable-archive.mts';
-import { assertRustDependencyLicensesInEntries } from '../../../mobile-bindings/tools/dependency-license-contract.mts';
+import { createMobileDependencyLicenseContract } from '../../../mobile-bindings/tools/dependency-license-contract.mts';
 
 const KOTLIN_RELEASE_ABIS = new Set(['arm64-v8a', 'x86_64']);
 const GRADLE_PLUGIN_DESCRIPTOR = 'META-INF/gradle-plugins/dev.oliphaunt.android.properties';
@@ -66,7 +66,12 @@ export function validateKotlinGradlePluginJar(artifact, entries) {
   return true;
 }
 
-export async function checkKotlinPackage(root) {
+export async function checkKotlinPackage(
+  root,
+  { sourceRoot = undefined as string | undefined } = {},
+) {
+  const { assertRustDependencyLicensesInEntries } =
+    createMobileDependencyLicenseContract(sourceRoot);
   const product = 'oliphaunt-kotlin';
   let checked = false;
   let checkedGradlePlugin = false;

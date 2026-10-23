@@ -1,0 +1,42 @@
+--- a/build.rs
++++ b/build.rs
+@@ -256,6 +256,23 @@
+         let stdout = String::from_utf8(stdout).context("stdout")?;
+         let stderr = String::from_utf8(stderr).context("stderr")?;
+         if status.success() {
++            // llvm-config resolves symlinks to its installed prefix. Preserve the
++            // explicit caller prefix so declared sandbox paths remain relocatable.
++            let stdout = if let Some(prefix) = env::var_os(&*ENV_LLVM_PREFIX) {
++                let prefix = prefix.to_str().context("LLVM prefix is not UTF-8")?;
++                let reported = Command::new(binary).arg("--prefix").output()?;
++                anyhow::ensure!(
++                    reported.status.success(),
++                    "llvm-config --prefix failed: {}",
++                    String::from_utf8_lossy(&reported.stderr)
++                );
++                let reported = String::from_utf8(reported.stdout).context("LLVM reported prefix")?;
++                let reported = reported.trim();
++                anyhow::ensure!(!reported.is_empty(), "llvm-config reported an empty prefix");
++                stdout.replace(reported, prefix)
++            } else {
++                stdout
++            };
+             Ok(stdout)
+         } else {
+             Err(anyhow::anyhow!(
+@@ -718,7 +735,14 @@
+ 
+     // Build the extra wrapper functions.
+     if !cfg!(feature = "disable-alltargets-init") {
+-        std::env::set_var("CFLAGS", get_llvm_cflags(&llvm_config_path));
++        // LLVM include paths and macros must retain the selected C toolchain
++        // target and SDK flags. Caller flags take precedence over LLVM flags.
++        let cflags = format!(
++            "{} {}",
++            get_llvm_cflags(&llvm_config_path),
++            env::var("CFLAGS").unwrap_or_default()
++        );
++        std::env::set_var("CFLAGS", cflags);
+         cc::Build::new()
+             .file("wrappers/target.c")
+             .compile("targetwrappers");

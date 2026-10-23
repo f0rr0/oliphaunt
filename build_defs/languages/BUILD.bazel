@@ -1,0 +1,47 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/foundation:bun.bzl", "bun_test")
+load(":napi-artifact-test.bzl", "napi_artifact_tests")
+load(":source.bzl", "cargo_source_contract_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["mobile-compiled-inputs.bzl"])
+
+config_setting(
+    name = "release",
+    values = {"compilation_mode": "opt"},
+)
+
+exports_files(["cargo-metadata.mts", "repositories.bzl", "rust.bzl", "napi-noop.bzl", "mobile.bzl", "source.bzl", "source-package.mts", "source-contract.mts", "uniffi.mts", "mobile-legal.mts", "wasix.bzl", "cargo-environment.mts", "cargo-toolchain.bzl", "isolated-cache-test.mts"])
+
+bun_test(
+    name = "cargo_metadata_test",
+    size = "small",
+    entry_point = "cargo-metadata.test.mts",
+    data = ["cargo-metadata.mts", "//:tools/packaging/cargo-manifest.mts"],
+)
+
+bun_test(
+    name = "source_package_test",
+    size = "small",
+    entry_point = "source-package.test.mts",
+    data = ["source-package.mts", "//:tools/packaging/cargo-manifest.mts", "//:tools/packaging/cargo-source-package.mts", "//:tools/packaging/package-archive.mts", "//:tools/packaging/archive-directory.mts", "//:tools/packaging/portable-archive.mts", "//:tools/packaging/release-notices.mts", "//:tools/packaging/release-directory-safety.mts", "//:tools/packaging/rust-native-targets.mts"],
+)
+
+cargo_source_contract_test(
+    name = "sdk_source_package_test",
+    packages = ["//src/native/sdks/rust:crate", "//src/native/sdks/rust/crates/oliphaunt-build:crate", "//src/wasix/sdks/rust:crate"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "small",
+)
+
+bun_test(
+    name = "source_contract_test",
+    entry_point = "source-contract.test.mts",
+    data = ["source-contract.mts", "source-package.mts", "//build_defs/query:package.mts", "//:tools/packaging/cargo-manifest.mts", "//:tools/packaging/cargo-dependencies.mts", "//:tools/packaging/cargo-source-package.mts", "//:tools/packaging/package-archive.mts", "//:tools/packaging/archive-directory.mts", "//:tools/packaging/portable-archive.mts", "//:tools/packaging/release-notices.mts", "//:tools/packaging/release-directory-safety.mts", "//:tools/packaging/rust-native-targets.mts"],
+    size = "small",
+)
+
+source_quality_files()
+
+napi_artifact_tests()

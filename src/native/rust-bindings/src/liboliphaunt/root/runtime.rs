@@ -20,6 +20,7 @@ use locate::{
     locate_native_icu_data, locate_native_install_dir,
 };
 
+use super::extensions::resolve_extension_modules;
 use super::files::{sorted_read_dir, sync_directory, sync_file};
 use super::{NativeCatalogProfile, NativeRuntimeProfile};
 use crate::error::{Error, Result};
@@ -87,6 +88,8 @@ pub(super) fn materialize_runtime(
 ) -> Result<PathBuf> {
     let resources = crate::extension::materialize_extension_resources(extensions)?;
     let extension_artifact_dirs = locate_native_extension_artifact_dirs(resources.as_deref());
+    let extension_modules =
+        resolve_extension_modules(profile, install_dir, &extension_artifact_dirs, extensions)?;
     let embedded_modules = if profile.needs_embedded_modules() {
         Some(locate_native_embedded_modules_dir(install_dir)?)
     } else {
@@ -96,8 +99,7 @@ pub(super) fn materialize_runtime(
         profile,
         install_dir,
         embedded_modules.as_deref(),
-        &extension_artifact_dirs,
-        extensions,
+        &extension_modules,
         icu_data,
         icu_data_tree_sha256,
     )?;
@@ -137,8 +139,13 @@ pub(super) fn materialize_runtime(
         ))
     })?;
 
-    if !cached_runtime_is_valid_with_icu(profile, &cache_dir, &key, extensions, icu_data.is_some())
-    {
+    if !cached_runtime_is_valid_with_icu(
+        profile,
+        &cache_dir,
+        &key,
+        &extension_modules,
+        icu_data.is_some(),
+    ) {
         let build_dir = cache_root.join(format!(
             ".build-{}-{}",
             std::process::id(),
@@ -163,9 +170,8 @@ pub(super) fn materialize_runtime(
             profile,
             install_dir,
             embedded_modules.as_deref(),
-            &extension_artifact_dirs,
             &build_dir,
-            extensions,
+            &extension_modules,
             icu_data,
         );
         if let Err(error) = build_result {

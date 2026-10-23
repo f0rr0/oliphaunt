@@ -174,6 +174,9 @@ pub struct NativeRuntimeResourceOptions {
     /// module, including iOS and Android artifacts whose modules are linked
     /// through `mobile-static` archives instead of copied as dynamic modules.
     pub extension_target: Option<String>,
+    /// Optional stable identity hashed with the packaged runtime manifest.
+    /// This does not change native resource acquisition or its cache.
+    pub runtime_cache_identity: Option<String>,
 }
 
 impl NativeRuntimeResourceOptions {
@@ -189,6 +192,7 @@ impl NativeRuntimeResourceOptions {
             prebuilt_extensions: Vec::new(),
             native_runtime_version: None,
             extension_target: None,
+            runtime_cache_identity: None,
         }
     }
 
@@ -244,6 +248,29 @@ impl NativeRuntimeResourceOptions {
         self.extension_target = Some(target.into());
         self
     }
+
+    /// Derive the packaged runtime cache key from a stable identity and manifest.
+    pub fn runtime_cache_identity(mut self, identity: impl Into<String>) -> Self {
+        self.runtime_cache_identity = Some(identity.into());
+        self
+    }
+}
+
+/// Validate the portable token accepted by `validNativeCacheKey` in the native
+/// database-resource manifest contract.
+pub fn validate_runtime_cache_identity(identity: &str) -> Result<()> {
+    if identity.is_empty()
+        || identity.len() > 128
+        || matches!(identity, "." | "..")
+        || !identity
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return Err(Error::InvalidConfig(
+            "runtime cache identity must be a portable identifier of 1–128 ASCII letters, digits, '.', '_' or '-', excluding '.' and '..'".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// Optional runtime data/features selected independently from PostgreSQL
@@ -415,7 +442,7 @@ pub struct NativeRuntimeResources {
     pub root: PathBuf,
     /// Runtime files directory copied into app storage before opening.
     pub runtime_files: PathBuf,
-    /// Content key of the source runtime cache.
+    /// Cache identity written into the packaged runtime manifest.
     pub runtime_cache_key: String,
     /// Built-in extensions materialized into the runtime resources.
     pub extensions: Vec<Extension>,
@@ -444,6 +471,7 @@ struct RuntimeResourceExtension {
     creates_extension: bool,
     native_module_stem: Option<String>,
     native_module_file: Option<String>,
+    native_dependency_module_files: Vec<String>,
     native_target: Option<String>,
     dependencies: Vec<String>,
     data_files: Vec<PathBuf>,
@@ -522,6 +550,9 @@ impl Drop for PreparedPrebuiltExtensionArtifacts {
 pub fn build_native_runtime_resources(
     options: NativeRuntimeResourceOptions,
 ) -> Result<NativeRuntimeResources> {
+    if let Some(identity) = options.runtime_cache_identity.as_deref() {
+        validate_runtime_cache_identity(identity)?;
+    }
     if options.output_dir.as_os_str().is_empty() {
         return Err(Error::InvalidConfig(
             "native runtime-resource output directory must not be empty".to_owned(),
@@ -556,7 +587,7 @@ pub fn build_native_runtime_resources(
     let root = options.output_dir.join("oliphaunt");
     prepare_output_root(&root, options.replace_existing)?;
 
-    write_runtime_resource_tree(
+    let runtime_cache_key = write_runtime_resource_tree(
         &root,
         &materialized,
         &selected_extensions,
@@ -564,6 +595,7 @@ pub fn build_native_runtime_resources(
         &shared_preload_libraries,
         &mobile_static_registry,
         options.extension_target.as_deref(),
+        options.runtime_cache_identity.as_deref(),
     )?;
     let size_report = runtime_resource_size_report(
         &root,
@@ -580,7 +612,7 @@ pub fn build_native_runtime_resources(
             == MobileStaticRegistryState::Complete)
             .then(|| root.join(format!("static-registry/{STATIC_REGISTRY_SOURCE_FILE}"))),
         root,
-        runtime_cache_key: materialized.runtime_cache_key,
+        runtime_cache_key,
         extensions,
         runtime_features,
         extension_names,
@@ -763,6 +795,11 @@ fn built_in_runtime_resource_extension(extension: Extension) -> RuntimeResourceE
             .native_module_stem
             .as_deref()
             .map(|stem| format!("{stem}{}", std::env::consts::DLL_SUFFIX)),
+        native_dependency_module_files: extension
+            .native_dependency_module_stems_for_host()
+            .iter()
+            .map(|stem| format!("{stem}{}", std::env::consts::DLL_SUFFIX))
+            .collect(),
         native_target: None,
         dependencies: catalog.dependencies.clone(),
         data_files: catalog
@@ -964,12 +1001,13 @@ fn load_prebuilt_extension_artifact(root: &Path) -> Result<RuntimeResourceExtens
         &mobile_static_dependency_archives,
     )?;
 
-    let extension = RuntimeResourceExtension {
+    let mut extension = RuntimeResourceExtension {
         sql_name,
         native_runtime_version: Some(native_runtime_version),
         creates_extension,
         native_module_stem,
         native_module_file,
+        native_dependency_module_files: Vec::new(),
         native_target,
         dependencies,
         data_files,
@@ -988,11 +1026,18 @@ fn load_prebuilt_extension_artifact(root: &Path) -> Result<RuntimeResourceExtens
             files_root,
         },
     };
-    validate_prebuilt_extension_leaf_inventory(root, &manifest_path, &extension)?;
+    validate_prebuilt_extension_leaf_inventory(root, &manifest_path, &mut extension)?;
     Ok(extension)
 }
 
 impl RuntimeResourceExtension {
+    fn native_module_files(&self) -> impl Iterator<Item = &str> {
+        self.native_module_file
+            .iter()
+            .chain(&self.native_dependency_module_files)
+            .map(String::as_str)
+    }
+
     fn dependencies(&self) -> Vec<&str> {
         self.dependencies.iter().map(String::as_str).collect()
     }
@@ -1033,6 +1078,174 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tar::EntryType;
+
+    #[test]
+    fn runtime_cache_identity_uses_the_native_manifest_token_contract() {
+        for key in ["A-z_0.9-", "--key", "...", &"a".repeat(128)] {
+            validate_runtime_cache_identity(key).unwrap();
+        }
+        for key in [
+            "",
+            ".",
+            "..",
+            "a/b",
+            "a\\b",
+            "a b",
+            "a\n",
+            "é",
+            &"a".repeat(129),
+        ] {
+            assert!(
+                validate_runtime_cache_identity(key).is_err(),
+                "accepted {key:?}"
+            );
+        }
+        let output = tempfile::tempdir().unwrap();
+        let options = NativeRuntimeResourceOptions::new(output.path()).runtime_cache_identity(".");
+        assert!(build_native_runtime_resources(options).is_err());
+        assert!(!output.path().join("oliphaunt").exists());
+        assert_eq!(
+            NativeRuntimeResourceOptions::new("output").runtime_cache_identity,
+            None
+        );
+    }
+
+    #[test]
+    fn runtime_cache_identity_binds_the_manifest_and_preserves_default_output() {
+        let temp = tempfile::tempdir().unwrap();
+        let materialized = MaterializedNativeResources {
+            runtime_dir: temp.path().join("materialized"),
+            runtime_cache_key: "installed-runtime-cache".to_owned(),
+        };
+        let relative = "share/postgresql/postgresql.conf.sample";
+        write_file(&materialized.runtime_dir.join(relative), b"core-runtime");
+        write_file(
+            &materialized.runtime_dir.join("share/icu/icudt76l.dat"),
+            b"icu-data",
+        );
+        write_file(
+            &materialized.runtime_dir.join(".manifest"),
+            b"key=private-cache-a\n",
+        );
+        write_file(&materialized.runtime_dir.join(".complete"), b"ok\n");
+        write_file(
+            &materialized.runtime_dir.join("share/.manifest"),
+            b"public nested data\n",
+        );
+        let metadata = mobile_static_registry_metadata(&[], &[]).unwrap();
+        let mut manifests = Vec::new();
+        let mut keys = Vec::new();
+        for (name, identity, features) in [
+            ("default", None, &[][..]),
+            ("identity", Some("bazel-runtime_18.4"), &[][..]),
+            ("repeat", Some("bazel-runtime_18.4"), &[][..]),
+            ("different-identity", Some("bazel-runtime_18.5"), &[][..]),
+            (
+                "icu-context",
+                Some("bazel-runtime_18.4"),
+                &[NativeRuntimeFeature::Icu][..],
+            ),
+        ] {
+            let root = temp.path().join(name);
+            let key = write_runtime_resource_tree(
+                &root,
+                &materialized,
+                &[],
+                features,
+                &[],
+                &metadata,
+                None,
+                identity,
+            )
+            .unwrap();
+            assert_eq!(
+                fs::read(root.join("runtime/files").join(relative)).unwrap(),
+                b"core-runtime"
+            );
+            let text = fs::read_to_string(root.join("runtime/manifest.properties")).unwrap();
+            assert!(text.lines().any(|line| line == format!("cacheKey={key}")));
+            validate_runtime_cache_identity(&key).unwrap();
+            if identity.is_some() {
+                assert!(!root.join("runtime/files/.manifest").exists());
+                assert!(!root.join("runtime/files/.complete").exists());
+                let digest = key.strip_prefix("runtime-").unwrap();
+                assert_eq!(digest.len(), 64);
+                assert!(
+                    digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                );
+            } else {
+                assert_eq!(
+                    fs::read(root.join("runtime/files/.manifest")).unwrap(),
+                    b"key=private-cache-a\n"
+                );
+                assert_eq!(
+                    fs::read(root.join("runtime/files/.complete")).unwrap(),
+                    b"ok\n"
+                );
+            }
+            assert_eq!(
+                fs::read(root.join("runtime/files/share/.manifest")).unwrap(),
+                b"public nested data\n"
+            );
+            keys.push(key);
+            manifests.push(text);
+        }
+        assert_eq!(
+            manifests[0],
+            "schema=oliphaunt-runtime-resources-v1\nlayout=postgres-runtime-files-v1\nartifactRole=runtime\ncatalogProfile=\nclusterSeedTarget=\nicuDataTreeSha256=\nmode=native-direct\ncacheKey=installed-runtime-cache\nselectedExtensions=\nextensions=\nruntimeFeatures=\nsharedPreloadLibraries=\nmobileStaticRegistryState=not-required\nmobileStaticRegistryRegistered=\nmobileStaticRegistryPending=\nnativeModuleStems=\nmobileStaticRegistrySource=\n"
+        );
+        assert_eq!(keys[0], "installed-runtime-cache");
+        assert_eq!(keys[1], keys[2]);
+        assert_eq!(manifests[1], manifests[2]);
+        assert_ne!(keys[1], keys[3]);
+        assert_ne!(keys[1], keys[4]);
+        assert_eq!(
+            manifests[1],
+            manifests[0].replace(
+                "cacheKey=installed-runtime-cache\n",
+                &format!("cacheKey={}\n", keys[1])
+            )
+        );
+        let different_acquired_cache = MaterializedNativeResources {
+            runtime_dir: temp.path().join("different-private-acquisition-path"),
+            runtime_cache_key: "different-acquired-cache".to_owned(),
+        };
+        copy_portable_tree(
+            &materialized.runtime_dir,
+            &different_acquired_cache.runtime_dir,
+        )
+        .unwrap();
+        write_file(
+            &different_acquired_cache.runtime_dir.join(".manifest"),
+            b"key=private-cache-b\n",
+        );
+        write_file(
+            &different_acquired_cache.runtime_dir.join(".complete"),
+            b"different-private-marker\n",
+        );
+        assert_eq!(
+            write_runtime_resource_tree(
+                &temp.path().join("different-acquired-cache"),
+                &different_acquired_cache,
+                &[],
+                &[],
+                &[],
+                &metadata,
+                None,
+                Some("bazel-runtime_18.4")
+            )
+            .unwrap(),
+            keys[1]
+        );
+        assert_eq!(
+            logical_tree_sha256(&temp.path().join("identity")).unwrap(),
+            logical_tree_sha256(&temp.path().join("different-acquired-cache")).unwrap(),
+            "all packaged paths and file bytes must ignore private acquisition paths/markers"
+        );
+        assert_eq!(materialized.runtime_cache_key, "installed-runtime-cache");
+    }
 
     #[test]
     fn logical_tree_digest_uses_portable_path_order() {
@@ -1237,7 +1450,8 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
 
         let metadata = mobile_static_registry_metadata(&[], &[]).unwrap();
-        write_runtime_resource_tree(&root, &materialized, &[], &[], &[], &metadata, None).unwrap();
+        write_runtime_resource_tree(&root, &materialized, &[], &[], &[], &metadata, None, None)
+            .unwrap();
 
         assert!(
             !root.join("runtime/files/share/icu").exists(),
@@ -1275,6 +1489,7 @@ mod tests {
             &[NativeRuntimeFeature::Icu],
             &[],
             &metadata,
+            None,
             None,
         )
         .unwrap();
@@ -1773,6 +1988,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             &[],
             &metadata,
             Some("test-target"),
+            None,
         )
         .unwrap();
 
@@ -2588,6 +2804,141 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             Some(NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl)
         );
 
+        for (target, profile) in [
+            (
+                "linux-x64-gnu",
+                NativeExtensionArtifactLicenseProfile::ContribNative,
+            ),
+            (
+                "windows-x64-msvc",
+                NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl,
+            ),
+        ] {
+            let historical = temp.join(format!("pgcrypto-empty-{target}"));
+            write_profiled_extension_artifact(
+                &historical,
+                "pgcrypto",
+                "pgcrypto",
+                target,
+                profile,
+                &[],
+            );
+            assert_eq!(
+                load_prebuilt_extension_artifact(&historical)
+                    .unwrap()
+                    .license_profile,
+                Some(profile)
+            );
+        }
+
+        for (target, static_targets) in [
+            ("android-arm64-v8a", &["android-arm64-v8a"][..]),
+            ("android-x86_64", &["android-x86_64"][..]),
+            ("ios-xcframework", &["ios-device", "ios-simulator"][..]),
+            ("linux-x64-gnu", &[][..]),
+            ("linux-arm64-gnu", &[][..]),
+            ("macos-arm64", &[][..]),
+            ("windows-x64-msvc", &[][..]),
+        ] {
+            let artifact = temp.join(format!("pgcrypto-construction-{target}"));
+            write_profiled_extension_artifact(
+                &artifact,
+                "pgcrypto",
+                "pgcrypto",
+                target,
+                NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl,
+                &EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES,
+            );
+            if !static_targets.is_empty() {
+                let mut archives = Vec::new();
+                let mut dependencies = Vec::new();
+                for static_target in static_targets {
+                    let archive =
+                        mobile_static_archive_artifact_relative_path(static_target, "pgcrypto");
+                    let dependency = mobile_static_dependency_archive_artifact_relative_path(
+                        static_target,
+                        "openssl",
+                        "libcrypto.a",
+                    );
+                    write_file(
+                        &artifact.join(&archive),
+                        b"fixture pgcrypto static archive\n",
+                    );
+                    write_file(
+                        &artifact.join(&dependency),
+                        b"fixture OpenSSL static archive\n",
+                    );
+                    archives.push(format!(
+                        "{static_target}:{}",
+                        archive.display().to_string().replace('\\', "/"),
+                    ));
+                    dependencies.push(format!(
+                        "{static_target}:openssl:{}",
+                        dependency.display().to_string().replace('\\', "/"),
+                    ));
+                }
+                let manifest = artifact.join("manifest.properties");
+                let text = fs::read_to_string(&manifest)
+                    .unwrap()
+                    .replace("mobilePrebuilt=no\n", "mobilePrebuilt=yes\n")
+                    .replace(
+                        "mobileStaticArchives=\n",
+                        &format!("mobileStaticArchives={}\n", archives.join(",")),
+                    )
+                    .replace(
+                        "mobileStaticDependencyArchives=\n",
+                        &format!(
+                            "mobileStaticDependencyArchives={}\n",
+                            dependencies.join(",")
+                        ),
+                    )
+                    .replace(
+                        "staticSymbolPrefix=\n",
+                        "staticSymbolPrefix=oliphaunt_static_pgcrypto\n",
+                    );
+                fs::write(manifest, text).unwrap();
+            }
+            let loaded = load_prebuilt_extension_artifact(&artifact).unwrap();
+            assert_eq!(
+                loaded.license_profile,
+                Some(NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl)
+            );
+            assert_eq!(
+                loaded.license_files,
+                EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES
+                    .map(PathBuf::from)
+                    .to_vec()
+            );
+            let extensions = [loaded];
+            let stems = if static_targets.is_empty() {
+                Vec::new()
+            } else {
+                vec!["pgcrypto".to_owned()]
+            };
+            let metadata = mobile_static_registry_metadata(&extensions, &stems).unwrap();
+            let resources = temp.join(format!("resources-{target}"));
+            let runtime = resources.join("runtime/files");
+            copy_prebuilt_extension_artifacts(&runtime, &extensions, Some(target), &metadata)
+                .unwrap();
+            for relative in EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES {
+                assert_eq!(
+                    fs::read(runtime.join(relative)).unwrap(),
+                    fs::read(artifact.join("files").join(relative)).unwrap()
+                );
+            }
+            write_file(
+                &resources.join("static-registry/manifest.properties"),
+                b"fixture static registry report marker\n",
+            );
+            let report =
+                runtime_resource_size_report(&resources, &extensions, Some(target), &metadata)
+                    .unwrap();
+            assert_eq!(
+                report.extensions[0].file_count,
+                if static_targets.is_empty() { 5 } else { 4 }
+            );
+        }
+
         let postgis = temp.join("postgis");
         let postgis_licenses = [
             "share/licenses/geos/COPYING",
@@ -2602,6 +2953,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             &postgis_licenses,
         );
         let loaded = load_prebuilt_extension_artifact(&postgis).unwrap();
+        assert!(loaded.native_dependency_module_files.is_empty());
         assert_eq!(
             loaded.license_profile,
             Some(NativeExtensionArtifactLicenseProfile::ExternalNative)
@@ -2611,6 +2963,306 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             postgis_licenses.map(PathBuf::from).to_vec()
         );
 
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn canonical_native_dependency_modules_preserve_profiles_and_runtime_accounting() {
+        let temp = unique_temp_root("canonical-native-dependency-modules");
+        let canonical = Extension::POSTGIS;
+        let stem = canonical.native_module_stem().unwrap();
+        assert!(!canonical.native_dependency_module_stems().is_empty());
+        let fixture = |root: &Path, target: &str, suffix: &str, slices: &[&str]| {
+            write_profiled_extension_artifact(
+                root,
+                canonical.sql_name(),
+                stem,
+                target,
+                NativeExtensionArtifactLicenseProfile::ExternalNative,
+                &["share/licenses/postgis/COPYING"],
+            );
+            let module = format!("{stem}.{suffix}");
+            if suffix != "so" {
+                for profile in ["postgresql", "modules"] {
+                    fs::rename(
+                        root.join(format!("files/lib/{profile}/{stem}.so")),
+                        root.join(format!("files/lib/{profile}/{module}")),
+                    )
+                    .unwrap();
+                }
+            }
+            let mut text = fs::read_to_string(root.join("manifest.properties"))
+                .unwrap()
+                .replace(
+                    &format!("nativeModuleFile={stem}.so\n"),
+                    &format!("nativeModuleFile={module}\n"),
+                );
+            if !slices.is_empty() {
+                fs::remove_dir_all(root.join("files/lib/modules")).unwrap();
+                let archives = slices
+                    .iter()
+                    .map(|target| {
+                        let file = mobile_static_archive_artifact_relative_path(target, stem);
+                        write_file(&root.join(&file), b"fixture static extension archive\n");
+                        format!("{target}:{}", file.display().to_string().replace('\\', "/"))
+                    })
+                    .collect::<Vec<_>>();
+                text = text
+                    .replace("mobilePrebuilt=no\n", "mobilePrebuilt=yes\n")
+                    .replace(
+                        "mobileStaticArchives=\n",
+                        &format!("mobileStaticArchives={}\n", archives.join(",")),
+                    )
+                    .replace(
+                        "staticSymbolPrefix=\n",
+                        "staticSymbolPrefix=oliphaunt_static_postgis_3\n",
+                    );
+            }
+            fs::write(root.join("manifest.properties"), text).unwrap();
+            let modules = canonical
+                .native_dependency_module_stems()
+                .iter()
+                .map(|stem| format!("{stem}.{suffix}"))
+                .collect::<Vec<_>>();
+            for module in &modules {
+                write_file(
+                    &root.join("files/lib/postgresql").join(module),
+                    b"fixture standalone dependency\n",
+                );
+                if slices.is_empty() {
+                    write_file(
+                        &root.join("files/lib/modules").join(module),
+                        b"fixture embedded dependency\n",
+                    );
+                }
+            }
+            modules
+        };
+
+        for (target, suffix, slices) in [
+            ("linux-x64-gnu", "so", &[][..]),
+            ("linux-arm64-gnu", "so", &[][..]),
+            ("macos-arm64", "dylib", &[][..]),
+            ("windows-x64-msvc", "dll", &[][..]),
+            ("android-arm64-v8a", "so", &["android-arm64-v8a"][..]),
+            ("android-x86_64", "so", &["android-x86_64"][..]),
+            (
+                "ios-xcframework",
+                "dylib",
+                &["ios-device", "ios-simulator"][..],
+            ),
+        ] {
+            let artifact = temp.join(target);
+            let modules = fixture(&artifact, target, suffix, slices);
+            let loaded = load_prebuilt_extension_artifact(&artifact).unwrap();
+            assert_eq!(loaded.native_dependency_module_files, modules);
+            let extensions = [loaded];
+            let registered = if slices.is_empty() {
+                Vec::new()
+            } else {
+                vec![stem.to_owned()]
+            };
+            let registry = mobile_static_registry_metadata(&extensions, &registered).unwrap();
+            let resources = temp.join(format!("resources-{target}"));
+            let runtime = resources.join("runtime/files");
+            let base = temp.join(format!("base-{target}"));
+            for module in extensions[0].native_module_files() {
+                write_file(
+                    &base.join("lib/postgresql").join(module),
+                    b"stale base module\n",
+                );
+            }
+            write_runtime_resource_tree(
+                &resources,
+                &MaterializedNativeResources {
+                    runtime_dir: base,
+                    runtime_cache_key: "fixture-runtime".to_owned(),
+                },
+                &extensions,
+                &[],
+                &[],
+                &registry,
+                Some(target),
+                None,
+            )
+            .unwrap();
+            for module in &modules {
+                let output = runtime.join("lib/postgresql").join(module);
+                if slices.is_empty() {
+                    assert_eq!(fs::read(output).unwrap(), b"fixture embedded dependency\n");
+                } else {
+                    assert!(
+                        !output.exists(),
+                        "complete static registry leaked dynamic sidecar"
+                    );
+                }
+            }
+            let report =
+                runtime_resource_size_report(&resources, &extensions, Some(target), &registry)
+                    .unwrap();
+            assert_eq!(
+                report.extensions[0].file_count,
+                if slices.is_empty() {
+                    4 + modules.len()
+                } else {
+                    3
+                }
+            );
+            let mut expected = vec![
+                PathBuf::from("share/postgresql/extension/postgis.control"),
+                PathBuf::from("share/postgresql/extension/postgis--1.0.sql"),
+                PathBuf::from("share/licenses/postgis/COPYING"),
+            ];
+            if slices.is_empty() {
+                expected.extend(
+                    extensions[0]
+                        .native_module_files()
+                        .map(|module| PathBuf::from("lib/postgresql").join(module)),
+                );
+            }
+            let bytes = expected
+                .iter()
+                .map(|file| fs::metadata(runtime.join(file)).unwrap().len())
+                .sum::<u64>();
+            assert_eq!(report.extensions[0].bytes, bytes);
+        }
+
+        for fault in ["missing", "extra", "wrong-suffix", "wrong-main"] {
+            let artifact = temp.join(format!("negative-{fault}"));
+            let modules = fixture(&artifact, "linux-x64-gnu", "so", &[]);
+            let module = &modules[0];
+            match fault {
+                "missing" => {
+                    fs::remove_file(artifact.join("files/lib/modules").join(module)).unwrap()
+                }
+                "extra" => write_file(
+                    &artifact.join("files/lib/postgresql/undeclared.so"),
+                    b"undeclared dependency\n",
+                ),
+                "wrong-suffix" => {
+                    for profile in ["postgresql", "modules"] {
+                        fs::rename(
+                            artifact.join(format!("files/lib/{profile}/{module}")),
+                            artifact.join(format!(
+                                "files/lib/{profile}/{}.dll",
+                                canonical.native_dependency_module_stems()[0]
+                            )),
+                        )
+                        .unwrap();
+                    }
+                }
+                _ => {
+                    let manifest = artifact.join("manifest.properties");
+                    let text = fs::read_to_string(&manifest)
+                        .unwrap()
+                        .replace(
+                            &format!("nativeModuleStem={stem}\n"),
+                            "nativeModuleStem=foreign\n",
+                        )
+                        .replace(
+                            &format!("nativeModuleFile={stem}.so\n"),
+                            "nativeModuleFile=foreign.so\n",
+                        );
+                    fs::write(manifest, text).unwrap();
+                    for profile in ["postgresql", "modules"] {
+                        fs::rename(
+                            artifact.join(format!("files/lib/{profile}/{stem}.so")),
+                            artifact.join(format!("files/lib/{profile}/foreign.so")),
+                        )
+                        .unwrap();
+                    }
+                }
+            }
+            let error = load_prebuilt_extension_artifact(&artifact).unwrap_err();
+            assert!(
+                error.to_string().contains("leaf inventory mismatch"),
+                "{error}"
+            );
+        }
+        let duplicate = temp.join("duplicate-sidecar");
+        let modules = fixture(&duplicate, "linux-x64-gnu", "so", &[]);
+        let archive = temp.join("duplicate-sidecar.tar");
+        let mut writer = tar::Builder::new(File::create(&archive).unwrap());
+        writer.append_dir_all("extension", &duplicate).unwrap();
+        let member = PathBuf::from("files/lib/modules").join(&modules[0]);
+        writer
+            .append_path_with_name(
+                duplicate.join(&member),
+                Path::new("extension").join(&member),
+            )
+            .unwrap();
+        writer.finish().unwrap();
+        let error =
+            PreparedPrebuiltExtensionArtifacts::prepare(&[NativePrebuiltExtensionArtifact::new(
+                &archive,
+            )])
+            .unwrap_err();
+        assert!(error.to_string().contains("repeats file entry"), "{error}");
+
+        let other = temp.join("other-member");
+        write_profiled_extension_artifact(
+            &other,
+            "cube",
+            "cube",
+            "linux-x64-gnu",
+            NativeExtensionArtifactLicenseProfile::ContribNative,
+            &[],
+        );
+        write_file(
+            &other.join("files/lib/postgresql").join(format!(
+                "{}.so",
+                canonical.native_dependency_module_stems()[0]
+            )),
+            b"foreign member dependency\n",
+        );
+        let error = load_prebuilt_extension_artifact(&other).unwrap_err();
+        assert!(error.to_string().contains("undeclared:"), "{error}");
+
+        let built_in = built_in_runtime_resource_extension(canonical);
+        assert_eq!(
+            built_in.native_dependency_module_files,
+            if cfg!(windows) {
+                Vec::<String>::new()
+            } else {
+                canonical
+                    .native_dependency_module_stems()
+                    .iter()
+                    .map(|stem| format!("{stem}{}", std::env::consts::DLL_SUFFIX))
+                    .collect()
+            },
+            "current Windows construction incorporates dependencies; historical sidecar fixtures above remain valid",
+        );
+        let base = temp.join("built-in-base");
+        for module in built_in.native_module_files() {
+            write_file(
+                &base.join("lib/postgresql").join(module),
+                b"built-in module\n",
+            );
+        }
+        let registry = mobile_static_registry_metadata(&[], &[]).unwrap();
+        let resources = temp.join("built-in-prune");
+        write_runtime_resource_tree(
+            &resources,
+            &MaterializedNativeResources {
+                runtime_dir: base,
+                runtime_cache_key: "fixture-runtime".to_owned(),
+            },
+            &[],
+            &[],
+            &[],
+            &registry,
+            None,
+            None,
+        )
+        .unwrap();
+        for module in built_in.native_module_files() {
+            assert!(
+                !resources
+                    .join("runtime/files/lib/postgresql")
+                    .join(module)
+                    .exists()
+            );
+        }
         let _ = fs::remove_dir_all(temp);
     }
 
@@ -2701,6 +3353,90 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             "unexpected wrong legal profile error: {error}"
         );
 
+        for (case, sql_name, target, profile, license_files, error_text) in [
+            (
+                "partial-construction",
+                "pgcrypto",
+                "macos-arm64",
+                NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl,
+                vec![EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES[0]],
+                "must not declare upstream licenseFiles",
+            ),
+            (
+                "extra-construction",
+                "pgcrypto",
+                "macos-arm64",
+                NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl,
+                vec![
+                    EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES[0],
+                    EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES[1],
+                    "share/licenses/unrelated/LICENSE",
+                ],
+                "must not declare upstream licenseFiles",
+            ),
+            (
+                "wrong-construction-member",
+                "cube",
+                "linux-x64-gnu",
+                NativeExtensionArtifactLicenseProfile::ContribNative,
+                EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES.to_vec(),
+                "must not declare upstream licenseFiles",
+            ),
+            (
+                "wrong-construction-target",
+                "pgcrypto",
+                "foreign-target",
+                NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl,
+                EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES.to_vec(),
+                "expected 'contrib-native'",
+            ),
+            (
+                "wrong-construction-profile",
+                "pgcrypto",
+                "linux-x64-gnu",
+                NativeExtensionArtifactLicenseProfile::ContribNative,
+                EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES.to_vec(),
+                "expected 'contrib-native-openssl'",
+            ),
+        ] {
+            let artifact = temp.join(case);
+            write_profiled_extension_artifact(
+                &artifact,
+                sql_name,
+                sql_name,
+                target,
+                profile,
+                &license_files,
+            );
+            let error = load_prebuilt_extension_artifact(&artifact).unwrap_err();
+            assert!(
+                error.to_string().contains(error_text),
+                "unexpected {case} error: {error}"
+            );
+        }
+        let construction = temp.join("missing-construction-file");
+        write_profiled_extension_artifact(
+            &construction,
+            "pgcrypto",
+            "pgcrypto",
+            "macos-arm64",
+            NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl,
+            &EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES,
+        );
+        fs::remove_file(
+            construction
+                .join("files")
+                .join(EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES[1]),
+        )
+        .unwrap();
+        let error = load_prebuilt_extension_artifact(&construction).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("missing: files/share/licenses/openssl-native/SOURCE.toml"),
+            "unexpected missing construction file error: {error}"
+        );
+
         let _ = fs::remove_dir_all(temp);
     }
 
@@ -2725,6 +3461,38 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             error.to_string().contains("LICENSE must have mode 0644"),
             "unexpected legal mode error: {error}"
         );
+        let construction = temp.join("pgcrypto-construction-mode");
+        write_profiled_extension_artifact(
+            &construction,
+            "pgcrypto",
+            "pgcrypto",
+            "macos-arm64",
+            NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl,
+            &EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES,
+        );
+        let license = construction
+            .join("files")
+            .join(EXTENSION_ARTIFACT_OPENSSL_CONSTRUCTION_LICENSES[0]);
+        fs::set_permissions(&license, fs::Permissions::from_mode(0o600)).unwrap();
+        let error = load_prebuilt_extension_artifact(&construction).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("share/licenses/openssl-native/LICENSE.txt must have mode 0644"),
+            "unexpected construction license mode error: {error}"
+        );
+        fs::remove_file(&license).unwrap();
+        std::os::unix::fs::symlink(
+            construction.join(EXTENSION_ARTIFACT_OPENSSL_LICENSE),
+            &license,
+        )
+        .unwrap();
+        let error = load_prebuilt_extension_artifact(&construction).unwrap_err();
+        assert!(
+            error.to_string().contains("contains unsafe symlink"),
+            "unexpected construction license symlink error: {error}"
+        );
+
         let _ = fs::remove_dir_all(temp);
     }
 

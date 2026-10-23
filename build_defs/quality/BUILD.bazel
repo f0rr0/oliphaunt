@@ -1,0 +1,79 @@
+load("//build_defs/foundation:bun.bzl", "bun_test")
+load("@bazel_lib//lib:copy_file.bzl", "copy_file")
+load(":biome.bzl", "biome_runner_test", "biome_test")
+load(":rustfmt.bzl", "rustfmt_runner_test")
+load(":sources.bzl", "source_quality_files")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["*.bzl", "*.mts"]))
+
+source_quality_files()
+
+test_suite(
+    name = "rust_clippy_test",
+    tests = [
+        "//:extension_proof_clippy_test",
+        "//:perf_clippy_test",
+        "//src/database-resources/icu:clippy_test",
+        "//src/native/broker:clippy_test",
+        "//src/native/mobile-bindings:clippy_test",
+        "//src/native/node-addon:clippy_test",
+        "//src/native/postgres-tools:clippy_test",
+        "//src/native/runtime/packaging:clippy_test",
+        "//src/native/rust-bindings:clippy_test",
+        "//src/native/sdks/rust:clippy_test",
+        "//src/native/sdks/rust/crates/oliphaunt-build:clippy_test",
+        "//src/query/rust:clippy_test",
+        "//src/wasix/postgres-tools:clippy_test",
+        "//src/wasix/runtime/crates/aot/aarch64-apple-darwin:clippy_test",
+        "//src/wasix/runtime/crates/aot/aarch64-unknown-linux-gnu:clippy_test",
+        "//src/wasix/runtime/crates/aot/x86_64-pc-windows-msvc:clippy_test",
+        "//src/wasix/runtime/crates/aot/x86_64-unknown-linux-gnu:clippy_test",
+        "//src/wasix/runtime/crates/assets:clippy_test",
+        "//src/wasix/runtime/tools/xtask:clippy_test",
+        "//src/wasix/sdks/rust:clippy_test",
+    ],
+)
+
+test_suite(
+    name = "rust_doctest_suite",
+    tests = [
+        "//src/native/sdks/rust:doc_test",
+        "//src/native/sdks/rust/crates/oliphaunt-build:doc_test",
+        "//src/wasix/sdks/rust:doc_test",
+        "//src/wasix/sdks/rust:tools_doc_test",
+    ],
+)
+
+biome_runner_test(
+    name = "biome_runner_test",
+    size = "small",
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+rustfmt_runner_test(name = "rustfmt_runner_test", size = "small")
+
+# A generated output is not an authored formatting input. If the adapter
+# requests this deliberately invalid output, its format check must fail.
+copy_file(
+    name = "generated_biome_fixture",
+    src = "fixtures/invalid-biome.ts",
+    out = "unrequested-generated.ts",
+    testonly = True,
+)
+
+biome_test(
+    name = "authored_sources_only_test",
+    mode = "format",
+    sources = ["fixture-good.ts", ":generated_biome_fixture"],
+    size = "small",
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+bun_test(
+    name = "metadata_test",
+    entry_point = "metadata.test.mts",
+    data = ["metadata.mts", "//:package.json", "//:bun.lock", "//tools/dev:maintainer-tools.toml"],
+    size = "small",
+)

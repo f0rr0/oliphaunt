@@ -1,0 +1,50 @@
+load("//build_defs/quality:sources.bzl", "rust_quality_files")
+load("@rules_rust//rust:defs.bzl", "rust_clippy_test", "rust_library", "rust_test")
+load("@oliphaunt_toolchain_metadata//:query-rust.bzl", "QUERY_RUST_CRATE_NAME", "QUERY_RUST_EDITION", "QUERY_RUST_ENV", "QUERY_RUST_VERSION")
+load("//build_defs/query:defs.bzl", "cargo_consumer_test")
+load("//build_defs/languages:source.bzl", "cargo_source_package")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["Cargo.toml"])
+
+QUERY_SRCS = glob(["src/**/*.rs"])
+QUERY_DATA = glob(["src/**/*"], exclude = ["src/**/*.rs"], allow_empty = True)
+
+rust_library(
+    name = "oliphaunt_query",
+    srcs = QUERY_SRCS,
+    crate_name = QUERY_RUST_CRATE_NAME,
+    crate_root = "src/lib.rs",
+    edition = QUERY_RUST_EDITION,
+    version = QUERY_RUST_VERSION,
+    rustc_env = QUERY_RUST_ENV,
+    compile_data = ["README.md"] + QUERY_DATA,
+)
+
+rust_test(
+    name = "unit_test",
+    size = "small",
+    crate = ":oliphaunt_query",
+    version = QUERY_RUST_VERSION,
+    rustc_env = QUERY_RUST_ENV,
+)
+
+cargo_source_package(
+    product = "oliphaunt-query",
+    qualification = [":consumer_test"] + select({
+        "//build_defs/native:linux_x86_64": ["//build_defs/languages/installed:query_source_compile_test"],
+        "//conditions:default": [],
+    }),
+)
+rust_clippy_test(name = "clippy_test", targets = [":oliphaunt_query", ":unit_test"], transitive = False, size = "small")
+
+cargo_consumer_test(
+    name = "consumer_test",
+    size = "small",
+    archive = ":crate",
+    manifest = "//build_defs/query:consumer/Cargo.toml",
+    source = "//build_defs/query:consumer/main.rs",
+)
+
+rust_quality_files()

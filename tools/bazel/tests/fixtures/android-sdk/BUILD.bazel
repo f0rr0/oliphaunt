@@ -1,0 +1,6 @@
+load(":fixture.bzl", "selected_android_sdk")
+
+selected_android_sdk(
+    name = "selected_sdk",
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)

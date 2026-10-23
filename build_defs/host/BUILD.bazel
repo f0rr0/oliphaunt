@@ -1,0 +1,63 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/foundation:bun.bzl", "bun_binary", "bun_test")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("@rules_swift//swift:swift.bzl", "swift_binary")
+load("@rules_swift//swift/toolchains:xcode_swift_toolchain.bzl", "xcode_swift_toolchain")
+load(":profile-test.bzl", "profile_test")
+load(":rust-dependency-paths-test.bzl", "rust_dependency_paths_tests")
+load(":cc-profiles.bzl", "host_cc_profiles")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["*.bzl", "*.mts", "*.patch"]))
+exports_files(["sdk-smoke.sh"])
+
+constraint_setting(name = "apple_product_profile")
+constraint_value(name = "apple_package", constraint_setting = ":apple_product_profile")
+
+platform(name = "native_macos_arm64", constraint_values = ["@platforms//os:macos", "@platforms//cpu:aarch64", "@apple_support//constraints:apple"])
+platform(name = "apple_package_macos_arm64", constraint_values = ["@platforms//os:macos", "@platforms//cpu:aarch64", "@apple_support//constraints:apple", ":apple_package"])
+platform(name = "native_windows_x64", constraint_values = ["@platforms//os:windows", "@platforms//cpu:x86_64"])
+platform(name = "ios_device_arm64", constraint_values = ["@platforms//os:ios", "@platforms//cpu:aarch64", "@apple_support//constraints:apple", "@apple_support//constraints:device"])
+platform(name = "ios_simulator_arm64", constraint_values = ["@platforms//os:ios", "@platforms//cpu:aarch64", "@apple_support//constraints:apple", "@apple_support//constraints:simulator"])
+
+bun_test(name = "host_sdk_test", entry_point = "host-sdk.test.mts", data = ["host-sdk.mts", "apple-app-tools.mts", "deployment-policy.mts", "//tools/dev:native-host-toolchains.json", "//tools/release:platform-compatibility-policy.mts", "//:tools/packaging/windows-vc-runtime-closure.mts", "//:tools/packaging/windows-vc-runtime-policy.json"], size = "small")
+bun_test(name = "apple_app_tools_test", entry_point = "apple-app-tools.test.mts", data = ["apple-app-tools.mts"], size = "small")
+bun_binary(name = "sdk_tree_conformance", entry_point = "sdk-tree-conformance.mts", data = ["sdk-tree.bzl"], tags = ["manual"])
+profile_test(name = "profile_analysis_test", size = "small")
+rust_dependency_paths_tests()
+
+xcode_swift_toolchain(
+    name = "xcode_swift_base",
+    features = ["swift.module_map_no_private_headers"],
+    tags = ["manual"],
+)
+
+cc_test(
+    name = "host_c_smoke",
+    srcs = ["sdk-smoke.c"],
+    target_compatible_with = select({
+        "@platforms//os:macos": ["@platforms//cpu:aarch64"],
+        "@platforms//os:windows": ["@platforms//cpu:x86_64"],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    size = "small",
+)
+
+swift_binary(
+    name = "swift_sdk_smoke_binary",
+    srcs = ["sdk-smoke.swift"],
+    target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64", ":apple_package"],
+)
+
+sh_test(
+    name = "host_swift_smoke",
+    srcs = ["sdk-smoke.sh"],
+    args = ["$(location :swift_sdk_smoke_binary)"],
+    data = [":swift_sdk_smoke_binary"],
+    target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64", ":apple_package"],
+    size = "small",
+)
+
+source_quality_files()

@@ -1,5 +1,5 @@
 import { requireMatchingWasixRuntime } from './compatibility-version-policy.mts';
-import { buildBoundCompatibilityProducts } from './release-dependency-plan.mts';
+import { resolveBuildBoundCompatibilityProducts } from './release-dependency-plan.mts';
 import { compareText, loadProducts, productCompatibilityVersion } from './release-graph.mts';
 
 const EXTENSION_RUNTIMES = new Set(['liboliphaunt-native', 'liboliphaunt-wasix']);
@@ -68,15 +68,13 @@ export function validateConsumerContractCoverage(products) {
   extensionConsumerContracts(products);
 }
 
-export function validateReleaseConsumerCompatibility(
-  selectedProducts,
-  {
+export function validateReleaseConsumerCompatibility(selectedProducts, options = {}) {
+  const {
     products = loadProducts(),
     readCompatibility = productCompatibilityVersion,
-    buildBound = buildBoundCompatibilityProducts(products),
     prefix = 'release-consumer-compatibility',
-  } = {},
-) {
+  } = options;
+  const buildBound = resolveBuildBoundCompatibilityProducts(products, options);
   validateConsumerContractCoverage(products);
   const selected = new Set(selectedProducts);
   for (const id of selected) {

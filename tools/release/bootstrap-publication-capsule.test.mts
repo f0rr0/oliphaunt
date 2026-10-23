@@ -379,7 +379,7 @@ test('packs and verifies all Maven payloads for a Maven-only release', () => {
   }
 });
 
-test('fails closed on selection drift, external-lock drift, and a preexisting destination', () => {
+test('fails closed on source, selection, external-lock drift, and a preexisting destination', () => {
   const value = fixture();
   const capsule = path.join(value.root, 'capsule.tar');
   const output = workspace();
@@ -394,6 +394,18 @@ test('fails closed on selection drift, external-lock drift, and a preexisting de
       /selected products do not exactly match/u,
     );
     packBootstrapCapsule({ lockFile: value.lockFile, products: PRODUCTS, output: capsule });
+    assert.throws(
+      () =>
+        verifyExtractBootstrapCapsule({
+          transport: capsule,
+          approvedLock: value.lockFile,
+          products: PRODUCTS,
+          headRef: 'HEAD^',
+          workspaceRoot: output,
+        }),
+      /matching Git snapshot|publication lock source .* does not match/u,
+    );
+    assert.throws(() => lstatSync(path.join(output, 'target')), /ENOENT/u);
     assert.throws(
       () =>
         extractCandidate({

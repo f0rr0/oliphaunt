@@ -1,20 +1,29 @@
 import { RootProvider } from 'fumadocs-ui/provider/next';
 import './global.css';
 import type { Metadata } from 'next';
-import { DM_Sans, Geist_Mono, Instrument_Serif } from 'next/font/google';
+import localFont from 'next/font/local';
 
-const sans = DM_Sans({
-  subsets: ['latin'],
+const sans = localFont({
+  src: '../../node_modules/@fontsource-variable/dm-sans/files/dm-sans-latin-wght-normal.woff2',
+  weight: '100 1000',
+  style: 'normal',
+  display: 'swap',
   variable: '--font-oliphaunt-sans',
 });
 
-const mono = Geist_Mono({
-  subsets: ['latin'],
+const mono = localFont({
+  src: '../../node_modules/@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2',
+  weight: '100 900',
+  style: 'normal',
+  display: 'swap',
   variable: '--font-oliphaunt-mono',
 });
 
-const serif = Instrument_Serif({
-  subsets: ['latin'],
+const serif = localFont({
+  src: '../../node_modules/@fontsource/instrument-serif/files/instrument-serif-latin-400-normal.woff2',
+  style: 'normal',
+  display: 'swap',
+  adjustFontFallback: 'Times New Roman',
   weight: '400',
   variable: '--font-oliphaunt-serif',
 });

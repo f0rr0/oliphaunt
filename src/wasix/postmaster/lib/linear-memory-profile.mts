@@ -48,14 +48,14 @@ export function closureHash(records: Record<string, unknown>[], field: string) {
   return digest.digest('hex');
 }
 
-function aggregate(
+export function aggregate(
   stage: string,
   index: string,
   predecessor: string,
   predecessorHash: string,
   destination: string,
+  observed = parseStrictJson(process.env.PROFILE_JSON ?? '') as Record<string, unknown>,
 ) {
-  const observed = parseStrictJson(process.env.PROFILE_JSON ?? '') as Record<string, unknown>;
   assert.equal(observed.id, profileId, 'memory profile ID differs');
   for (const [key, expected] of Object.entries(profile))
     assert.equal(observed[key], expected, `memory profile differs: ${key}`);

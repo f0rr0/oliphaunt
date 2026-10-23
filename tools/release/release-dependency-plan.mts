@@ -19,10 +19,11 @@ export function buildBoundCompatibilityProducts(products) {
         Object.entries(products)
           .filter(
             ([producer, metadata]) =>
-              product.embedded_payload_products?.includes(producer) ||
-              (product.extension?.class === 'external' &&
-                ['liboliphaunt-native', 'liboliphaunt-wasix'].includes(producer)) ||
-              inputs.get(id).has(`${metadata.path}/Cargo.toml`),
+              producer !== id &&
+              (product.embedded_payload_products?.includes(producer) ||
+                (product.extension?.class === 'external' &&
+                  ['liboliphaunt-native', 'liboliphaunt-wasix'].includes(producer)) ||
+                inputs.get(id).has(`${metadata.path}/Cargo.toml`)),
           )
           .map(([producer]) => producer),
       ),
@@ -30,15 +31,45 @@ export function buildBoundCompatibilityProducts(products) {
   );
 }
 
-export function releaseDependencyPlan(
-  products,
-  selectedProducts,
-  {
+// Structural per-run input only; this map does not establish configured or authenticated coverage.
+export function resolveBuildBoundCompatibilityProducts(products, options = {}) {
+  const ids = Object.keys(products);
+  const buildBound = Object.hasOwn(options, 'buildBound')
+    ? options.buildBound
+    : buildBoundCompatibilityProducts(products);
+  if (
+    !(buildBound instanceof Map) ||
+    buildBound.size !== ids.length ||
+    [...buildBound.keys()].some(
+      (consumer) => typeof consumer !== 'string' || !Object.hasOwn(products, consumer),
+    )
+  )
+    throw new Error('release-dependency-plan: buildBound must be a complete product Map');
+  const snapshot = new Map();
+  for (const consumer of ids) {
+    const producers = buildBound.get(consumer);
+    if (!(producers instanceof Set))
+      throw new Error(`release-dependency-plan: buildBound ${consumer} must be a Set`);
+    for (const producer of producers)
+      if (
+        typeof producer !== 'string' ||
+        !Object.hasOwn(products, producer) ||
+        producer === consumer
+      )
+        throw new Error(
+          `release-dependency-plan: buildBound ${consumer} has an unknown or self producer`,
+        );
+    snapshot.set(consumer, new Set(producers));
+  }
+  return snapshot;
+}
+
+export function releaseDependencyPlan(products, selectedProducts, options = {}) {
+  const buildBound = resolveBuildBoundCompatibilityProducts(products, options);
+  const {
     entries = compatibilityVersionEntries(products, { requireSourceProduct: true }),
-    buildBound = buildBoundCompatibilityProducts(products),
     readValue = compatibilityVersionValue,
-  } = {},
-) {
+  } = options;
   const selected = new Set(selectedProducts);
   return entries.map((entry) => {
     const compiled =

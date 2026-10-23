@@ -11,8 +11,23 @@ registry_packages = [
 release_artifacts = ["node-api-prebuilds", "npm-optional-platform-packages"]
 embedded_cargo_manifests = ["src/native/node-addon/Cargo.toml"]
 
+[compatibility_versions.node_native_bindings]
+public_support = false
+source_product = "liboliphaunt-native-bindings"
+path = "src/native/node-addon/Cargo.toml"
+parser = "toml:dependencies.liboliphaunt-native-bindings.version"
+
 [compatibility_versions.oliphaunt-node-direct-liboliphaunt]
 public_support = false
 source_product = "liboliphaunt-native"
 path = "src/native/node-addon/package.json"
 parser = "json:oliphaunt.liboliphauntVersion"
+
+[artifact_targets]
+preset = "node-direct-addon"
+targets = [
+  "linux-arm64-gnu",
+  "linux-x64-gnu",
+  "macos-arm64",
+  "windows-x64-msvc",
+]

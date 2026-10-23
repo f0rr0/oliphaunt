@@ -1,0 +1,44 @@
+name: Continue release preparation
+# Only trusted default-branch controller code runs. Canonical main run metadata
+# and bounded, digest-authenticated intent are read as data; artifact contents
+# and triggering-run code are never executed. The controller only reruns Prepare.
+on: # zizmor: ignore[dangerous-triggers] authenticated completion controller without untrusted execution
+  workflow_run:
+    workflows: [Native Bazel qualification, Release]
+    types: [completed]
+permissions:
+  contents: read
+concurrency:
+  group: prepare-continuation-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+jobs:
+  resume-prepare:
+    name: Resume authenticated original Prepare request
+    if: >-
+      ${{ github.repository == 'f0rr0/oliphaunt' &&
+          github.event.workflow_run.head_repository.full_name == 'f0rr0/oliphaunt' &&
+          github.event.workflow_run.head_branch == 'main' &&
+          (github.event.workflow_run.name == 'Native Bazel qualification' ||
+           (github.event.workflow_run.name == 'Release' && github.event.workflow_run.display_title == 'Release / prepare-release-pr / main')) &&
+          (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Checkout trusted completion controller
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up verified Node.js and Bun
+        uses: ./.github/actions/setup-node-bun
+      - name: Authenticate retained intent and rerun original Prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun tools/release/native-prepare-continuation.mts resume "$GITHUB_EVENT_PATH"

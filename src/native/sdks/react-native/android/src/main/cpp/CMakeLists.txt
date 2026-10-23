@@ -128,5 +128,6 @@ if(DEFINED OLIPHAUNT_MOBILE_STATIC_MODULES AND NOT "${OLIPHAUNT_MOBILE_STATIC_MO
   endif()
   target_link_options(oliphaunt_extensions PRIVATE
     "-Wl,-z,max-page-size=16384"
+    "-Wl,-z,common-page-size=16384"
   )
 endif()

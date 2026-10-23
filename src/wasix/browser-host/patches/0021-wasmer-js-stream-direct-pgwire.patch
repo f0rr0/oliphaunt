@@ -1,5 +1,5 @@
 diff --git a/src/lib.rs b/src/lib.rs
-index 6803f8e..0708da4 100644
+index 6803f8e..d8bee81 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -18,6 +18,7 @@ mod run;
@@ -135,7 +135,7 @@ index d2f8d00..8c0ff2f 100644
          builder.add_preopen_dir("/")?;
  
 diff --git a/src/postgres_direct.rs b/src/postgres_direct.rs
-index 17f74b6..b78334d 100644
+index 17f74b6..ee7708b 100644
 --- a/src/postgres_direct.rs
 +++ b/src/postgres_direct.rs
 @@ -1,4 +1,5 @@
@@ -144,12 +144,19 @@ index 17f74b6..b78334d 100644
      collections::VecDeque,
      io::{self, SeekFrom},
      pin::Pin,
-@@ -10 +11 @@ use anyhow::{ensure, Context};
+@@ -7,10 +8,10 @@ use std::{
+ };
+ 
+ use anyhow::{ensure, Context};
 -use js_sys::{Uint8Array, WebAssembly};
 +use js_sys::{Function, Uint8Array, WebAssembly};
-@@ -13 +14 @@ use virtual_fs::VirtualFile;
+ use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
+ use virtual_fs::VirtualFile;
 -use wasm_bindgen::{prelude::wasm_bindgen, JsValue};
 +use wasm_bindgen::{prelude::wasm_bindgen, JsCast, JsValue};
+ use wasmer::{Instance as WasmerInstance, Store, TypedFunction, Value, WasmTypeList};
+ use wasmer_wasix::{
+     oliphaunt_direct_memory, Runtime as _, WasiEnvBuilder, WasiError, WasiFunctionEnv,
 @@ -21,6 +22,292 @@ use crate::{runtime::Runtime, tasks::CallerRealmTaskManager, utils::Error, RunOp
  const DEFAULT_PROGRAM_NAME: &str = "/bin/postgres";
  const OLIPHAUNT_EXIT_ALIVE: i32 = 99;
@@ -651,7 +658,7 @@ index 17f74b6..b78334d 100644
              wasi_start,
 diff --git a/src/tool_direct.rs b/src/tool_direct.rs
 new file mode 100644
-index 0000000..74719c7
+index 0000000..4768438
 --- /dev/null
 +++ b/src/tool_direct.rs
 @@ -0,0 +1,432 @@

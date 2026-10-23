@@ -2,7 +2,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 const parseToml = Bun.TOML.parse;
 
@@ -10,14 +10,39 @@ import { renderPublicPlatformCompatibilityTable } from '../../../tools/release/p
 import { publishedProducts, sourceProducts } from './published-products.mts';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const docsRoot = path.resolve(scriptDir, '..');
-const repoRoot = path.resolve(scriptDir, '../../..');
-const manifestPath = path.join(docsRoot, 'docs-manifest.toml');
-const generatedRoot = path.join(repoRoot, 'target', 'docs');
-const siteDocsRoot = path.join(generatedRoot, 'site-docs');
-const staticRoot = path.join(generatedRoot, 'static');
+const defaultRepoRoot = path.resolve(scriptDir, '../../..');
 
-const generatedMetaRoot = path.join(generatedRoot, 'generated');
+export type DocsGenerationOptions = {
+  repoRoot?: string;
+  generatedRoot?: string;
+  releasesFile?: string;
+  provenanceFile?: string;
+};
+
+export type DocsProvenance = { sourceRevision: string; dirty: boolean };
+
+export function readDocsProvenance(file: string): DocsProvenance {
+  const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    typeof value.sourceRevision !== 'string' ||
+    !/^[a-f0-9]{40}$/.test(value.sourceRevision ?? '') ||
+    typeof value.dirty !== 'boolean' ||
+    Object.keys(value).some((key) => !['sourceRevision', 'dirty'].includes(key))
+  )
+    throw new Error('Docs provenance requires an exact source revision and dirty state');
+  return value;
+}
+
+type DocsPaths = {
+  repoRoot: string;
+  docsRoot: string;
+  siteDocsRoot: string;
+  staticRoot: string;
+  generatedMetaRoot: string;
+};
 
 const SKIP_DIRS = new Set(['node_modules', '.git', '.moon', '.docusaurus', 'build', 'target']);
 
@@ -38,8 +63,14 @@ function resetDir(dirPath) {
   ensureDir(dirPath);
 }
 
-function assertInsideRepo(relativePath, label) {
-  if (!relativePath || path.isAbsolute(relativePath) || relativePath.includes('\0')) {
+function assertInsideRepo(relativePath, label, repoRoot) {
+  if (
+    !relativePath ||
+    path.isAbsolute(relativePath) ||
+    relativePath.includes('\0') ||
+    relativePath.includes('\\') ||
+    relativePath.split('/').some((part) => !part || part === '.' || part === '..')
+  ) {
     throw new Error(`${label} must be a repository-relative path`);
   }
   const resolved = path.resolve(repoRoot, relativePath);
@@ -103,6 +134,7 @@ function normalizeCodeFenceInfoStrings(markdown) {
 }
 
 function routeSourcePagePath(source, page) {
+  assertInsideRepo(page, 'docs page', source);
   for (const extension of ['.md', '.mdx']) {
     const candidate = path.join(source, `${page}${extension}`);
     if (fs.existsSync(candidate)) {
@@ -126,9 +158,9 @@ function copyMarkdownPage(from, to) {
   fs.writeFileSync(to, normalizePageMarkdown(markdown, fallbackTitle));
 }
 
-function copyRoutePages(route) {
-  const source = assertInsideRepo(route.source, `source for ${route.id}`);
-  const destination = path.join(siteDocsRoot, route.route);
+function copyRoutePages(route, { repoRoot, siteDocsRoot }: DocsPaths) {
+  const source = assertInsideRepo(route.source, `source for ${route.id}`, repoRoot);
+  const destination = assertInsideRepo(route.route, `destination for ${route.id}`, siteDocsRoot);
   ensureDir(destination);
   for (const page of uniqueInOrder([
     ...(route.page_order ?? []),
@@ -136,6 +168,8 @@ function copyRoutePages(route) {
   ])) {
     const from = routeSourcePagePath(source, page);
     if (!from) {
+      if (route.required_pages?.includes(page))
+        throw new Error(`${route.id}: missing required docs page ${page}`);
       continue;
     }
     const to = path.join(destination, `${page}${path.extname(from)}`);
@@ -188,21 +222,21 @@ function collectMarkdownFiles(root) {
   return files.sort();
 }
 
-function markdownRouteFor(filePath) {
+function markdownRouteFor(filePath, siteDocsRoot) {
   const relative = path.relative(siteDocsRoot, filePath).replaceAll(path.sep, '/');
   const withoutExtension = relative.replace(/\.mdx?$/, '');
   const route = withoutExtension.replace(/\/index$/, '');
   return `/${route}`;
 }
 
-function markdownDocIdFor(filePath) {
+function markdownDocIdFor(filePath, siteDocsRoot) {
   return path
     .relative(siteDocsRoot, filePath)
     .replaceAll(path.sep, '/')
     .replace(/\.mdx?$/, '');
 }
 
-function generateExtensionCatalog() {
+function generateExtensionCatalog(repoRoot) {
   const catalogPath = path.join(repoRoot, 'src/extensions/generated/extensions.catalog.json');
   if (!fs.existsSync(catalogPath)) {
     throw new Error('extension catalog source is required for public docs generation');
@@ -251,7 +285,7 @@ function extensionActivation(extension) {
   return 'CREATE EXTENSION';
 }
 
-function writeMetadata(routeRecords) {
+function writeMetadata(routeRecords, generatedMetaRoot) {
   ensureDir(generatedMetaRoot);
   fs.writeFileSync(
     path.join(generatedMetaRoot, 'routes.json'),
@@ -389,7 +423,7 @@ function titleForPathSegment(segment) {
     .join(' ');
 }
 
-function writeRouteMeta(route) {
+function writeRouteMeta(route, siteDocsRoot) {
   const routeRoot = path.join(siteDocsRoot, route.route);
   const metadata = {
     title: route.title,
@@ -426,7 +460,7 @@ function writeRouteMeta(route) {
   }
 }
 
-function writeFumadocsMeta(manifest) {
+function writeFumadocsMeta(manifest, siteDocsRoot) {
   const sdkRoutes = (manifest.routes ?? []).filter((route) => route.kind === 'sdk');
   writeJson(path.join(siteDocsRoot, 'meta.json'), {
     title: 'Oliphaunt',
@@ -436,7 +470,7 @@ function writeFumadocsMeta(manifest) {
   });
   for (const route of manifest.routes ?? []) {
     if (route.id !== 'sdk') {
-      writeRouteMeta(route);
+      writeRouteMeta(route, siteDocsRoot);
     }
   }
   writeJson(path.join(siteDocsRoot, 'sdk', 'meta.json'), {
@@ -450,7 +484,11 @@ function writeFumadocsMeta(manifest) {
   });
 }
 
-function writeNavigationMetadata(manifest, routeRecords) {
+function writeNavigationMetadata(
+  manifest,
+  routeRecords,
+  { siteDocsRoot, generatedMetaRoot }: DocsPaths,
+) {
   const byId = new Map((manifest.routes ?? []).map((route) => [route.id, route]));
   const sdkRoutes = (manifest.routes ?? []).filter((route) => route.kind === 'sdk');
   const navigation = {
@@ -467,10 +505,10 @@ function writeNavigationMetadata(manifest, routeRecords) {
     ],
   };
   writeJson(path.join(generatedMetaRoot, 'navigation.json'), navigation);
-  writeFumadocsMeta(manifest);
+  writeFumadocsMeta(manifest, siteDocsRoot);
 }
 
-function currentGitSha() {
+function currentGitSha(repoRoot) {
   return (
     process.env.OLIPHAUNT_DOCS_GIT_SHA ||
     process.env.VERCEL_GIT_COMMIT_SHA ||
@@ -478,9 +516,48 @@ function currentGitSha() {
   );
 }
 
-export async function generateDocs() {
+export async function generateDocs(options: DocsGenerationOptions = {}) {
+  const repoRoot = path.resolve(options.repoRoot ?? defaultRepoRoot);
+  const docsRoot = path.join(repoRoot, 'src/docs');
+  const generatedRoot = path.resolve(options.generatedRoot ?? path.join(repoRoot, 'target/docs'));
+  if (
+    repoRoot === generatedRoot ||
+    repoRoot.startsWith(generatedRoot + path.sep) ||
+    (generatedRoot.startsWith(repoRoot + path.sep) &&
+      !generatedRoot.startsWith(path.join(repoRoot, 'target') + path.sep))
+  )
+    throw new Error('Docs output must be outside source inputs or beneath target/');
+  const siteDocsRoot = path.join(generatedRoot, 'site-docs');
+  const staticRoot = path.join(generatedRoot, 'static');
+  const generatedMetaRoot = path.join(generatedRoot, 'generated');
+  const paths = { repoRoot, docsRoot, siteDocsRoot, staticRoot, generatedMetaRoot };
+  const manifestPath = path.join(docsRoot, 'docs-manifest.toml');
   const manifest = parseTomlFile(manifestPath);
-  const products = await publishedProducts(manifest.routes);
+  const provenanceFile = options.provenanceFile ?? process.env.OLIPHAUNT_DOCS_PROVENANCE_FILE;
+  const provenance = provenanceFile
+    ? readDocsProvenance(provenanceFile)
+    : {
+        sourceRevision: currentGitSha(repoRoot),
+        dirty:
+          execFileSync('git', ['status', '--porcelain'], { cwd: repoRoot, encoding: 'utf8' }).trim()
+            .length > 0,
+      };
+  const products = await publishedProducts(manifest.routes, {
+    repoRoot,
+    releasesFile: options.releasesFile,
+  });
+  const sourceVersions = await sourceProducts(repoRoot);
+  const extensionCatalog = generateExtensionCatalog(repoRoot);
+  for (const route of manifest.routes ?? []) {
+    const source = assertInsideRepo(route.source, `source for ${route.id}`, repoRoot);
+    assertInsideRepo(route.route, `destination for ${route.id}`, siteDocsRoot);
+    for (const page of uniqueInOrder([
+      ...(route.page_order ?? []),
+      ...(route.required_pages ?? []),
+    ]))
+      if (!routeSourcePagePath(source, page) && route.required_pages?.includes(page))
+        throw new Error(`${route.id}: missing required docs page ${page}`);
+  }
   resetDir(siteDocsRoot);
   resetDir(staticRoot);
   resetDir(generatedMetaRoot);
@@ -488,24 +565,15 @@ export async function generateDocs() {
     path.join(generatedMetaRoot, 'published-products.json'),
     JSON.stringify(products, null, 2) + '\n',
   );
-  const sourceVersions = await sourceProducts();
   writeJson(path.join(staticRoot, 'docs-version.json'), {
-    sourceRevision: currentGitSha(),
-    dirty:
-      execFileSync('git', ['status', '--porcelain'], {
-        cwd: repoRoot,
-        encoding: 'utf8',
-      }).trim().length > 0,
+    ...provenance,
     products: sourceVersions,
   });
   for (const route of manifest.routes ?? []) {
-    copyRoutePages(route);
+    copyRoutePages(route, paths);
   }
 
-  fs.writeFileSync(
-    path.join(siteDocsRoot, 'reference', 'extension-catalog.md'),
-    generateExtensionCatalog(),
-  );
+  fs.writeFileSync(path.join(siteDocsRoot, 'reference', 'extension-catalog.md'), extensionCatalog);
   const rows = Object.entries(products).map(([id, published]) => {
     return `| ${id} | ${published ? `[${published.version}](${published.url})` : 'No completed release'} |`;
   });
@@ -519,24 +587,24 @@ export async function generateDocs() {
   const routeRecords = collectMarkdownFiles(siteDocsRoot).map((file) => {
     const markdown = readText(file);
     return {
-      route: markdownRouteFor(file),
-      docId: markdownDocIdFor(file),
+      route: markdownRouteFor(file, siteDocsRoot),
+      docId: markdownDocIdFor(file, siteDocsRoot),
       title:
         frontmatterValue(markdown, 'title') ||
         firstHeading(markdown, path.basename(file, path.extname(file))),
-      file,
-      source: path.relative(repoRoot, file),
+      file: path.relative(generatedRoot, file).split(path.sep).join('/'),
+      source: path.relative(generatedRoot, file).split(path.sep).join('/'),
     };
   });
 
-  writeMetadata(routeRecords);
-  writeNavigationMetadata(manifest, routeRecords);
+  writeMetadata(routeRecords, generatedMetaRoot);
+  writeNavigationMetadata(manifest, routeRecords, paths);
   fs.writeFileSync(
     path.join(generatedMetaRoot, 'build-metadata.json'),
     `${JSON.stringify(
       {
-        generatedAt: new Date().toISOString(),
-        gitSha: currentGitSha(),
+        ...(provenanceFile ? {} : { generatedAt: new Date().toISOString() }),
+        gitSha: provenance.sourceRevision,
         routeCount: routeRecords.length,
       },
       null,
@@ -548,16 +616,14 @@ export async function generateDocs() {
     manifest,
     routeRecords,
     paths: {
-      repoRoot,
-      docsRoot,
-      siteDocsRoot,
-      staticRoot,
-      generatedMetaRoot,
+      ...paths,
+      generatedRoot,
     },
   };
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const result = await generateDocs();
+if (import.meta.main) {
+  const specification = process.argv[2];
+  const result = await generateDocs(specification ? JSON.parse(readText(specification)) : {});
   console.log(`generated ${result.routeRecords.length} docs routes`);
 }

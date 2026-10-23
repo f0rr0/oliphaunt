@@ -1,0 +1,269 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("@aspect_rules_js//js:defs.bzl", "js_library")
+load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
+load("@oliphaunt_javascript_metadata//:metadata.bzl", "JAVASCRIPT")
+load("@oliphaunt_metadata//:metadata.bzl", "PUBLICATION_CARRIERS")
+load("@javascript_packages//:defs.bzl", "PACKAGES", "javascript_type_links")
+load("@javascript_compiler_packages//:defs.bzl", "compiler_input_links")
+load("@javascript_compiler_packages//:roots.bzl", "COMPILER_INPUTS")
+load("//build_defs/extensions:sdk_projections.bzl", "sdk_extension_projections")
+load("//build_defs/languages/ts:defs.bzl", "workspace_dependency_package", "workspace_dependency_link", "source_sdk_consumer_test", "source_sdk_publish_files")
+load("//build_defs/languages/ts:unit-tests.bzl", "sdk_unit_test")
+load("//build_defs/query:defs.bzl", "query_envelope")
+load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+
+package(default_visibility = ["//visibility:public"])
+
+_MODULE_OUT_DIR = "lib"
+
+exports_files(["package.json", "release.toml"])
+exports_files(["src/native/extension-contract.ts"])
+exports_files(["src/__tests__/native-smoke.mts", "src/__tests__/native-direct-contract.mts", "src/__tests__/native-server-smoke.ts"])
+
+SDK = JAVASCRIPT["@oliphaunt/ts"]
+QUERY = JAVASCRIPT["@oliphaunt/ts-query"]
+
+SDK_SRCS = glob(["src/**/*.ts"], exclude = ["src/__tests__/**", "src/extensions.ts", "src/generated/extensions.ts"])
+
+filegroup(name = "native_asset_sources", srcs = SDK_SRCS + [":extension_projections", "package.json"])
+
+javascript_type_links(SDK["types"])
+compiler_input_links(COMPILER_INPUTS[SDK["name"]])
+
+workspace_dependency_package(name = "query_package", workspace = SDK, dependency = QUERY["name"], current = "//src/query/ts:shipping_package")
+
+workspace_dependency_link(name = "node_modules/@oliphaunt/ts-query", package = ":query_package", workspace = SDK, dependency = QUERY["name"])
+
+js_library(name = "package_metadata", srcs = ["package.json"])
+ts_config(name = "source_config", src = "tsconfig.json")
+
+js_library(
+    name = "source_inputs",
+    types = SDK_SRCS + [":extension_projections"],
+    deps = [":package_metadata"] + [":node_modules/" + name for name in SDK["types"]],
+)
+
+sdk_extension_projections(name = "extension_projections", sdk = "ts")
+
+ts_project(
+    name = "module",
+    srcs = SDK_SRCS + [":extension_projections"],
+    tsconfig = "tsconfig.build.json",
+    extends = "tsconfig.json",
+    declaration = True,
+    declaration_map = True,
+    out_dir = _MODULE_OUT_DIR,
+    root_dir = "src",
+    transpiler = "tsc",
+    supports_workers = 0,
+    deps = [":package_metadata", ":node_modules/@oliphaunt/ts-query"] + [":node_modules/" + name for name in SDK["types"]],
+)
+
+source_sdk_publish_files(name = "publish_files", manifest = "package.json")
+
+# The build configuration excludes tests; use the conventional source configuration
+# for this independently requested typecheck, without constructing native packages.
+ts_project(
+    name = "source_checks",
+    srcs = SDK_SRCS + glob(["src/__tests__/**/*.ts"]) + [":extension_projections"],
+    tsconfig = "tsconfig.json",
+    no_emit = True,
+    declaration = True,
+    declaration_map = True,
+    out_dir = _MODULE_OUT_DIR,
+    root_dir = "src",
+    supports_workers = 0,
+    deps = [":package_metadata", ":node_modules/@oliphaunt/ts-query"] + [":node_modules/" + name for name in SDK["types"]] + [":node_modules/" + name for name in COMPILER_INPUTS[SDK["name"]]],
+)
+
+filegroup(name = "publish_manifest", srcs = [":publish_files"], output_group = "manifest")
+filegroup(name = "license", srcs = [":publish_files"], output_group = "license")
+filegroup(name = "notices", srcs = [":publish_files"], output_group = "notices")
+
+query_envelope(
+    name = "npm",
+    format = "npm",
+    manifest = ":publish_manifest",
+    entries = {file: file for file in SDK_SRCS} | {
+        ":module": "lib/",
+        ":extension_projections": "src/",
+        ":publish_manifest": "package.json",
+        ":license": "LICENSE",
+        ":notices": "THIRD_PARTY_NOTICES.md",
+        "README.md": "README.md",
+        "ARCHITECTURE.md": "ARCHITECTURE.md",
+        "CHANGELOG.md": "CHANGELOG.md",
+    },
+    out = "oliphaunt-ts.tgz",
+)
+
+shipping_package(
+    name = "shipping_package",
+    owner = "@oliphaunt_metadata//:product_oliphaunt-js",
+    artifacts = [":npm"],
+    ecosystem = "npm",
+    package_name = SDK["name"],
+    configuration = "portable",
+    role = [carrier["role"] for carrier in PUBLICATION_CARRIERS if carrier["product"] == "oliphaunt-js" and carrier["ecosystem"] == "npm" and carrier["name"] == SDK["name"]][0],
+    suppliers = "//build_defs/release:no_suppliers",
+)
+
+shipping_export(name = "shipping_export", packages = [":shipping_package"], qualification = [":consumer_test", "//build_defs/languages/carriers:installed_sql_test", ":unit_test", ":package_policy_test"], testonly = True)
+
+source_sdk_consumer_test(
+    name = "consumer_test",
+    size = "small",
+    archive = ":npm",
+    query = ":query_package",
+    consumer = "tools/entrypoint-consumer.mts",
+    type_packages = {"@javascript_packages//:" + key: key for key in PACKAGES},
+    types = SDK["types"],
+)
+
+sdk_unit_test(
+    name = "unit_test",
+    manifest = "package.json",
+    sources = glob(["src/**/*.ts"], exclude = ["src/extensions.ts", "src/generated/extensions.ts"]) + glob(["src/**/*.mts", "src/**/*.json"], allow_empty = True) + [":extension_projections"],
+    fixtures = ["//src/test-fixtures:rust_fixtures"],
+    packages = {":query_package": QUERY["name"]},
+    package_manifests = ["//src/native/runtime:packages/" + target + "/package.json" for target in ["linux-x64-gnu", "linux-arm64-gnu", "darwin-arm64", "win32-x64-msvc"]],
+    size = "small",
+)
+
+source_quality_files(exclude = [_MODULE_OUT_DIR + "/**"])
+
+# Existing operational package policy tests use only this declared source closure.
+sdk_unit_test(
+    name = "package_policy_test",
+    manifest = "package.json",
+    tests = ["tools/published-consumer.test.mts"],
+    sources = [
+        "//build_defs/languages/swift:source-delivery-contract.mts",
+        "//build_defs/languages:source-package.mts",
+        "//build_defs/resources:seed_construction.mts",
+        "//build_defs/wasix/browser:metadata.mts",
+        "//build_defs/wasix/browser:provenance.mts",
+        "//src/database-resources:contracts/native-manifest.mts",
+        "//src/database-resources:seeds/carrier-identities.mts",
+        "//src/database-resources/seeds/wasix:consumer-contract.mts",
+        "//:src/examples/tools/example-release-dependencies.mts",
+        "//:src/extensions/artifacts/packages/tools/contrib-carriers.mts",
+        "//:src/extensions/artifacts/packages/tools/extension-registry-packages.mts",
+        "//:src/extensions/artifacts/packages/tools/extension-runtime-asset-contract.mts",
+        "//src/extensions/contracts:extension-target-profiles.mts",
+        "//src/extensions/contracts:wasix-extension-install.mts",
+        "//src/extensions/tools:extension-evidence.mts",
+        "//src/extensions/tools:extension-projections.mts",
+        "//src/extensions/tools:extension-upstream-licenses.mts",
+        "//src/extensions/tools:native-component-contract.mts",
+        "//src/native/mobile-bindings:tools/dependency-license-contract.mts",
+        "//src/native/runtime:tools/native-runtime-payload.mts",
+        "//src/native/sdks/swift:tools/extension-release-consumer.mts",
+        "//src/native/sdks/swift:tools/ios-carrier-manifest.mts",
+        "//src/native/sdks/swift:tools/native-legal-source-basis.mts",
+        "//src/native/sdks/swift:tools/prepare-swift-release-consumer.mts",
+        "//src/native/sdks/swift:tools/swift-extension-fixture-consumer.mts",
+        "//src/native/sdks/swift:tools/swift-extension-release-consumer-inputs.mts",
+        "//src/native/sdks/swift:tools/swift-native-carrier-contract.mts",
+        "//src/native/sdks/swift:tools/swift-release-manifest.mts",
+        "//src/native/sdks/swift:tools/swift-source-carrier-contract.mts",
+        "//src/native/sdks/ts:tools/published-consumer.mts",
+        "//src/wasix/node-addon:tools/carrier-contract.mts",
+        "//src/wasix/runtime:tools/wasix-cargo-artifact-contract.mts",
+        "//src/wasix/runtime:tools/wasix-runtime-npm-contract.mts",
+        "//src/wasix/sdks/ts:tools/package.mts",
+        "//src/wasix/sdks/ts:tools/wasix-typescript-package.mts",
+        "//tools/bazel:shipping-coverage.mts",
+        "//:tools/packaging/archive-directory.mts",
+        "//:tools/packaging/cargo-manifest.mts",
+        "//:tools/packaging/cargo-source-package.mts",
+        "//:tools/packaging/package-archive.mts",
+        "//:tools/packaging/emit-javascript.mts",
+        "//:tools/packaging/frozen-cargo.mts",
+        "//:tools/packaging/maven-artifact-manifest.mts",
+        "//:tools/packaging/maven-central-contract.mts",
+        "//:tools/packaging/npm-trusted-publishing.mts",
+        "//:tools/packaging/platform-binary-contract.mts",
+        "//:tools/packaging/portable-archive.mts",
+        "//:tools/packaging/release-directory-safety.mts",
+        "//:tools/packaging/release-notices.mts",
+        "//:tools/packaging/rust-dependency-license-contract.mts",
+        "//:tools/packaging/windows-vc-runtime-closure.mts",
+        "//tools/release:authenticate-native-build-evidence.mts",
+        "//tools/release:bazel-shipping-inputs.mts",
+        "//tools/release:cargo-payload-part-contract.mts",
+        "//tools/release:check_registry_publication.mts",
+        "//tools/release:checksum-manifest.mts",
+        "//tools/release:compatibility-version-parser.mts",
+        "//tools/release:compatibility-version-policy.mts",
+        "//tools/release:completed-contrib-carrier-context.mts",
+        "//tools/release:completed-release-publication.mts",
+        "//tools/release:completed-swift-source-delivery.mts",
+        "//tools/release:consumer-compatibility.mts",
+        "//tools/release:example-cargo-versions.mts",
+        "//tools/release:extension-release-metadata.mts",
+        "//tools/release:frozen-consumer.mts",
+        "//tools/release:frozen-npm-publish.mts",
+        "//tools/release:github-content-write-pacer.mts",
+        "//tools/release:github-core-request-journal.mts",
+        "//tools/release:github-read.mts",
+        "//tools/release:github-release-lineage.mts",
+        "//tools/release:github-release-mutations.mts",
+        "//tools/release:native-build-files.mts",
+        "//tools/release:native-build-qualification.mts",
+        "//tools/release:native-build-source-tag.mts",
+        "//tools/release:native-completed-delivery.mts",
+        "//tools/release:native-file-identity.mts",
+        "//tools/release:native-freeze-publication-candidate.mts",
+        "//tools/release:native-publication-artifacts.mts",
+        "//tools/release:native-publication-candidate.mts",
+        "//tools/release:native-publication-delivery.mts",
+        "//tools/release:native-publication-metadata-contract.mts",
+        "//tools/release:native-publication-metadata.mts",
+        "//tools/release:native-publication-observation.mts",
+        "//tools/release:native-publication-payloads.mts",
+        "//tools/release:native-publication-staging.mts",
+        "//tools/release:native-release-inputs.mts",
+        "//tools/release:native-release-preparation.mts",
+        "//tools/release:bazel-release-metadata.mts",
+        "//tools/release:qualified-native-extension-final-inputs.mts",
+        "//tools/release:native-extension-final-inputs.mts",
+        "//:src/extensions/artifacts/native/tools/ios-extension-registration.mts",
+        "//:tools/packaging/rust-native-targets.mts",
+        "//tools/release:native-seed-baseline.mts",
+        "//tools/release:native-seed-inputs.mts",
+        "//tools/release:native-shipping-suppliers.mts",
+        "//tools/release:native-source-carrier-changes.mts",
+        "//tools/release:native-supplier-artifacts.mts",
+        "//tools/release:native-version-source.mts",
+        "//tools/release:platform-compatibility-policy.mts",
+        "//tools/release:product-version.mts",
+        "//tools/release:public-consumer-smoke.mts",
+        "//tools/release:publication-catalog.mts",
+        "//tools/release:publication-consumer-proof.mts",
+        "//tools/release:publication-controller.mts",
+        "//tools/release:publication-lock.mts",
+        "//tools/release:with-source.mts",
+        "//tools/release:registry-http-retry.mts",
+        "//tools/release:registry-integrity.mts",
+        "//tools/release:registry-publication-deferral.mts",
+        "//tools/release:release-artifact-targets.mts",
+        "//tools/release:release-dependency-plan.mts",
+        "//tools/release:release-graph.mts",
+        "//tools/release:release-history.mts",
+        "//tools/release:release-please-bootstrap.mts",
+        "//tools/release:release-please-pr-lifecycle.mts",
+        "//tools/release:release-please-transition.mts",
+        "//tools/release:retained-download.mts",
+        "//tools/release:sync-release-pr.mts",
+        "//tools/release:verify-release-commit.mts",
+        "//tools/release:verify_github_release_attestations.mts",
+    ],
+    fixtures = ["//:LICENSE", "//:tools/packaging/windows-vc-runtime-policy.json", "//src/database-resources:contracts/contract.json"],
+    size = "small",
+)
+
+test_suite(
+    name = "source_unit_tests",
+    tests = [":unit_test", ":package_policy_test"],
+)

@@ -1,0 +1,1894 @@
+name: Native Bazel qualification
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  merge_group:
+    types: [checks_requested]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+
+concurrency:
+  group: bazel-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.number) || format('sha-{0}', github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CI_FULL_MATRICES: |
+    {
+      "portable": [
+        {"platform":"linux-x64","runner":"ubuntu-24.04"},
+        {"platform":"linux-arm64","runner":"ubuntu-24.04-arm"},
+        {"platform":"macos-arm64","runner":"macos-26"},
+        {"platform":"windows-x64","runner":"windows-2025-vs2026"}
+      ],
+      "linux": [
+        {"platform":"x86_64","runner":"ubuntu-24.04"},
+        {"platform":"aarch64","runner":"ubuntu-24.04-arm"}
+      ],
+      "postmaster-host": [
+        {"platform":"linux-arm64","runner":"ubuntu-24.04-arm","compiler":"//src/wasix/postmaster:compiler_linux_arm64","prefix":"linux_arm64_gnu"},
+        {"platform":"macos-arm64","runner":"macos-26","compiler":"//src/wasix/postmaster:native_macos_arm64","prefix":"macos_arm64"}
+      ],
+      "wasix-host": [
+        {"platform":"linux-arm64","runner":"ubuntu-24.04-arm","profile":"//build_defs/native:linux_aarch64_glibc_2_28"},
+        {"platform":"macos-arm64","runner":"macos-26","profile":"//build_defs/host:native_macos_arm64"},
+        {"platform":"windows-x64","runner":"windows-2025-vs2026","profile":"//build_defs/host:native_windows_x64"}
+      ]
+    }
+
+jobs:
+  release-inputs:
+    name: Resolve native release inputs
+    if: github.event_name != 'pull_request' || github.event.action != 'closed'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      attestations: read
+    outputs:
+      native_inputs: ${{ steps.context.outputs.native_inputs }}
+      pull_number: ${{ steps.context.outputs.pull_number }}
+      run_id: ${{ steps.producer.outputs.run_id }}
+      public_artifact_id: ${{ steps.public-upload.outputs.artifact-id }}
+      ci_mode: ${{ steps.scope.outputs.ci_mode }}
+      ci_selected_requests: ${{ steps.scope.outputs.ci_selected_requests }}
+      ci_selected_jobs: ${{ steps.scope.outputs.ci_selected_jobs }}
+      ci_capture_requests: ${{ steps.scope.outputs.ci_capture_requests }}
+      portable_matrix: ${{ steps.scope.outputs.portable_matrix }}
+      linux_matrix: ${{ steps.scope.outputs.linux_matrix }}
+      postmaster_host_matrix: ${{ steps.scope.outputs.postmaster_host_matrix }}
+      wasix_host_matrix: ${{ steps.scope.outputs.wasix_host_matrix }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up verified Node.js and Bun
+        uses: ./.github/actions/setup-node-bun
+
+      - name: Install locked release tooling
+        run: bash tools/dev/bun.sh install --frozen-lockfile --filter @oliphaunt/release-tools --ignore-scripts
+
+      - name: Resolve canonical prepared release tree
+        id: context
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_PULL_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          context_args=(--resolve-context)
+          if [[ -n "$EVENT_PULL_NUMBER" ]]; then
+            context_args+=(--pull-number "$EVENT_PULL_NUMBER")
+          fi
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh \
+            tools/release/native-release-inputs.mts "${context_args[@]}"
+
+      - name: Check release-owned source versions
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before || github.event.merge_group.base_sha || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && format('{0}^', github.sha)) || 'origin/main' }}
+          HEAD_REF: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          CI_EVENT_NAME: ${{ github.event_name }}
+          CI_FULL_REF: ${{ github.ref }}
+          SOURCE_POLICY_SUBJECT: ${{ steps.context.outputs.source_policy_subject }}
+          SOURCE_POLICY_BASE: ${{ steps.context.outputs.source_policy_base }}
+          SOURCE_POLICY_HEAD: ${{ steps.context.outputs.source_policy_head }}
+          SOURCE_POLICY_BRANCH: ${{ steps.context.outputs.source_policy_branch }}
+        run: |
+          subject="${PR_TITLE:-}"
+          if [[ "$CI_EVENT_NAME" == merge_group && -n "$SOURCE_POLICY_HEAD" ]]; then
+            subject="$SOURCE_POLICY_SUBJECT"
+            BASE_REF="$SOURCE_POLICY_BASE"
+            HEAD_REF="$SOURCE_POLICY_HEAD"
+            HEAD_BRANCH="$SOURCE_POLICY_BRANCH"
+            for commit in "$BASE_REF" "$HEAD_REF"; do
+              if ! git cat-file -e "$commit^{commit}"; then
+                git fetch --no-tags origin "$commit"
+              fi
+            done
+          fi
+          if [[ -z "$subject" ]]; then
+            subject="$(git log -1 --pretty=%s "$HEAD_REF")"
+          fi
+          bash .github/scripts/check-release-intent.sh "$subject" "$BASE_REF" "$HEAD_REF" \
+            "$HEAD_BRANCH" "$CI_EVENT_NAME" "$CI_FULL_REF" --source-policy-only
+
+      - name: Require the exact completed Prepare producer
+        if: steps.context.outputs.native_inputs == 'true'
+        id: producer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PREPARE_SOURCE_SHA: ${{ steps.context.outputs.prepare_source_sha }}
+        run: >-
+          bash .github/scripts/require-workflow-success.sh Release "$PREPARE_SOURCE_SHA" 900
+          --event workflow_dispatch --job 'Prepare release PR' --artifact native-release-inputs
+
+      - name: Set up Cargo for release source metadata
+        uses: ./.github/actions/setup-rust
+        with:
+          cache: "false"
+
+      - name: Qualify release controller and Git source policy
+        env:
+          MOON_BIN: /definitely-unavailable-moon
+        run: |
+          bash tools/dev/bun.sh tools/release/check_release_please_config.mts
+          bash tools/dev/bun.sh tools/release/check_artifact_targets.mts
+          bash tools/release/release-check.sh --mutation-tests-only
+
+      - name: Plan source requests from admitted configured inputs
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NATIVE_PREPARED_INPUTS: ${{ steps.context.outputs.native_inputs }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/native-ci-plan"
+          scope_args=(plan --output "$RUNNER_TEMP/native-ci-plan/plan.json")
+          if [[ "$NATIVE_PREPARED_INPUTS" == true ]]; then scope_args+=(--full); fi
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/ci/configured-scope.mts "${scope_args[@]}"
+
+      - name: Check every used module extension before producer fanout
+        if: steps.scope.outputs.ci_mode == 'full'
+        run: bash tools/dev/bazel.sh mod deps --lockfile_mode=error
+
+      - name: Upload source request plan
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-ci-plan
+          path: ${{ runner.temp }}/native-ci-plan/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Acquire completed public inputs once
+        if: (steps.context.outputs.native_inputs != 'true') && (steps.scope.outputs.ci_selected_requests != '[]')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          snapshot="$(bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh \
+            tools/release/native-release-preparation.mts --publication-inputs \
+            --output-directory "$RUNNER_TEMP/native-public-acquisition")"
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh \
+            tools/release/native-release-inputs.mts --transport-public-inputs "$snapshot" \
+            --output-directory "$RUNNER_TEMP/native-public-inputs"
+
+      - name: Upload source-bound public inputs
+        if: (steps.context.outputs.native_inputs != 'true') && (steps.scope.outputs.ci_selected_requests != '[]')
+        id: public-upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-public-inputs
+          path: ${{ runner.temp }}/native-public-inputs
+          if-no-files-found: error
+          retention-days: 7
+
+  portable:
+    name: Portable packages (${{ matrix.platform }})
+    if: ${{ !cancelled() && needs.release-inputs.result == 'success' && fromJSON(needs.release-inputs.outputs.portable_matrix).include[0] != null }}
+    needs: release-inputs
+    runs-on: ${{ matrix.runner }}
+    # macOS includes the later cold Apple slices in the shared compiler base.
+    timeout-minutes: ${{ matrix.platform == 'macos-arm64' && 300 || 180 }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.release-inputs.outputs.portable_matrix) }}
+    env:
+      CI_REQUEST_JOB: portable/${{ matrix.platform }}
+      CI_PLATFORM: ${{ matrix.platform }}
+      CI_MODE: ${{ needs.release-inputs.outputs.ci_mode }}
+      CI_SELECTED_REQUESTS: ${{ needs.release-inputs.outputs.ci_selected_requests }}
+      CI_CAPTURE_REQUESTS: ${{ needs.release-inputs.outputs.ci_capture_requests }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Acquire source-bound native inputs
+        uses: ./.github/actions/native-release-inputs
+        with:
+          run-id: ${{ needs.release-inputs.outputs.run_id }}
+          pull-number: ${{ needs.release-inputs.outputs.pull_number }}
+          public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
+
+      - name: Restore bounded standard Bazel caches
+        id: bazel-cache
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: restore
+          cohort: portable
+
+      - name: Check Bazel acquisition
+        if: needs.release-inputs.outputs.ci_mode == 'full'
+        run: bash tools/dev/bazel-bootstrap.test.sh
+
+      - name: Select declared Apple SDK
+        id: apple_sdk
+        if: matrix.platform == 'macos-arm64'
+        uses: ./.github/actions/setup-apple
+        with:
+          install-build-dependencies: "false"
+
+      - name: Qualify complete Apple runtime, resources, SDK and extension packages
+        id: apple_qualification
+        if: (matrix.platform == 'macos-arm64') && (contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), fromJSON(env.CI_REQUEST_IDS)[matrix.platform][0]))
+        env:
+          CI_REQUEST_IDS: '{"macos-arm64":["portable/macos-arm64/apple-packages"]}'
+          NATIVE_PREPARED_INPUTS: ${{ needs.release-inputs.outputs.native_inputs }}
+          QUALIFICATION_JOB_NAME: Portable packages (${{ matrix.platform }})
+        run: |
+          CI_REQUEST_ID="$(jq -r --arg platform "$CI_PLATFORM" '.[$platform][0]' <<< "$CI_REQUEST_IDS")"
+          case "$NATIVE_PREPARED_INPUTS" in
+            true) apple_export=//:native_apple_shipping_export ;;
+            false) apple_export=//:native_apple_preparation_export ;;
+            *) echo 'Apple qualification requires an authenticated release input context' >&2; exit 1 ;;
+          esac
+          input_root="$RUNNER_TEMP/ios-extension-build-inputs"
+          mkdir -p "$input_root" "$RUNNER_TEMP/native-bazel-diagnostics"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job "$QUALIFICATION_JOB_NAME" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          jq -nc --arg base "$RUNNER_TEMP/native-bazel" \
+            --arg log "$RUNNER_TEMP/native-bazel-diagnostics/server-jvm.out" \
+            '["--output_base="+$base,"--host_jvm_args=-Xmx3g","--server_jvm_out="+$log]' \
+            > "$input_root/startup.json"
+          jq -nc '["-c","opt","--config=macos-sandbox",
+            "--platforms=//build_defs/host:apple_package_macos_arm64",
+            "--host_platform=//build_defs/host:native_macos_arm64","--jobs=2","--local_test_jobs=1"]' \
+            > "$input_root/configuration.json"
+          jq -nc '["//build_defs/host:host_swift_smoke", "//build_defs/apple:swift_interface_context_test", "//build_defs/apple:expo_umbrella_test", "//src/native/sdks/swift:installed_consumer_test"]' \
+            > "$input_root/targets.json"
+          printf '%s\n' "${CI_REQUIRES:-[]}" > "$input_root/ci-requires.json"
+          ci_arguments=(--ci-request-id "$CI_REQUEST_ID" --ci-job "$CI_REQUEST_JOB" --ci-mode "$CI_MODE"
+            --ci-requires-json "$input_root/ci-requires.json")
+          if jq -e --arg id "$CI_REQUEST_ID" 'index($id) != null' <<< "$CI_CAPTURE_REQUESTS" >/dev/null; then
+            ci_arguments+=(--ci-handoff)
+          fi
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts "${ci_arguments[@]}" \
+            --github-json "$input_root/github.json" --startup-json "$input_root/startup.json" \
+            --configuration-json "$input_root/configuration.json" \
+            --shipping-export "$apple_export" \
+            --targets-json "$input_root/targets.json" --output-directory "$RUNNER_TEMP/ios-extension-build-capture"
+          mkdir -p "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+          cp "$RUNNER_TEMP/ios-extension-build-capture/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
+
+      - name: Upload iOS extension construction evidence
+        if: ${{ !cancelled() && steps.apple_qualification.outcome == 'success' && (needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), format('portable/{0}/apple-packages', matrix.platform))) }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-mobile-ios
+          path: ${{ runner.temp }}/ios-extension-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Select declared MSVC SDK
+        if: matrix.platform == 'windows-x64'
+        uses: ./.github/actions/setup-msvc
+
+      - name: Qualify packages and native host behavior
+        # Finish independent macOS requests after a sibling fails. Each Bazel
+        # request still resolves its own prerequisites, and failures stay failed.
+        if: ${{ !cancelled() && contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID) && (success() || (matrix.platform == 'macos-arm64' && steps.apple_sdk.outcome == 'success')) }}
+        timeout-minutes: ${{ matrix.platform == 'macos-arm64' && 180 || 150 }}
+        env:
+          CI_REQUEST_ID: portable/${{ matrix.platform }}/packages
+          TARGET_PLATFORM: ${{ matrix.platform }}
+        run: |
+          host_tests=(
+            //build_defs/languages/carriers:package_test
+          )
+          case "$TARGET_PLATFORM" in
+            linux-x64) profile=//build_defs/native:linux_x86_64_glibc_2_28 ;;
+            linux-arm64) profile=//build_defs/native:linux_aarch64_glibc_2_28 ;;
+            macos-arm64) profile=//build_defs/host:native_macos_arm64 ;;
+            windows-x64) profile=//build_defs/host:native_windows_x64 ;;
+          esac
+          case "$TARGET_PLATFORM" in
+            macos-arm64|windows-x64)
+              host_tests+=(
+                //build_defs/host:host_c_smoke
+                //build_defs/native:compiler_probe_test
+                //build_defs/native:probe_process_test
+                //src/native/runtime:abi_conformance_test
+                //src/native/runtime:native_tools_sql_test
+              )
+              ;;
+          esac
+          if [[ "$TARGET_PLATFORM" == windows-x64 ]]; then
+            host_tests+=(
+              @icu//:windows_icu_smoke_test
+              //build_defs/extensions:postgis_server_windows_link_test
+              //build_defs/extensions:postgis_embedded_windows_link_test
+              //build_defs/extensions:pgcrypto_server_windows_link_test
+              //build_defs/extensions:pgcrypto_embedded_windows_link_test
+              //build_defs/extensions/postgis:postgis_windows_sources_test
+            )
+          fi
+          if [[ "$TARGET_PLATFORM" == linux-x64 ]]; then
+            host_tests+=(
+              //build_defs/host:rust_dependency_paths_tests
+              //tools/ci:source_checks
+              //tools/dev:source_checks
+              //:packaging_contract_test
+              //build_defs/extensions:member_payload_test
+              //build_defs/extensions:mobile_carriers_test
+              //build_defs/resources:desktop_seed_profile_test
+              //build_defs/resources:desktop_seed_consumer_profile_test
+              //build_defs/resources:desktop_payload_macos_profile_test
+              //build_defs/resources:desktop_payload_linux_profile_test
+              //build_defs/resources:desktop_payload_windows_profile_test
+              //build_defs/resources:desktop_payload_ios_profile_test
+              //build_defs/resources:desktop_payload_android_profile_test
+              //build_defs/resources:seed_carrier_ios_datum64_standard_inputs_test
+              //build_defs/resources:seed_carrier_ios_datum64_icu_inputs_test
+              //build_defs/resources:seed_carrier_android_datum64_standard_inputs_test
+              //build_defs/resources:seed_carrier_android_datum64_icu_inputs_test
+              //build_defs/resources:seed_carrier_linux_x64_gnu_icu_inputs_test
+              //build_defs/resources:seed_carrier_portable_icu_inputs_test
+              //build_defs/extensions:windows_source_portability_test
+              //build_defs/extensions:windows_source_inputs_test
+              //:biome_format_test
+              //:biome_lint_test
+              //:rustfmt_test
+              //build_defs/quality:rust_clippy_test
+              //build_defs/quality:rust_doctest_suite
+              //build_defs/quality:metadata_test
+              //build_defs/quality:biome_runner_test
+              //build_defs/quality:rustfmt_runner_test
+              //tools/bazel:execution_log_test
+              //tools/bazel:shipping_coverage_test
+              //src/native/sdks/ts:source_checks_typecheck_test
+              //src/wasix/sdks/ts:source_checks_typecheck_test
+              //src/native/sdks/react-native:source_checks_typecheck_test
+              //src/wasix/postgres-tools/ts:source_checks_typecheck_test
+              //src/examples/wasix/browser:source_checks
+              //src/docs:source_checks
+              //src/native/sdks/kotlin:format_test
+            )
+          fi
+          if [[ "$TARGET_PLATFORM" != macos-arm64 ]]; then
+            startup=()
+            if [[ "$TARGET_PLATFORM" == windows-x64 ]]; then
+              # MSVC still limits some object paths to MAX_PATH. Keep the whole
+              # job on one short base, including maintained Rust build tools.
+              startup=(--output_base="$RUNNER_TEMP/b")
+            fi
+            ci_targets=(//:portable_tests "${host_tests[@]}")
+            ci_configuration=(-c opt "--platforms=$profile" "--host_platform=$profile" --jobs=2)
+            ci_startup=("${startup[@]}")
+            ci_command='test'
+            ci_input_root="$RUNNER_TEMP/ci-request-inputs/$CI_REQUEST_ID"
+            mkdir -p "$ci_input_root"
+            jq -nc --args '$ARGS.positional' -- "${ci_targets[@]}" > "$ci_input_root/targets.json"
+            jq -nc --args '$ARGS.positional' -- "${ci_configuration[@]}" > "$ci_input_root/configuration.json"
+            jq -nc --args '$ARGS.positional' -- "${ci_startup[@]}" > "$ci_input_root/startup.json"
+            bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/ci/run-configured-request.mts \
+              --id "$CI_REQUEST_ID" --job "$CI_REQUEST_JOB" --mode "$CI_MODE" --command "$ci_command" \
+              --targets-json "$ci_input_root/targets.json" --configuration-json "$ci_input_root/configuration.json" \
+              --startup-json "$ci_input_root/startup.json" \
+              --output-directory "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+            exit
+          fi
+
+          diagnostic_root="$RUNNER_TEMP/native-bazel-diagnostics"
+          qualifier_output_base="$RUNNER_TEMP/native-bazel"
+          mkdir -p "$diagnostic_root"
+          capture_jvm_snapshot() {
+            local destination="$1" java_pid java_command
+            local java_pid_file="$qualifier_output_base/server/server.pid.txt"
+            if [[ -r "$java_pid_file" ]]; then
+              java_pid="$(cat "$java_pid_file")"
+              if [[ "$java_pid" =~ ^[0-9]+$ ]]; then
+                java_command="$(ps -p "$java_pid" -o comm= || true)"
+                case "$java_command" in
+                  java|*/java|bazel\(*\))
+                    if kill -QUIT "$java_pid" 2>/dev/null; then
+                      sleep 2
+                      cp "$diagnostic_root/server-jvm.out" "$diagnostic_root/$destination" || true
+                    fi
+                    ;;
+                esac
+              fi
+            fi
+          }
+          ci_targets=(//:portable_tests "${host_tests[@]}")
+          ci_configuration=(-c opt --config=macos-sandbox "--platforms=$profile" "--host_platform=$profile" --jobs=2
+            "--profile=$diagnostic_root/qualification.json.gz" "--starlark_cpu_profile=$diagnostic_root/starlark.pprof")
+          ci_startup=("--output_base=$qualifier_output_base" --host_jvm_args=-Xmx3g "--server_jvm_out=$diagnostic_root/server-jvm.out")
+          ci_command='test'
+          ci_input_root="$RUNNER_TEMP/ci-request-inputs/$CI_REQUEST_ID"
+          mkdir -p "$ci_input_root"
+          jq -nc --args '$ARGS.positional' -- "${ci_targets[@]}" > "$ci_input_root/targets.json"
+          jq -nc --args '$ARGS.positional' -- "${ci_configuration[@]}" > "$ci_input_root/configuration.json"
+          jq -nc --args '$ARGS.positional' -- "${ci_startup[@]}" > "$ci_input_root/startup.json"
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/ci/run-configured-request.mts \
+            --id "$CI_REQUEST_ID" --job "$CI_REQUEST_JOB" --mode "$CI_MODE" --command "$ci_command" \
+            --targets-json "$ci_input_root/targets.json" --configuration-json "$ci_input_root/configuration.json" \
+            --startup-json "$ci_input_root/startup.json" \
+            --output-directory "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID" &
+          qualifier_pid=$!
+          (
+            diagnostic_delay_pid=
+            trap 'if [[ -n "$diagnostic_delay_pid" ]]; then kill "$diagnostic_delay_pid" 2>/dev/null || true; fi' EXIT
+            trap 'exit 0' TERM INT
+            sleep 480 &
+            diagnostic_delay_pid=$!
+            wait "$diagnostic_delay_pid"
+            if kill -0 "$qualifier_pid" 2>/dev/null; then
+              ps -axo pid,ppid,state,etime,%cpu,%mem,comm > "$diagnostic_root/processes.txt"
+              capture_jvm_snapshot jvm-8min.out
+            fi
+          ) &
+          diagnostic_pid=$!
+          qualifier_status=0
+          trap 'kill "$diagnostic_pid" 2>/dev/null || true' EXIT
+          wait "$qualifier_pid" || qualifier_status=$?
+          kill "$diagnostic_pid" 2>/dev/null || true
+          wait "$diagnostic_pid" || true
+          trap - EXIT
+          capture_jvm_snapshot jvm-final.out
+          exit "$qualifier_status"
+
+      - name: Construct native iOS device and simulator ABI consumers
+        if: ${{ !cancelled() && matrix.platform == 'macos-arm64' && steps.apple_sdk.outcome == 'success' }}
+        env:
+          CI_REQUEST_IDS: '{"macos-arm64":["portable/macos-arm64/abi-ios_device_arm64","portable/macos-arm64/abi-ios_simulator_arm64","portable/macos-arm64/abi-apple_package_macos_arm64"]}'
+        run: |
+          qualification_status=0
+          while IFS= read -r CI_REQUEST_ID; do
+            if ! jq -e --arg id "$CI_REQUEST_ID" 'index($id) != null' <<< "$CI_SELECTED_REQUESTS" >/dev/null; then continue; fi
+            profile="${CI_REQUEST_ID##*/abi-}"
+            ci_targets=(//build_defs/extensions/mobile:all_members_consumer)
+            if [[ "$profile" != apple_package_macos_arm64 ]]; then
+              ci_targets=(//src/native/runtime:mobile_static_abi_consumer //src/native/runtime:runtime_abi_binary "${ci_targets[@]}")
+            fi
+            ci_configuration=(-c opt --config=macos-sandbox "--platforms=//build_defs/host:$profile"
+              --host_platform=//build_defs/host:native_macos_arm64 --jobs=2)
+            ci_startup=("--output_base=$RUNNER_TEMP/native-bazel" --host_jvm_args=-Xmx3g
+              "--server_jvm_out=$RUNNER_TEMP/native-bazel-diagnostics/server-jvm.out")
+            ci_command='build'
+            ci_input_root="$RUNNER_TEMP/ci-request-inputs/$CI_REQUEST_ID"
+            mkdir -p "$ci_input_root"
+            jq -nc --args '$ARGS.positional' -- "${ci_targets[@]}" > "$ci_input_root/targets.json"
+            jq -nc --args '$ARGS.positional' -- "${ci_configuration[@]}" > "$ci_input_root/configuration.json"
+            jq -nc --args '$ARGS.positional' -- "${ci_startup[@]}" > "$ci_input_root/startup.json"
+            if ! bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/ci/run-configured-request.mts \
+              --id "$CI_REQUEST_ID" --job "$CI_REQUEST_JOB" --mode "$CI_MODE" --command "$ci_command" \
+              --targets-json "$ci_input_root/targets.json" --configuration-json "$ci_input_root/configuration.json" \
+              --startup-json "$ci_input_root/startup.json" \
+              --output-directory "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"; then
+              qualification_status=1
+            fi
+          done < <(jq -r --arg platform "$CI_PLATFORM" '.[$platform][]' <<< "$CI_REQUEST_IDS")
+          exit "$qualification_status"
+
+      - name: Qualify final native carriers and frozen resources
+        id: native_qualification
+        if: ${{ !cancelled() && (matrix.platform == 'macos-arm64' || matrix.platform == 'windows-x64') && contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), fromJSON(env.CI_REQUEST_IDS)[matrix.platform][0]) && (success() || (matrix.platform == 'macos-arm64' && steps.apple_sdk.outcome == 'success')) }}
+        env:
+          CI_REQUEST_IDS: '{"macos-arm64":["portable/macos-arm64/native-carriers"],"windows-x64":["portable/windows-x64/native-carriers"]}'
+          TARGET_PLATFORM: ${{ matrix.platform }}
+          QUALIFICATION_JOB_NAME: Portable packages (${{ matrix.platform }})
+        run: |
+          CI_REQUEST_ID="$(jq -r --arg platform "$CI_PLATFORM" '.[$platform][0]' <<< "$CI_REQUEST_IDS")"
+          input_root="$RUNNER_TEMP/native-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job "$QUALIFICATION_JOB_NAME" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          case "$TARGET_PLATFORM" in
+            macos-arm64)
+              jq -nc --arg base "$RUNNER_TEMP/native-bazel" \
+                --arg log "$RUNNER_TEMP/native-bazel-diagnostics/server-jvm.out" \
+                '["--output_base="+$base,"--host_jvm_args=-Xmx3g","--server_jvm_out="+$log]' \
+                > "$input_root/startup.json"
+              jq -nc '["-c","opt","--config=macos-sandbox",
+                "--platforms=//build_defs/host:native_macos_arm64",
+                "--host_platform=//build_defs/host:native_macos_arm64","--jobs=2"]' \
+                > "$input_root/configuration.json"
+              ;;
+            windows-x64)
+              jq -nc --arg base "$RUNNER_TEMP/b" '["--output_base="+$base]' \
+                > "$input_root/startup.json"
+              jq -nc '["-c","opt","--platforms=//build_defs/host:native_windows_x64",
+                "--host_platform=//build_defs/host:native_windows_x64","--jobs=2"]' \
+                > "$input_root/configuration.json"
+              ;;
+          esac
+          printf '%s\n' "${CI_REQUIRES:-[]}" > "$input_root/ci-requires.json"
+          ci_arguments=(--ci-request-id "$CI_REQUEST_ID" --ci-job "$CI_REQUEST_JOB" --ci-mode "$CI_MODE"
+            --ci-requires-json "$input_root/ci-requires.json")
+          if jq -e --arg id "$CI_REQUEST_ID" 'index($id) != null' <<< "$CI_CAPTURE_REQUESTS" >/dev/null; then
+            ci_arguments+=(--ci-handoff)
+          fi
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts "${ci_arguments[@]}" \
+            --github-json "$input_root/github.json" --startup-json "$input_root/startup.json" \
+            --configuration-json "$input_root/configuration.json" \
+            --shipping-export //:native_shipping_export \
+            --output-directory "$RUNNER_TEMP/native-build-capture"
+          mkdir -p "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+          cp "$RUNNER_TEMP/native-build-capture/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
+
+      - name: Upload native construction evidence
+        if: ${{ !cancelled() && steps.native_qualification.outcome == 'success' && (needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), format('portable/{0}/native-carriers', matrix.platform))) }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-native-${{ matrix.platform }}
+          path: ${{ runner.temp }}/native-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Qualify declared documentation export and examples
+        if: (matrix.platform == 'linux-x64') && (contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), fromJSON(env.CI_REQUEST_IDS)[matrix.platform][0]))
+        env:
+          CI_REQUEST_IDS: '{"linux-x64":["portable/linux-x64/docs"]}'
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          CI_REQUEST_ID="$(jq -r --arg platform "$CI_PLATFORM" '.[$platform][0]' <<< "$CI_REQUEST_IDS")"
+          bash tools/dev/bun.sh src/docs/tools/verify-live.mts snapshot \
+            target/docs/expected-products.json target/docs/native-inputs
+          ci_targets=(//src/docs:site_checks)
+          ci_configuration=(-c opt --platforms=//build_defs/native:linux_x86_64_glibc_2_28 --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2)
+          ci_startup=()
+          ci_command='test'
+          ci_input_root="$RUNNER_TEMP/ci-request-inputs/$CI_REQUEST_ID"
+          mkdir -p "$ci_input_root"
+          jq -nc --args '$ARGS.positional' -- "${ci_targets[@]}" > "$ci_input_root/targets.json"
+          jq -nc --args '$ARGS.positional' -- "${ci_configuration[@]}" > "$ci_input_root/configuration.json"
+          jq -nc --args '$ARGS.positional' -- "${ci_startup[@]}" > "$ci_input_root/startup.json"
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/ci/run-configured-request.mts \
+            --id "$CI_REQUEST_ID" --job "$CI_REQUEST_JOB" --mode "$CI_MODE" --command "$ci_command" \
+            --targets-json "$ci_input_root/targets.json" --configuration-json "$ci_input_root/configuration.json" \
+            --startup-json "$ci_input_root/startup.json" \
+            --output-directory "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+
+      - name: Check execution tool selection for foreign targets
+        if: (matrix.platform == 'linux-x64') && (contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), fromJSON(env.CI_REQUEST_IDS)[matrix.platform][0]))
+        env:
+          CI_REQUEST_IDS: '{"linux-x64":["portable/linux-x64/foreign-tools"]}'
+        run: |
+          CI_REQUEST_ID="$(jq -r --arg platform "$CI_PLATFORM" '.[$platform][0]' <<< "$CI_REQUEST_IDS")"
+          ci_targets=(//build_defs/foundation:bun_toolchain_test)
+          ci_configuration=(--platforms=//build_defs/foundation:windows_x86_64 --extra_execution_platforms=//build_defs/foundation:linux_x86_64 --jobs=2)
+          ci_startup=()
+          ci_command='test'
+          ci_input_root="$RUNNER_TEMP/ci-request-inputs/$CI_REQUEST_ID"
+          mkdir -p "$ci_input_root"
+          jq -nc --args '$ARGS.positional' -- "${ci_targets[@]}" > "$ci_input_root/targets.json"
+          jq -nc --args '$ARGS.positional' -- "${ci_configuration[@]}" > "$ci_input_root/configuration.json"
+          jq -nc --args '$ARGS.positional' -- "${ci_startup[@]}" > "$ci_input_root/startup.json"
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/ci/run-configured-request.mts \
+            --id "$CI_REQUEST_ID" --job "$CI_REQUEST_JOB" --mode "$CI_MODE" --command "$ci_command" \
+            --targets-json "$ci_input_root/targets.json" --configuration-json "$ci_input_root/configuration.json" \
+            --startup-json "$ci_input_root/startup.json" \
+            --output-directory "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+
+      - name: Exercise cold, incremental and coverage scenarios
+        if: (matrix.platform == 'linux-x64') && (needs.release-inputs.outputs.ci_mode == 'full')
+        run: |
+          bash tools/dev/bun.sh tools/bazel/tests/conformance.mts
+          bazel_version="$(cat .bazelversion)"
+          bazel_binary="${XDG_CACHE_HOME:-$HOME/.cache}/oliphaunt/bazel/$bazel_version/bazel-$bazel_version-linux-x86_64"
+          bash tools/dev/bun.sh build_defs/host/sdk-tree-conformance.mts "$bazel_binary"
+
+      - name: Upload macOS Bazel diagnostics
+        if: ${{ always() && matrix.platform == 'macos-arm64' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-bazel-macos-diagnostics
+          path: |
+            ${{ runner.temp }}/native-bazel-diagnostics
+            ${{ runner.temp }}/native-build-capture/diagnostics
+            ${{ runner.temp }}/ios-extension-build-capture/diagnostics
+            ${{ runner.temp }}/ci-requests/**/diagnostics
+          if-no-files-found: ignore
+          retention-days: 5
+
+      - name: Upload failed Windows native test diagnostics
+        if: failure() && matrix.platform == 'windows-x64'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-bazel-windows-test-diagnostics
+          path: |
+            ${{ runner.temp }}/b/command.log
+            ${{ runner.temp }}/b/execroot/_main/bazel-out/**/testlogs/**/test.log
+            ${{ runner.temp }}/b/execroot/_main/bazel-out/**/testlogs/**/test.xml
+          if-no-files-found: ignore
+          retention-days: 5
+
+      - &ci_request_receipts
+        name: Upload completed source request receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-ci-requests-${{ github.job }}-${{ env.CI_PLATFORM || 'single' }}
+          path: ${{ runner.temp }}/ci-requests/**/ci-request.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Save bounded standard Bazel caches
+        if: ${{ always() }}
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: save
+          cohort: portable
+          disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
+          output-base: ${{ matrix.platform == 'windows-x64' && format('{0}/b', runner.temp) || matrix.platform == 'macos-arm64' && format('{0}/native-bazel', runner.temp) || '' }}
+          jvm-args: ${{ matrix.platform == 'macos-arm64' && '-Xmx3g' || '' }}
+          server-log: ${{ matrix.platform == 'macos-arm64' && format('{0}/native-bazel-diagnostics/server-jvm.out', runner.temp) || '' }}
+
+  linux:
+    name: Linux runtime (${{ matrix.platform }})
+    if: ${{ !cancelled() && needs.release-inputs.result == 'success' && fromJSON(needs.release-inputs.outputs.linux_matrix).include[0] != null }}
+    needs: release-inputs
+    runs-on: ${{ matrix.runner }}
+    # Android construction and installed testing share the Linux x64 base.
+    timeout-minutes: ${{ matrix.platform == 'x86_64' && 210 || 120 }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.release-inputs.outputs.linux_matrix) }}
+    env:
+      CI_REQUEST_JOB: linux/${{ matrix.platform }}
+      CI_PLATFORM: ${{ matrix.platform }}
+      CI_MODE: ${{ needs.release-inputs.outputs.ci_mode }}
+      CI_SELECTED_REQUESTS: ${{ needs.release-inputs.outputs.ci_selected_requests }}
+      CI_CAPTURE_REQUESTS: ${{ needs.release-inputs.outputs.ci_capture_requests }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Acquire source-bound native inputs
+        uses: ./.github/actions/native-release-inputs
+        with:
+          run-id: ${{ needs.release-inputs.outputs.run_id }}
+          pull-number: ${{ needs.release-inputs.outputs.pull_number }}
+          public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
+
+      - name: Restore bounded standard Bazel caches
+        id: bazel-cache
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: restore
+          cohort: linux
+
+      # One invocation shares PostgreSQL/ICU/generators across real consumers.
+      - name: Qualify runtime, frontends, crypto and extension SQL
+        if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
+        env:
+          CI_REQUEST_ID: linux/${{ matrix.platform }}/runtime
+          TARGET_CPU: ${{ matrix.platform }}
+        run: |
+          profile="//build_defs/native:linux_${TARGET_CPU}_glibc_2_28"
+          ci_targets=(//:native_linux_tests)
+          ci_configuration=(-c opt "--platforms=$profile" "--host_platform=$profile" --jobs=2)
+          ci_startup=()
+          ci_command='test'
+          ci_input_root="$RUNNER_TEMP/ci-request-inputs/$CI_REQUEST_ID"
+          mkdir -p "$ci_input_root"
+          jq -nc --args '$ARGS.positional' -- "${ci_targets[@]}" > "$ci_input_root/targets.json"
+          jq -nc --args '$ARGS.positional' -- "${ci_configuration[@]}" > "$ci_input_root/configuration.json"
+          jq -nc --args '$ARGS.positional' -- "${ci_startup[@]}" > "$ci_input_root/startup.json"
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/ci/run-configured-request.mts \
+            --id "$CI_REQUEST_ID" --job "$CI_REQUEST_JOB" --mode "$CI_MODE" --command "$ci_command" \
+            --targets-json "$ci_input_root/targets.json" --configuration-json "$ci_input_root/configuration.json" \
+            --startup-json "$ci_input_root/startup.json" \
+            --output-directory "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+
+      - name: Qualify Android cross-compiled runtime and ABI
+        if: (matrix.platform == 'x86_64') && (contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), fromJSON(env.CI_REQUEST_IDS)[matrix.platform][0]))
+        env:
+          CI_REQUEST_IDS: '{"x86_64":["linux/x86_64/android-abi"]}'
+        run: |
+          CI_REQUEST_ID="$(jq -r --arg platform "$CI_PLATFORM" '.[$platform][0]' <<< "$CI_REQUEST_IDS")"
+          ci_targets=(//build_defs/android:abi_test //build_defs/native:android_runtime_abi_test)
+          ci_configuration=(-c opt --platforms=//build_defs/native:linux_x86_64_glibc_2_28 --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2)
+          ci_startup=()
+          ci_command='test'
+          ci_input_root="$RUNNER_TEMP/ci-request-inputs/$CI_REQUEST_ID"
+          mkdir -p "$ci_input_root"
+          jq -nc --args '$ARGS.positional' -- "${ci_targets[@]}" > "$ci_input_root/targets.json"
+          jq -nc --args '$ARGS.positional' -- "${ci_configuration[@]}" > "$ci_input_root/configuration.json"
+          jq -nc --args '$ARGS.positional' -- "${ci_startup[@]}" > "$ci_input_root/startup.json"
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/ci/run-configured-request.mts \
+            --id "$CI_REQUEST_ID" --job "$CI_REQUEST_JOB" --mode "$CI_MODE" --command "$ci_command" \
+            --targets-json "$ci_input_root/targets.json" --configuration-json "$ci_input_root/configuration.json" \
+            --startup-json "$ci_input_root/startup.json" \
+            --output-directory "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+
+      - name: Provision KVM for the exact installed Android APK test
+        if: (matrix.platform == 'x86_64') && (contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), format('linux/{0}/android-packages', matrix.platform)))
+        run: |
+          test -c /dev/kvm
+          sudo chmod 666 /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+
+      - name: Qualify complete Android extension, Maven packages and release apps
+        if: (matrix.platform == 'x86_64') && (contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), fromJSON(env.CI_REQUEST_IDS)[matrix.platform][0]))
+        env:
+          CI_REQUEST_IDS: '{"x86_64":["linux/x86_64/android-packages"]}'
+          QUALIFICATION_JOB_NAME: Linux runtime (${{ matrix.platform }})
+        run: |
+          CI_REQUEST_ID="$(jq -r --arg platform "$CI_PLATFORM" '.[$platform][0]' <<< "$CI_REQUEST_IDS")"
+          OLIPHAUNT_MOBILE_CANDIDATE_CHECKOUT="$(pwd -P)"
+          test "$OLIPHAUNT_MOBILE_CANDIDATE_CHECKOUT" = "$(cd "$GITHUB_WORKSPACE" && pwd -P)"
+          OLIPHAUNT_MOBILE_CANDIDATE_SHA="$(git rev-parse HEAD)"
+          OLIPHAUNT_MOBILE_CANDIDATE_TREE="$(git rev-parse 'HEAD^{tree}')"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          export OLIPHAUNT_MOBILE_CANDIDATE_CHECKOUT OLIPHAUNT_MOBILE_CANDIDATE_SHA OLIPHAUNT_MOBILE_CANDIDATE_TREE
+          input_root="$RUNNER_TEMP/android-extension-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job "$QUALIFICATION_JOB_NAME" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          jq -nc '["-c","opt","--platforms=//build_defs/native:linux_x86_64_glibc_2_28",
+            "--host_platform=//build_defs/native:linux_x86_64_glibc_2_28","--jobs=2","--local_test_jobs=1"]' \
+            > "$input_root/configuration.json"
+          jq -nc '[
+            "//build_defs/android:android_binary_min_sdk_test",
+            "//build_defs/android:android_min_sdk_conflict_test",
+            "//build_defs/extensions/mobile/final:android_arm64_v8a_final_contract_test",
+            "//build_defs/extensions/mobile/final:android_x86_64_final_contract_test",
+            "//build_defs/extensions/mobile:android_arm64_all_members_consumer",
+            "//build_defs/extensions/mobile:android_x86_64_all_members_consumer",
+            "//build_defs/extensions:mobile_maven_test",
+            "//src/examples/native/react-native-expo:android_release",
+            "//src/examples/native/react-native-expo:autolinking_consumer_test",
+            "//src/examples/native/react-native-expo:android_installed_test"
+          ]' > "$input_root/targets.json"
+          printf '%s\n' "${CI_REQUIRES:-[]}" > "$input_root/ci-requires.json"
+          ci_arguments=(--ci-request-id "$CI_REQUEST_ID" --ci-job "$CI_REQUEST_JOB" --ci-mode "$CI_MODE"
+            --ci-requires-json "$input_root/ci-requires.json")
+          if jq -e --arg id "$CI_REQUEST_ID" 'index($id) != null' <<< "$CI_CAPTURE_REQUESTS" >/dev/null; then
+            ci_arguments+=(--ci-handoff)
+          fi
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts "${ci_arguments[@]}" \
+            --github-json "$input_root/github.json" --configuration-json "$input_root/configuration.json" \
+            --shipping-export //:native_android_shipping_export \
+            --targets-json "$input_root/targets.json" --output-directory "$RUNNER_TEMP/android-extension-build-capture"
+          mkdir -p "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+          cp "$RUNNER_TEMP/android-extension-build-capture/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
+
+      - name: Upload Android extension construction evidence
+        if: (matrix.platform == 'x86_64') && (needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), format('linux/{0}/android-packages', matrix.platform)))
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-mobile-android
+          path: ${{ runner.temp }}/android-extension-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload installed Android failure diagnostics
+        if: ${{ always() && matrix.platform == 'x86_64' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-android-installed-diagnostics
+          path: |
+            bazel-testlogs/src/examples/native/react-native-expo/android_installed_test/test.log
+            bazel-testlogs/src/examples/native/react-native-expo/android_installed_test/test.xml
+            bazel-testlogs/src/examples/native/react-native-expo/android_installed_test/test.outputs/
+          if-no-files-found: ignore
+          retention-days: 5
+
+      - name: Qualify installed packages and frozen resources
+        if: (matrix.platform == 'x86_64') && (contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), fromJSON(env.CI_REQUEST_IDS)[matrix.platform][0]))
+        env:
+          CI_REQUEST_IDS: '{"x86_64":["linux/x86_64/source-packages"]}'
+        run: |
+          CI_REQUEST_ID="$(jq -r --arg platform "$CI_PLATFORM" '.[$platform][0]' <<< "$CI_REQUEST_IDS")"
+          ci_targets=(
+            //build_defs/languages:sdk_source_package_test
+            //build_defs/languages:source_contract_test
+            //build_defs/extensions:native_frozen_extension_sql_test
+            //src/native/rust-bindings:unit_test
+            //build_defs/native/carriers:package_test
+            //src/native/runtime/packaging:source_tests
+            //build_defs/extensions:native_carriers_test
+            //build_defs/extensions:wasix_sql_carriers_test
+            //src/extensions/external/pgtap:wasix_carriers_test
+            //build_defs/extensions:contrib_carriers_test
+            //src/extensions/contrib:native_carriers_test
+            //build_defs/native/apple:framework_contract_test
+            //build_defs/native/apple:swift_candidate_contract_test
+            //build_defs/native/apple:mobile_seed_contract_test
+            //src/native/runtime:npm
+            //src/native/postgres-tools:cargo_facade
+            //build_defs/resources:resource_contract_test
+            //src/database-resources:android_datum64_standard_carriers
+            //src/database-resources:android_datum64_icu_carriers
+            //src/native/sdks/react-native:lifecycle_test
+            //src/native/sdks/kotlin:android_maven
+            //src/native/sdks/kotlin:installed_public_api_consumer
+            //src/native/sdks/kotlin:android_test
+            //src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:contract_test
+            //src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:plugin_maven
+            //src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:marker_maven
+          )
+          ci_configuration=(-c opt --platforms=//build_defs/native:linux_x86_64_glibc_2_28
+            --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2)
+          ci_startup=()
+          ci_command='test'
+          ci_input_root="$RUNNER_TEMP/ci-request-inputs/$CI_REQUEST_ID"
+          mkdir -p "$ci_input_root"
+          jq -nc --args '$ARGS.positional' -- "${ci_targets[@]}" > "$ci_input_root/targets.json"
+          jq -nc --args '$ARGS.positional' -- "${ci_configuration[@]}" > "$ci_input_root/configuration.json"
+          jq -nc --args '$ARGS.positional' -- "${ci_startup[@]}" > "$ci_input_root/startup.json"
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/ci/run-configured-request.mts \
+            --id "$CI_REQUEST_ID" --job "$CI_REQUEST_JOB" --mode "$CI_MODE" --command "$ci_command" \
+            --targets-json "$ci_input_root/targets.json" --configuration-json "$ci_input_root/configuration.json" \
+            --startup-json "$ci_input_root/startup.json" \
+            --output-directory "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+
+      - name: Qualify final native carriers and frozen resources
+        if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
+        env:
+          CI_REQUEST_ID: linux/${{ matrix.platform }}/native-carriers
+          TARGET_CPU: ${{ matrix.platform }}
+          QUALIFICATION_JOB_NAME: Linux runtime (${{ matrix.platform }})
+        run: |
+          profile="//build_defs/native:linux_${TARGET_CPU}_glibc_2_28"
+          capture_root="$RUNNER_TEMP/native-build-capture"
+          input_root="$RUNNER_TEMP/native-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job "$QUALIFICATION_JOB_NAME" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          jq -nc --arg profile "$profile" \
+            '["-c","opt","--platforms="+$profile,"--host_platform="+$profile,
+              "--jobs=2"]' \
+            > "$input_root/configuration.json"
+          printf '%s\n' "${CI_REQUIRES:-[]}" > "$input_root/ci-requires.json"
+          ci_arguments=(--ci-request-id "$CI_REQUEST_ID" --ci-job "$CI_REQUEST_JOB" --ci-mode "$CI_MODE"
+            --ci-requires-json "$input_root/ci-requires.json")
+          if jq -e --arg id "$CI_REQUEST_ID" 'index($id) != null' <<< "$CI_CAPTURE_REQUESTS" >/dev/null; then
+            ci_arguments+=(--ci-handoff)
+          fi
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts "${ci_arguments[@]}" \
+            --github-json "$input_root/github.json" --configuration-json "$input_root/configuration.json" \
+            --shipping-export //:native_shipping_export \
+            --output-directory "$capture_root"
+          mkdir -p "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+          cp "$capture_root/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
+
+      - name: Upload native construction evidence
+        if: needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), format('linux/{0}/native-carriers', matrix.platform))
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-${{ matrix.platform }}
+          path: ${{ runner.temp }}/native-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+      - *ci_request_receipts
+
+      - name: Save bounded standard Bazel caches
+        if: ${{ always() }}
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: save
+          cohort: linux
+          disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
+
+  wasix:
+    name: Linux WASIX and installed browser
+    if: ${{ !cancelled() && needs.release-inputs.result == 'success' && contains(fromJSON(needs.release-inputs.outputs.ci_selected_jobs), 'wasix') }}
+    needs: release-inputs
+    runs-on: ubuntu-24.04
+    # The cold full request reached its final Rust actions at the old two-hour
+    # bound; retain time for browser/SQL qualification and evidence capture.
+    timeout-minutes: 150
+    outputs:
+      source_commit: ${{ steps.wasix-cargo-capture.outputs.source_commit }}
+      cargo_artifact_id: ${{ steps.wasix-cargo-upload.outputs.artifact-id }}
+    env:
+      CI_REQUEST_JOB: wasix
+      CI_MODE: ${{ needs.release-inputs.outputs.ci_mode }}
+      CI_SELECTED_REQUESTS: ${{ needs.release-inputs.outputs.ci_selected_requests }}
+      CI_CAPTURE_REQUESTS: ${{ needs.release-inputs.outputs.ci_capture_requests }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Acquire source-bound native inputs
+        uses: ./.github/actions/native-release-inputs
+        with:
+          run-id: ${{ needs.release-inputs.outputs.run_id }}
+          pull-number: ${{ needs.release-inputs.outputs.pull_number }}
+          public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
+
+      - name: Restore bounded standard Bazel caches
+        id: bazel-cache
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: restore
+          cohort: wasix
+
+      - name: Construct platform AOT packages and qualify Linux SDK, resources and browser
+        if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
+        env:
+          CI_REQUEST_ID: wasix/tools-sdk-browser
+          QUALIFICATION_JOB_NAME: Linux WASIX and installed browser
+        run: |
+          chrome_binary="$(bash tools/dev/bun.sh build_defs/wasix/browser/chrome-receipt.mts "$RUNNER_TEMP/chrome-host.json" "$ImageOS" "$ImageVersion")"
+          input_root="$RUNNER_TEMP/wasix-tools-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job "$QUALIFICATION_JOB_NAME" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          jq -nc --arg cache "$RUNNER_TEMP/wasix-source-sdk-cache" \
+            --arg chrome "$chrome_binary" --arg chromeReceipt "$RUNNER_TEMP/chrome-host.json" '[
+            "-c","opt","--config=wasix-aot","--platforms=//build_defs/native:linux_x86_64_glibc_2_28",
+            "--host_platform=//build_defs/native:linux_x86_64_glibc_2_28","--local_test_jobs=1",
+            "--test_env=OLIPHAUNT_WASM_AOT_VERIFY=full","--test_env=XDG_CACHE_HOME="+$cache,"--test_env=RUST_TEST_THREADS=1",
+            "--test_env=OLIPHAUNT_BROWSER_CHROME="+$chrome,"--test_env=OLIPHAUNT_BROWSER_CHROME_RECEIPT="+$chromeReceipt
+          ]' > "$input_root/configuration.json"
+          jq -nc '[
+            "//build_defs/wasix:bridge_abi_test",
+            "//build_defs/wasix:initdb_shim_abi_test",
+            "//build_defs/wasix/postmaster:source_modes_test"
+          ]' > "$input_root/targets.json"
+          jq -nc '["postgres-tools-wasix"]' > "$input_root/complete-products.json"
+          printf '%s\n' "${CI_REQUIRES:-[]}" > "$input_root/ci-requires.json"
+          ci_arguments=(--ci-request-id "$CI_REQUEST_ID" --ci-job "$CI_REQUEST_JOB" --ci-mode "$CI_MODE"
+            --ci-requires-json "$input_root/ci-requires.json")
+          if jq -e --arg id "$CI_REQUEST_ID" 'index($id) != null' <<< "$CI_CAPTURE_REQUESTS" >/dev/null; then
+            ci_arguments+=(--ci-handoff)
+          fi
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts "${ci_arguments[@]}" \
+            --github-json "$input_root/github.json" --configuration-json "$input_root/configuration.json" \
+            --shipping-export //:wasix_shipping_export \
+            --targets-json "$input_root/targets.json" \
+            --complete-products-json "$input_root/complete-products.json" \
+            --output-directory "$RUNNER_TEMP/wasix-tools-build-capture"
+          mkdir -p "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+          cp "$RUNNER_TEMP/wasix-tools-build-capture/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
+
+      - name: Upload tools construction evidence
+        if: needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), 'wasix/tools-sdk-browser')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-wasix-tools
+          path: ${{ runner.temp }}/wasix-tools-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload WASIX build and query diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-wasix-build-diagnostics
+          path: ${{ runner.temp }}/wasix-tools-build-capture/diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Capture final WASIX Cargo inputs for native hosts
+        if: needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), 'wasix/tools-sdk-browser')
+        id: wasix-cargo-capture
+        run: |
+          capture_root="$RUNNER_TEMP/wasix-cargo-capture"
+          mkdir -p "$capture_root"
+          test -z "$(git status --porcelain)"
+          # Reuse the producing invocation captured above. The reader requires
+          # the five core envelopes and the ten already-constructed contrib/tools
+          # envelopes needed for bounded side-module/tool execution on each host.
+          jq '. as $evidence | [
+            .cohorts[] | {
+              source: $evidence.source, executionRoot: .executionRoot, aquery: .aquery,
+              roots: [.roots[] | select((.package.product == "liboliphaunt-wasix"
+                or .package.product == "postgres-tools-wasix")
+                and .package.ecosystem == "cargo"
+                and ((.package.name | startswith("liboliphaunt-wasix-"))
+                  or (.package.name | startswith("oliphaunt-extension-contrib-pg18-"))
+                  or (.package.name | startswith("oliphaunt-wasix-tools"))))]
+            } | select(.roots | length > 0)
+          ]' "$RUNNER_TEMP/wasix-tools-build-capture/evidence/native-build-evidence.json" \
+            > "$capture_root/cohorts.json"
+          source_commit="$(git rev-parse HEAD)"
+          test -z "$(git status --porcelain)"
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh \
+            build_defs/wasix/capture-cargo.mts "$capture_root/cohorts.json" \
+            target/wasix-cargo-construction HEAD
+          printf 'source_commit=%s\n' "$source_commit" >> "$GITHUB_OUTPUT"
+
+      - name: Upload final WASIX Cargo inputs
+        if: needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), 'wasix/tools-sdk-browser')
+        id: wasix-cargo-upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-bazel-wasix-cargo-inputs
+          path: target/wasix-cargo-construction
+          if-no-files-found: error
+          retention-days: 7
+
+      - *ci_request_receipts
+
+      - name: Save bounded standard Bazel caches
+        if: ${{ always() }}
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: save
+          cohort: wasix
+          disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
+
+  postmaster:
+    name: Linux native postmaster lifecycle
+    if: ${{ !cancelled() && needs.release-inputs.result == 'success' && contains(fromJSON(needs.release-inputs.outputs.ci_selected_jobs), 'postmaster') }}
+    needs: release-inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    outputs:
+      source_commit: ${{ steps.postmaster-capture.outputs.source_commit }}
+      source_tree: ${{ steps.postmaster-capture.outputs.source_tree }}
+    env:
+      CI_REQUEST_JOB: postmaster
+      CI_MODE: ${{ needs.release-inputs.outputs.ci_mode }}
+      CI_SELECTED_REQUESTS: ${{ needs.release-inputs.outputs.ci_selected_requests }}
+      CI_CAPTURE_REQUESTS: ${{ needs.release-inputs.outputs.ci_capture_requests }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Acquire source-bound native inputs
+        uses: ./.github/actions/native-release-inputs
+        with:
+          run-id: ${{ needs.release-inputs.outputs.run_id }}
+          pull-number: ${{ needs.release-inputs.outputs.pull_number }}
+          public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
+
+      - name: Restore bounded standard Bazel caches
+        id: bazel-cache
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: restore
+          cohort: postmaster
+
+      # This owner has a separate compiler/sysroot closure. Keep it parallel to
+      # tools/browser construction and share its one base across both profiles.
+      - name: Qualify native postmaster carrier and installed lifecycle
+        if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
+        id: postmaster-capture
+        env:
+          CI_REQUEST_ID: postmaster/linux-carrier-lifecycle
+        run: |
+          input_root="$RUNNER_TEMP/postmaster-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job 'Linux native postmaster lifecycle' \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          jq -nc --arg base "$RUNNER_TEMP/postmaster-native" \
+            '["--output_base="+$base,"--host_jvm_args=-Xmx3g"]' > "$input_root/startup.json"
+          jq -nc '["-c","opt","--platforms=//build_defs/wasix:portable",
+            "--host_platform=//build_defs/wasix:llvm_serializer_linux_x86_64","--jobs=2"]' \
+            > "$input_root/configuration.json"
+          jq -nc '[
+            "//build_defs/wasix/postmaster:cargo_source_projection_test",
+            "//build_defs/wasix/postmaster:sjlj_runtime_probe_test",
+            "//build_defs/wasix/postmaster:vfork_runtime_probe_test",
+            "//build_defs/wasix/postmaster:guest_inputs_test",
+            "//src/wasix/postmaster:linux_sealed_profile_test",
+            "//src/wasix/postmaster:linux_runtime_test",
+            "//src/wasix/postmaster:linux_public_archive_test"
+          ]' > "$input_root/targets.json"
+          printf '%s\n' "${CI_REQUIRES:-[]}" > "$input_root/ci-requires.json"
+          ci_arguments=(--ci-request-id "$CI_REQUEST_ID" --ci-job "$CI_REQUEST_JOB" --ci-mode "$CI_MODE"
+            --ci-requires-json "$input_root/ci-requires.json")
+          if jq -e --arg id "$CI_REQUEST_ID" 'index($id) != null' <<< "$CI_CAPTURE_REQUESTS" >/dev/null; then
+            ci_arguments+=(--ci-handoff)
+          fi
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts "${ci_arguments[@]}" \
+            --github-json "$input_root/github.json" --startup-json "$input_root/startup.json" \
+            --configuration-json "$input_root/configuration.json" \
+            --shipping-export //src/wasix/postmaster:linux_shipping_export \
+            --targets-json "$input_root/targets.json" \
+            --output-directory "$RUNNER_TEMP/postmaster-build-capture"
+          mkdir -p "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+          cp "$RUNNER_TEMP/postmaster-build-capture/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
+          printf 'source_commit=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          printf 'source_tree=%s\n' "$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+
+      - name: Upload native postmaster construction evidence
+        if: needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), 'postmaster/linux-carrier-lifecycle')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-postmaster-linux
+          path: ${{ runner.temp }}/postmaster-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Qualify linked unwinder marker detection
+        if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
+        env:
+          CI_REQUEST_ID: postmaster/linked-unwinder
+        run: |
+          ci_targets=(//build_defs/wasix/postmaster:linked_unwinder_present_test //build_defs/wasix/postmaster:linked_unwinder_absent_test)
+          ci_configuration=(--platforms=//build_defs/native:linux_x86_64_glibc_2_28 --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --compilation_mode=opt --jobs=2)
+          ci_startup=("--output_base=$RUNNER_TEMP/postmaster-native" --host_jvm_args=-Xmx3g)
+          ci_command='test'
+          ci_input_root="$RUNNER_TEMP/ci-request-inputs/$CI_REQUEST_ID"
+          mkdir -p "$ci_input_root"
+          jq -nc --args '$ARGS.positional' -- "${ci_targets[@]}" > "$ci_input_root/targets.json"
+          jq -nc --args '$ARGS.positional' -- "${ci_configuration[@]}" > "$ci_input_root/configuration.json"
+          jq -nc --args '$ARGS.positional' -- "${ci_startup[@]}" > "$ci_input_root/startup.json"
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/ci/run-configured-request.mts \
+            --id "$CI_REQUEST_ID" --job "$CI_REQUEST_JOB" --mode "$CI_MODE" --command "$ci_command" \
+            --targets-json "$ci_input_root/targets.json" --configuration-json "$ci_input_root/configuration.json" \
+            --startup-json "$ci_input_root/startup.json" \
+            --output-directory "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+
+      - name: Upload native postmaster lifecycle diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-postmaster-lifecycle-diagnostics
+          path: |
+            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/test.log
+            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/test.xml
+            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/*runtime_test/test.outputs/postmaster-runtime/runtime-result.json
+            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/*runtime_test/test.outputs/postmaster-runtime/*.stdout
+            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/*runtime_test/test.outputs/postmaster-runtime/*.stderr
+            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/*runtime_test/test.outputs/postmaster-runtime/*.loader.jsonl
+            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/linux_public_archive_test/test.outputs/postmaster-public-archive/archive-result.json
+            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/linux_public_archive_test/test.outputs/postmaster-public-archive/*.stdout
+            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/linux_public_archive_test/test.outputs/postmaster-public-archive/*.stderr
+          if-no-files-found: ignore
+          retention-days: 5
+
+      - *ci_request_receipts
+
+      - name: Save bounded standard Bazel caches
+        if: ${{ always() }}
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: save
+          cohort: postmaster
+          disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
+          output-base: ${{ runner.temp }}/postmaster-native
+          jvm-args: -Xmx3g
+
+  postmaster-host:
+    name: Native postmaster lifecycle (${{ matrix.platform }})
+    if: ${{ !cancelled() && needs.release-inputs.result == 'success' && needs.postmaster.result == 'success' && fromJSON(needs.release-inputs.outputs.postmaster_host_matrix).include[0] != null }}
+    needs: [postmaster, release-inputs]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.platform == 'macos-arm64' && 180 || 120 }}
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.release-inputs.outputs.postmaster_host_matrix) }}
+    env:
+      CI_REQUEST_JOB: postmaster-host/${{ matrix.platform }}
+      CI_PLATFORM: ${{ matrix.platform }}
+      CI_MODE: ${{ needs.release-inputs.outputs.ci_mode }}
+      CI_SELECTED_REQUESTS: ${{ needs.release-inputs.outputs.ci_selected_requests }}
+      CI_CAPTURE_REQUESTS: ${{ needs.release-inputs.outputs.ci_capture_requests }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Acquire source-bound native inputs
+        uses: ./.github/actions/native-release-inputs
+        with:
+          run-id: ${{ needs.release-inputs.outputs.run_id }}
+          pull-number: ${{ needs.release-inputs.outputs.pull_number }}
+          public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
+
+      - name: Restore bounded standard Bazel caches
+        id: bazel-cache
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: restore
+          cohort: postmaster-host
+
+      - name: Select declared Apple SDK
+        if: matrix.platform == 'macos-arm64'
+        uses: ./.github/actions/setup-apple
+        with:
+          install-build-dependencies: "false"
+
+      - name: Authenticate current Linux postmaster constructor inputs
+        if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), format('postmaster-host/{0}/carrier-lifecycle', matrix.platform))
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          input_root="$RUNNER_TEMP/postmaster-build-inputs"
+          mkdir -p "$input_root"
+          printf '%s\n' '["liboliphaunt-wasix-postmaster"]' > "$input_root/consumer-products.json"
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/release/native-release-preparation.mts \
+            --stage-release-archives --run-id "$GITHUB_RUN_ID" --ref "$GITHUB_REF" \
+            --consumer-products-json "$input_root/consumer-products.json" \
+            --output-directory target/postmaster-linux-import
+
+      - name: Qualify native carrier from authenticated Linux guest
+        if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
+        env:
+          CI_REQUEST_ID: postmaster-host/${{ matrix.platform }}/carrier-lifecycle
+          CI_REQUIRES: '["postmaster/linux-carrier-lifecycle"]'
+          EXPECTED_SOURCE_COMMIT: ${{ needs.postmaster.outputs.source_commit }}
+          EXPECTED_SOURCE_TREE: ${{ needs.postmaster.outputs.source_tree }}
+          TARGET_PLATFORM: ${{ matrix.platform }}
+          TARGET_COMPILER: ${{ matrix.compiler }}
+          TARGET_PREFIX: ${{ matrix.prefix }}
+          QUALIFICATION_JOB_NAME: Native postmaster lifecycle (${{ matrix.platform }})
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_COMMIT"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$EXPECTED_SOURCE_TREE"
+          input_root="$RUNNER_TEMP/postmaster-build-inputs"
+          mkdir -p "$input_root"
+          archive="$(jq -er '[.nativeCurrentArtifacts[] | select(.product == "liboliphaunt-wasix-postmaster" and (.artifact | startswith("github-release:")) and (.artifact | endswith("-linux-x64-gnu.tar.zst"))) | .file.path] | if length == 1 then .[0] else error("one original Linux postmaster archive required") end' "$OLIPHAUNT_NATIVE_PUBLICATION_INPUTS")"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job "$QUALIFICATION_JOB_NAME" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          jq -nc --arg base "$RUNNER_TEMP/postmaster-native" \
+            '["--output_base="+$base,"--host_jvm_args=-Xmx3g"]' > "$input_root/startup.json"
+          jq -nc --arg compiler "$TARGET_COMPILER" --arg archive "$archive" --arg platform "$TARGET_PLATFORM" \
+            '["-c","opt","--platforms=//build_defs/wasix:portable","--host_platform="+$compiler,
+              "--extra_execution_platforms="+$compiler,
+              (if $platform == "macos-arm64" then "--jobs=2" else "--jobs=1" end),"--local_test_jobs=1",
+              "--repo_env=OLIPHAUNT_POSTMASTER_GUEST_ARCHIVE="+$archive]
+              + (if $platform == "macos-arm64" then ["--config=macos-sandbox"] else [] end)' \
+            > "$input_root/configuration.json"
+          jq -nc --arg prefix "$TARGET_PREFIX" \
+            '["//src/wasix/postmaster:"+$prefix+"_public_archive_test",
+              "//src/wasix/postmaster:"+$prefix+"_runtime_test"]' > "$input_root/targets.json"
+          printf '%s\n' "${CI_REQUIRES:-[]}" > "$input_root/ci-requires.json"
+          ci_arguments=(--ci-request-id "$CI_REQUEST_ID" --ci-job "$CI_REQUEST_JOB" --ci-mode "$CI_MODE"
+            --ci-requires-json "$input_root/ci-requires.json")
+          if jq -e --arg id "$CI_REQUEST_ID" 'index($id) != null' <<< "$CI_CAPTURE_REQUESTS" >/dev/null; then
+            ci_arguments+=(--ci-handoff)
+          fi
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts "${ci_arguments[@]}" \
+            --github-json "$input_root/github.json" --startup-json "$input_root/startup.json" \
+            --configuration-json "$input_root/configuration.json" \
+            --shipping-export "//src/wasix/postmaster:${TARGET_PREFIX}_shipping_export" \
+            --targets-json "$input_root/targets.json" \
+            --output-directory "$RUNNER_TEMP/postmaster-build-capture"
+          mkdir -p "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+          cp "$RUNNER_TEMP/postmaster-build-capture/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
+
+      - name: Upload native postmaster construction evidence
+        if: needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), format('postmaster-host/{0}/carrier-lifecycle', matrix.platform))
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-postmaster-${{ matrix.platform }}
+          path: ${{ runner.temp }}/postmaster-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload native postmaster build and query diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-postmaster-build-diagnostics-${{ matrix.platform }}
+          path: ${{ runner.temp }}/postmaster-build-capture/diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - *ci_request_receipts
+
+      - name: Save bounded standard Bazel caches
+        if: ${{ always() }}
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: save
+          cohort: postmaster-host
+          disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
+          output-base: ${{ runner.temp }}/postmaster-native
+          jvm-args: -Xmx3g
+
+  react-native:
+    name: Native React Native consumers
+    if: ${{ !cancelled() && needs.release-inputs.result == 'success' && needs.portable.result == 'success' && contains(fromJSON(needs.release-inputs.outputs.ci_selected_jobs), 'react-native') }}
+    needs: [portable, release-inputs]
+    runs-on: macos-26
+    timeout-minutes: 180
+    env:
+      CI_REQUEST_JOB: react-native
+      CI_MODE: ${{ needs.release-inputs.outputs.ci_mode }}
+      CI_SELECTED_REQUESTS: ${{ needs.release-inputs.outputs.ci_selected_requests }}
+      CI_CAPTURE_REQUESTS: ${{ needs.release-inputs.outputs.ci_capture_requests }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Acquire source-bound native inputs
+        uses: ./.github/actions/native-release-inputs
+        with:
+          run-id: ${{ needs.release-inputs.outputs.run_id }}
+          pull-number: ${{ needs.release-inputs.outputs.pull_number }}
+          public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
+
+      - name: Restore bounded standard Bazel caches
+        id: bazel-cache
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: restore
+          cohort: react-native
+
+      - name: Select declared Apple SDK
+        uses: ./.github/actions/setup-apple
+        with:
+          install-build-dependencies: "false"
+
+      - name: Authenticate final Apple and Swift consumer inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          input_root="$RUNNER_TEMP/react-native-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc '["oliphaunt-react-native"]' > "$input_root/consumer-products.json"
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/release/native-release-preparation.mts \
+            --stage-release-archives --run-id "$GITHUB_RUN_ID" --ref "$GITHUB_REF" \
+            --consumer-products-json "$input_root/consumer-products.json" \
+            --output-directory target/native-react-native-archive-inputs
+
+      - name: Qualify final React Native package and installed iOS consumer
+        if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
+        # Leave time for authentication, diagnostics, and bounded cache saving.
+        timeout-minutes: 150
+        env:
+          CI_REQUEST_ID: react-native/installed-consumer
+          CI_REQUIRES: '["portable/macos-arm64/apple-packages"]'
+        run: |
+          OLIPHAUNT_MOBILE_CANDIDATE_CHECKOUT="$(pwd -P)"
+          test "$OLIPHAUNT_MOBILE_CANDIDATE_CHECKOUT" = "$(cd "$GITHUB_WORKSPACE" && pwd -P)"
+          OLIPHAUNT_MOBILE_CANDIDATE_SHA="$(git rev-parse HEAD)"
+          OLIPHAUNT_MOBILE_CANDIDATE_TREE="$(git rev-parse 'HEAD^{tree}')"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          export OLIPHAUNT_MOBILE_CANDIDATE_CHECKOUT OLIPHAUNT_MOBILE_CANDIDATE_SHA OLIPHAUNT_MOBILE_CANDIDATE_TREE
+          input_root="$RUNNER_TEMP/react-native-build-inputs"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job 'Native React Native consumers' \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          jq -nc --arg base "$RUNNER_TEMP/native-bazel" \
+            '["--output_base="+$base,"--host_jvm_args=-Xmx3g"]' > "$input_root/startup.json"
+          jq -nc '["-c","opt","--config=macos-sandbox",
+            "--platforms=//build_defs/host:apple_package_macos_arm64",
+            "--host_platform=//build_defs/host:native_macos_arm64","--jobs=1","--local_test_jobs=1"]' \
+            > "$input_root/configuration.json"
+          printf '%s\n' "${CI_REQUIRES:-[]}" > "$input_root/ci-requires.json"
+          ci_arguments=(--ci-request-id "$CI_REQUEST_ID" --ci-job "$CI_REQUEST_JOB" --ci-mode "$CI_MODE"
+            --ci-requires-json "$input_root/ci-requires.json")
+          if jq -e --arg id "$CI_REQUEST_ID" 'index($id) != null' <<< "$CI_CAPTURE_REQUESTS" >/dev/null; then
+            ci_arguments+=(--ci-handoff)
+          fi
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts "${ci_arguments[@]}" \
+            --github-json "$input_root/github.json" --startup-json "$input_root/startup.json" \
+            --configuration-json "$input_root/configuration.json" \
+            --shipping-export //:native_react_native_shipping_export \
+            --output-directory "$RUNNER_TEMP/react-native-build-capture"
+          mkdir -p "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+          cp "$RUNNER_TEMP/react-native-build-capture/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
+
+      - name: Upload React Native construction evidence
+        if: needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), 'react-native/installed-consumer')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-react-native-macos-arm64
+          path: ${{ runner.temp }}/react-native-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+      - *ci_request_receipts
+
+      - name: Upload React Native build and query diagnostics
+        if: always()
+        timeout-minutes: 5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-react-native-diagnostics
+          path: |
+            ${{ runner.temp }}/react-native-build-capture/diagnostics/
+            ${{ runner.temp }}/react-native-build-capture/build-events.jsonl
+            ${{ runner.temp }}/react-native-build-capture/aquery-build-events.jsonl
+            ${{ runner.temp }}/native-bazel/command.log
+            ${{ runner.temp }}/native-bazel/execroot/_main/bazel-out/**/testlogs/**/test.log
+            ${{ runner.temp }}/native-bazel/execroot/_main/bazel-out/**/testlogs/**/test.xml
+            ${{ runner.temp }}/native-bazel/execroot/_main/bazel-out/**/testlogs/src/examples/native/react-native-expo/ios_installed_test/test.outputs/**
+          if-no-files-found: ignore
+          retention-days: 5
+
+      - name: Save bounded standard Bazel caches
+        if: ${{ always() }}
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: save
+          cohort: react-native
+          disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
+          output-base: ${{ runner.temp }}/native-bazel
+          jvm-args: -Xmx3g
+
+  release-families:
+    name: Native release families
+    if: ${{ !cancelled() && needs.release-inputs.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && contains(fromJSON(needs.release-inputs.outputs.ci_selected_jobs), 'release-families') }}
+    needs: [portable, linux, wasix, postmaster, postmaster-host, wasix-host, release-inputs]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    env:
+      CI_REQUEST_JOB: release-families
+      CI_MODE: ${{ needs.release-inputs.outputs.ci_mode }}
+      CI_SELECTED_REQUESTS: ${{ needs.release-inputs.outputs.ci_selected_requests }}
+      CI_CAPTURE_REQUESTS: ${{ needs.release-inputs.outputs.ci_capture_requests }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Acquire source-bound native inputs
+        uses: ./.github/actions/native-release-inputs
+        with:
+          run-id: ${{ needs.release-inputs.outputs.run_id }}
+          pull-number: ${{ needs.release-inputs.outputs.pull_number }}
+          public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
+
+      - name: Restore bounded standard Bazel caches
+        id: bazel-cache
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: restore
+          cohort: release-families
+
+      - name: Authenticate this run's completed archive producers
+        if: needs.release-inputs.outputs.ci_mode == 'full' && contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), 'release-families/checksums')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/release/native-release-preparation.mts
+          --stage-release-archives --run-id "$GITHUB_RUN_ID" --ref "$GITHUB_REF"
+          --output-directory target/native-release-archive-inputs
+
+      - name: Qualify public Cargo source packages
+        if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
+        env:
+          CI_REQUEST_ID: release-families/public-source
+        run: |
+          input_root="$RUNNER_TEMP/public-source-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job "Native release families" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          jq -nc '[
+            "-c","opt","--platforms=//build_defs/native:linux_x86_64_glibc_2_28",
+            "--host_platform=//build_defs/native:linux_x86_64_glibc_2_28","--jobs=2"
+          ]' > "$input_root/configuration.json"
+          printf '%s\n' "${CI_REQUIRES:-[]}" > "$input_root/ci-requires.json"
+          ci_arguments=(--ci-request-id "$CI_REQUEST_ID" --ci-job "$CI_REQUEST_JOB" --ci-mode "$CI_MODE"
+            --ci-requires-json "$input_root/ci-requires.json")
+          if jq -e --arg id "$CI_REQUEST_ID" 'index($id) != null' <<< "$CI_CAPTURE_REQUESTS" >/dev/null; then
+            ci_arguments+=(--ci-handoff)
+          fi
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts "${ci_arguments[@]}" \
+            --github-json "$input_root/github.json" --configuration-json "$input_root/configuration.json" \
+            --shipping-export //:public_source_shipping_export \
+            --output-directory "$RUNNER_TEMP/public-source-build-capture"
+          mkdir -p "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+          cp "$RUNNER_TEMP/public-source-build-capture/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
+
+      - name: Qualify complete public checksum families
+        if: needs.release-inputs.outputs.ci_mode == 'full' && contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
+        env:
+          CI_REQUEST_ID: release-families/checksums
+          CI_FULL_ONLY: 'true'
+          CI_REQUIRES: '["wasix-host/linux-arm64/napi","wasix-host/macos-arm64/napi","wasix-host/windows-x64/napi","portable/macos-arm64/native-carriers","portable/windows-x64/native-carriers","portable/macos-arm64/apple-packages","linux/x86_64/android-packages","linux/x86_64/native-carriers","linux/aarch64/native-carriers","wasix/tools-sdk-browser","postmaster/linux-carrier-lifecycle","postmaster-host/macos-arm64/carrier-lifecycle","postmaster-host/linux-arm64/carrier-lifecycle"]'
+        run: |
+          input_root="$RUNNER_TEMP/release-family-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job "Native release families" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          jq -nc '[
+            "-c","opt","--platforms=//build_defs/native:linux_x86_64_glibc_2_28",
+            "--host_platform=//build_defs/native:linux_x86_64_glibc_2_28","--jobs=2"
+          ]' > "$input_root/configuration.json"
+          printf '%s\n' "${CI_REQUIRES:-[]}" > "$input_root/ci-requires.json"
+          ci_arguments=(--ci-request-id "$CI_REQUEST_ID" --ci-job "$CI_REQUEST_JOB" --ci-mode "$CI_MODE"
+            --ci-requires-json "$input_root/ci-requires.json")
+          if jq -e --arg id "$CI_REQUEST_ID" 'index($id) != null' <<< "$CI_CAPTURE_REQUESTS" >/dev/null; then
+            ci_arguments+=(--ci-handoff)
+          fi
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts "${ci_arguments[@]}" \
+            --github-json "$input_root/github.json" --configuration-json "$input_root/configuration.json" \
+            --shipping-export //:release_family_shipping_export \
+            --output-directory "$RUNNER_TEMP/release-family-build-capture"
+          mkdir -p "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+          cp "$RUNNER_TEMP/release-family-build-capture/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
+
+      - name: Upload public checksum construction evidence
+        if: needs.release-inputs.outputs.ci_mode == 'full' && contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), 'release-families/checksums')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-release-families
+          path: ${{ runner.temp }}/release-family-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+      - *ci_request_receipts
+
+      - name: Save bounded standard Bazel caches
+        if: ${{ always() }}
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: save
+          cohort: release-families
+          disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
+
+  wasix-host:
+    name: WASIX imported runtime (${{ matrix.platform }})
+    if: ${{ !cancelled() && needs.release-inputs.result == 'success' && needs.wasix.result == 'success' && fromJSON(needs.release-inputs.outputs.wasix_host_matrix).include[0] != null }}
+    needs: [wasix, release-inputs]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.release-inputs.outputs.wasix_host_matrix) }}
+    env:
+      CI_REQUEST_JOB: wasix-host/${{ matrix.platform }}
+      CI_PLATFORM: ${{ matrix.platform }}
+      CI_MODE: ${{ needs.release-inputs.outputs.ci_mode }}
+      CI_SELECTED_REQUESTS: ${{ needs.release-inputs.outputs.ci_selected_requests }}
+      CI_CAPTURE_REQUESTS: ${{ needs.release-inputs.outputs.ci_capture_requests }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Acquire source-bound native inputs
+        uses: ./.github/actions/native-release-inputs
+        with:
+          run-id: ${{ needs.release-inputs.outputs.run_id }}
+          pull-number: ${{ needs.release-inputs.outputs.pull_number }}
+          public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
+
+      - name: Restore bounded standard Bazel caches
+        id: bazel-cache
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: restore
+          cohort: wasix-host
+
+      - name: Select declared Apple SDK
+        if: matrix.platform == 'macos-arm64'
+        uses: ./.github/actions/setup-apple
+        with:
+          install-build-dependencies: "false"
+
+      - name: Select declared MSVC SDK
+        if: matrix.platform == 'windows-x64'
+        uses: ./.github/actions/setup-msvc
+
+      # The immutable ID comes from this run's successful Linux producer.
+      # Receipt/source/hash validation remains mandatory in the Bazel importer.
+      - name: Download final Linux-built WASIX Cargo inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.wasix.outputs.cargo_artifact_id }}
+          path: ${{ runner.temp }}/wasix-cargo-inputs
+
+      - name: Authenticate current WASIX constructor inputs
+        if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_jobs), format('wasix-host/{0}', matrix.platform))
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          input_root="$RUNNER_TEMP/wasix-host-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc '["oliphaunt-wasix-rust"]' > "$input_root/consumer-products.json"
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/release/native-release-preparation.mts \
+            --stage-release-archives --run-id "$GITHUB_RUN_ID" --ref "$GITHUB_REF" \
+            --consumer-products-json "$input_root/consumer-products.json" \
+            --output-directory target/native-wasix-host-archive-inputs
+
+      - name: Qualify imported AOT runtime on its native host
+        if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
+        env:
+          CI_REQUIRES: '["wasix/tools-sdk-browser"]'
+          CI_REQUEST_ID: wasix-host/${{ matrix.platform }}/imported-runtime
+          EXPECTED_SOURCE_COMMIT: ${{ needs.wasix.outputs.source_commit }}
+          TARGET_PROFILE: ${{ matrix.profile }}
+          TARGET_PLATFORM: ${{ matrix.platform }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_COMMIT"
+          test -z "$(git status --porcelain)"
+          startup=()
+          configuration=()
+          if [[ "$TARGET_PLATFORM" == windows-x64 ]]; then
+            startup=(--output_base="$RUNNER_TEMP/b")
+          elif [[ "$TARGET_PLATFORM" == macos-arm64 ]]; then
+            startup=(--host_jvm_args=-Xmx3g)
+            configuration=(--config=macos-sandbox)
+          fi
+          ci_targets=(//src/wasix/sdks/rust:postgres_regression_test //build_defs/wasix:host_aot_smoke_test)
+          ci_configuration=("${configuration[@]}" "--platforms=$TARGET_PROFILE" "--host_platform=$TARGET_PROFILE"
+            "--repo_env=OLIPHAUNT_WASIX_SOURCE_COMMIT=$EXPECTED_SOURCE_COMMIT"
+            "--repo_env=OLIPHAUNT_WASIX_CARGO_INPUTS=$RUNNER_TEMP/wasix-cargo-inputs"
+            --jobs=2 --local_test_jobs=1 --test_env=OLIPHAUNT_WASM_AOT_VERIFY=full
+            "--test_env=XDG_CACHE_HOME=$RUNNER_TEMP/wasix-imported-sdk-cache" --test_env=RUST_TEST_THREADS=1)
+          ci_startup=("${startup[@]}")
+          ci_command='test'
+          ci_input_root="$RUNNER_TEMP/ci-request-inputs/$CI_REQUEST_ID"
+          mkdir -p "$ci_input_root"
+          jq -nc --args '$ARGS.positional' -- "${ci_targets[@]}" > "$ci_input_root/targets.json"
+          jq -nc --args '$ARGS.positional' -- "${ci_configuration[@]}" > "$ci_input_root/configuration.json"
+          jq -nc --args '$ARGS.positional' -- "${ci_startup[@]}" > "$ci_input_root/startup.json"
+          printf '%s\n' "$CI_REQUIRES" > "$ci_input_root/requires.json"
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/ci/run-configured-request.mts \
+            --id "$CI_REQUEST_ID" --job "$CI_REQUEST_JOB" --mode "$CI_MODE" --command "$ci_command" \
+            --targets-json "$ci_input_root/targets.json" --configuration-json "$ci_input_root/configuration.json" \
+            --startup-json "$ci_input_root/startup.json" --requires-json "$ci_input_root/requires.json" \
+            --output-directory "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+
+      - name: Qualify final WASIX addon on its native host
+        if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
+        env:
+          CI_REQUEST_ID: wasix-host/${{ matrix.platform }}/napi
+          CI_REQUIRES: '["wasix/tools-sdk-browser"]'
+          EXPECTED_SOURCE_COMMIT: ${{ needs.wasix.outputs.source_commit }}
+          TARGET_PLATFORM: ${{ matrix.platform }}
+          QUALIFICATION_JOB_NAME: WASIX imported runtime (${{ matrix.platform }})
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_COMMIT"
+          test -z "$(git status --porcelain)"
+          startup=()
+          configuration=()
+          case "$TARGET_PLATFORM" in
+            linux-arm64) profile=//build_defs/native:linux_aarch64_glibc_2_28 ;;
+            macos-arm64)
+              profile=//build_defs/host:native_macos_arm64
+              startup=(--host_jvm_args=-Xmx3g)
+              configuration=(--config=macos-sandbox)
+              ;;
+            windows-x64)
+              profile=//build_defs/host:native_windows_x64
+              startup=(--output_base="$RUNNER_TEMP/b")
+              ;;
+          esac
+          input_root="$RUNNER_TEMP/napi-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job "$QUALIFICATION_JOB_NAME" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          jq -nc --args '$ARGS.positional' -- "${startup[@]}" > "$input_root/startup.json"
+          jq -nc --args '$ARGS.positional' -- -c opt "${configuration[@]}" \
+            "--platforms=$profile" "--host_platform=$profile" \
+            "--repo_env=OLIPHAUNT_WASIX_SOURCE_COMMIT=$EXPECTED_SOURCE_COMMIT" \
+            "--repo_env=OLIPHAUNT_WASIX_CARGO_INPUTS=$RUNNER_TEMP/wasix-cargo-inputs" \
+            --jobs=1 --local_test_jobs=1 --test_env=OLIPHAUNT_WASM_AOT_VERIFY=full \
+            > "$input_root/configuration.json"
+          printf '%s\n' "${CI_REQUIRES:-[]}" > "$input_root/ci-requires.json"
+          ci_arguments=(--ci-request-id "$CI_REQUEST_ID" --ci-job "$CI_REQUEST_JOB" --ci-mode "$CI_MODE"
+            --ci-requires-json "$input_root/ci-requires.json")
+          if jq -e --arg id "$CI_REQUEST_ID" 'index($id) != null' <<< "$CI_CAPTURE_REQUESTS" >/dev/null; then
+            ci_arguments+=(--ci-handoff)
+          fi
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts "${ci_arguments[@]}" \
+            --github-json "$input_root/github.json" --startup-json "$input_root/startup.json" \
+            --configuration-json "$input_root/configuration.json" \
+            --shipping-export //:wasix_napi_shipping_export \
+            --output-directory "$RUNNER_TEMP/napi-build-capture"
+          mkdir -p "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+          cp "$RUNNER_TEMP/napi-build-capture/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
+
+      - name: Upload WASIX addon construction evidence
+        if: needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), format('wasix-host/{0}/napi', matrix.platform))
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-napi-${{ matrix.platform }}
+          path: ${{ runner.temp }}/napi-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload WASIX addon build diagnostics
+        if: ${{ always() && matrix.platform == 'macos-arm64' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-wasix-addon-build-diagnostics-${{ matrix.platform }}
+          path: ${{ runner.temp }}/napi-build-capture/diagnostics/
+          if-no-files-found: ignore
+          retention-days: 5
+
+      - *ci_request_receipts
+
+      - name: Save bounded standard Bazel caches
+        if: ${{ always() }}
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: save
+          cohort: wasix-host
+          disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
+          output-base: ${{ matrix.platform == 'windows-x64' && format('{0}/b', runner.temp) || '' }}
+          jvm-args: ${{ matrix.platform == 'macos-arm64' && '-Xmx3g' || '' }}
+
+  required:
+    name: Required
+    needs: [release-inputs, portable, linux, wasix, postmaster, postmaster-host, react-native, release-families, wasix-host]
+    if: always() && (github.event_name != 'pull_request' || github.event.action != 'closed') && needs.release-inputs.outputs.ci_mode == 'full'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Require every native qualification job
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: jq -e 'all(.[]; .result == "success")' <<< "$NEEDS_JSON"
+
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up verified Node.js and Bun
+        uses: ./.github/actions/setup-node-bun
+
+      - name: Acquire source-bound native inputs
+        uses: ./.github/actions/native-release-inputs
+        with:
+          run-id: ${{ needs.release-inputs.outputs.run_id }}
+          pull-number: ${{ needs.release-inputs.outputs.pull_number }}
+          public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
+
+      - name: Audit the completed native construction
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh
+          tools/release/audit-native-construction.mts
+          --run-id "$GITHUB_RUN_ID" --ref "$GITHUB_REF"
+          --output-directory "$RUNNER_TEMP/native-construction-audit"
+
+  source-ci:
+    name: Source CI
+    needs: [release-inputs, portable, linux, wasix, postmaster, postmaster-host, react-native, release-families, wasix-host, required]
+    if: always() && (github.event_name != 'pull_request' || github.event.action != 'closed')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Require a successful plan and every selected job
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: jq -e '."release-inputs".result == "success" and all(.[]; .result == "success" or .result == "skipped")' <<< "$NEEDS_JSON"
+
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up verified Node.js and Bun
+        uses: ./.github/actions/setup-node-bun
+
+      - name: Download source request plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: native-ci-plan
+          path: ${{ runner.temp }}/native-ci-plan
+
+      - name: Download completed source request receipts
+        if: needs.release-inputs.outputs.ci_selected_requests != '[]'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: native-ci-requests-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/ci-requests
+
+      - name: Verify selected requests and every omission
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci-requests"
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/ci/configured-scope.mts verify \
+            --plan "$RUNNER_TEMP/native-ci-plan/plan.json" --requests-dir "$RUNNER_TEMP/ci-requests" \
+            --required-result '${{ needs.required.result }}' --basis-output "$RUNNER_TEMP/native-ci-basis/basis.json"
+
+      - name: Upload admitted complete configured basis
+        if: needs.release-inputs.outputs.ci_mode == 'full' && needs.required.result == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-ci-basis
+          path: ${{ runner.temp }}/native-ci-basis/basis.json
+          if-no-files-found: error
+          retention-days: 90

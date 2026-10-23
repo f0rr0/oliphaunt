@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { loadExtensionTargetProfiles } from '../../src/extensions/contracts/extension-target-profiles.mts';
 import { publishedConsumerDependencies } from '../../src/native/sdks/ts/tools/published-consumer.mts';
+import { resolvedAdapterRuntimeContract } from '../../src/wasix/node-addon/tools/workspace-runtime-contract.mts';
 import {
   contribCarrierDescriptor,
   extensionProductForSqlName,
@@ -666,29 +667,32 @@ test('combined JavaScript SDK and WASIX N-API changes release only changed produ
   assert.deepEqual(result.releaseProducts, ['oliphaunt-js', 'oliphaunt-wasix-napi']);
 });
 
-test('shared contrib source releases its runtime owners and the addon embedding WASIX payloads', () => {
+test('shared contrib source releases its runtime owners while the addon retains its registry payloads', () => {
   const release = buildPlan(
     GRAPH,
     ['src/extensions/contrib/postgres18.toml'],
     'ci-plan-node-products.test.mts',
   );
-  assert.deepEqual(release.directProducts, [
-    'liboliphaunt-native',
-    'liboliphaunt-wasix',
-    'oliphaunt-wasix-napi',
-  ]);
-  assert.deepEqual(release.releaseProducts, [
-    'liboliphaunt-native',
-    'liboliphaunt-wasix',
-    'oliphaunt-wasix-napi',
-  ]);
+  assert.deepEqual(release.directProducts, ['liboliphaunt-native', 'liboliphaunt-wasix']);
+  assert.deepEqual(release.releaseProducts, ['liboliphaunt-native', 'liboliphaunt-wasix']);
   const plan = planForReleaseProducts(release.releaseProducts, 'c'.repeat(40));
   const contrib = contribCarrierDescriptor();
   assert(plan.extension_package_products.includes(contrib.artifactProduct));
   assert(plan.tasks.includes('native-extension-lifecycle:lifecycle'));
   assert(plan.tasks.includes('extension-artifacts-wasix:build-target'));
-  assert(plan.tasks.includes('oliphaunt-wasix-napi:build-release-assets'));
-  assert(plan.tasks.includes('oliphaunt-wasix-napi:finalize-release-assets'));
+  assert.deepEqual(plan.qualification_products, release.releaseProducts);
+  const binding = plan.package_bindings.find(
+    ({ consumer, producer }) =>
+      consumer === 'oliphaunt-wasix-napi' && producer === 'liboliphaunt-wasix',
+  );
+  assert(binding, 'downstream addon qualification must retain its installed runtime binding');
+  assert.equal(binding.producerVersion, resolvedAdapterRuntimeContract().runtimeVersion);
+  const adoption = buildPlan(
+    GRAPH,
+    ['src/wasix/node-addon/Cargo.toml', 'src/wasix/node-addon/Cargo.lock'],
+    'ci-plan-node-products.test.mts',
+  );
+  assert(adoption.directProducts.includes('oliphaunt-wasix-napi'));
   for (const sql of ['hstore', 'pg_trgm']) {
     assert(plan.native_extension_lifecycle_sql_names.includes(sql));
     assert(
@@ -764,6 +768,20 @@ test('packaging fixtures select their owner tests without artifact builders', ()
     const result = effects(file);
     assert.deepEqual(result.jobs, ['affected'], file);
     assert.equal(result.tasks.includes(task), true, file);
+  }
+});
+
+test('WASIX source lifecycle tracks the staged server manifest, README, code and nested tests', () => {
+  for (const file of [
+    paths.wasixServerManifest,
+    paths.wasixServerReadme,
+    paths.wasixServerSource,
+    paths.wasixServerNestedTest,
+  ]) {
+    assert(
+      effects(file).directTasks.includes('oliphaunt-wasix-rust:test-regression'),
+      `${file} is staged by the source lifecycle`,
+    );
   }
 });
 
@@ -932,9 +950,8 @@ test('WASIX N-API production helpers keep the release builder affected', () => {
   }
 });
 
-test('CI planner changes select the focused graph proof', () => {
+test('CI planner changes do not run release mutation tests', () => {
   const result = effects(paths.toolsGraphCiPlanMts);
-  assert.equal(result.tasks.includes('release-tools:graph-unit'), true);
   assert.equal(result.tasks.includes('release-tools:test'), false);
 });
 
@@ -945,7 +962,6 @@ test('release mutation tests follow release helpers, not policy or workflow file
   }
   const result = effects(paths.githubScriptsReleaseCandidateLibMts);
   assert.equal(result.tasks.includes('release-tools:test'), true);
-  assert.equal(result.tasks.includes('release-tools:graph-unit'), false);
 });
 
 test('workflow changes run workflow checks without rebuilding product artifacts', () => {
@@ -984,10 +1000,9 @@ test('release helper changes invalidate only their product artifacts', () => {
   );
 });
 
-test('product Moon topology selects the focused release graph proof', () => {
+test('product Moon topology preserves its consumer scope', () => {
   const result = effects(paths.sdksTsSdkMoonYml);
   assert.deepEqual(result.jobs, NATIVE_TS_CONSUMER_JOBS);
-  assert.equal(result.tasks.includes('release-tools:graph-unit'), true);
   assert.equal(result.tasks.includes('release-tools:test'), false);
 });
 
@@ -995,7 +1010,6 @@ test('JavaScript release metadata does not rebuild unrelated products', () => {
   const result = effects(paths.sdksTsSdkReleaseToml);
   assert.deepEqual(result.jobs, NATIVE_TS_CONSUMER_JOBS);
   assert.deepEqual(result.releaseProducts, ['oliphaunt-js']);
-  assert.equal(result.tasks.includes('release-tools:graph-unit'), true);
   assert.equal(result.tasks.includes('release-tools:metadata'), true);
   assert.equal(result.tasks.includes('release-tools:test'), false);
   assert.equal(result.tasks.includes('release-tools:version-pins-unit'), true);
@@ -1016,7 +1030,6 @@ test('JavaScript release metadata does not rebuild unrelated products', () => {
 test('release-please bookkeeping does not rebuild product artifacts', () => {
   const result = effects(paths.releasePleaseManifestJson);
   assert.deepEqual(result.jobs, ['affected']);
-  assert.equal(result.tasks.includes('release-tools:graph-unit'), true);
   assert.equal(result.tasks.includes('release-tools:metadata'), true);
   assert.equal(result.tasks.includes('release-tools:test'), false);
   assert.equal(result.tasks.includes('release-tools:version-pins-unit'), true);

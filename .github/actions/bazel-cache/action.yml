@@ -1,0 +1,150 @@
+name: Transport bounded Bazel action cache
+description: Restore or save the standard Bazel action cache for one qualification cohort.
+
+inputs:
+  phase:
+    description: restore before qualification or save after its final Bazel invocation.
+    required: true
+  cohort:
+    description: Stable qualification job identity; operating system and architecture remain separate.
+    required: true
+  output-base:
+    description: Exact output base used by this cohort, if explicitly selected.
+    default: ""
+  jvm-args:
+    description: Exact host JVM argument used by this cohort, if explicitly selected.
+    default: ""
+  server-log:
+    description: Exact server JVM output path used by this cohort, if explicitly selected.
+    default: ""
+  disk-cache-hit:
+    description: Primary action cache hit returned by the restore phase.
+    default: "false"
+
+outputs:
+  disk-cache-hit:
+    description: Whether the immutable action cache key already exists.
+    value: ${{ steps.disk-restore.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Select canonical cache identity
+      id: identity
+      if: ${{ inputs.phase == 'save' || !cancelled() }}
+      shell: bash
+      env:
+        PHASE: ${{ inputs.phase }}
+        COHORT: ${{ inputs.cohort }}
+      run: |
+        set -euo pipefail
+        case "$PHASE" in restore|save) ;; *) exit 1 ;; esac
+        [[ "$COHORT" =~ ^[a-z0-9][a-z0-9-]*$ ]]
+        version="$(tr -d '\r' < .bazelversion)"
+        [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+        source_commit="$(git rev-parse HEAD)"
+        [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]]
+        gc_max_size=2G
+        cache_limit_kib=3145728
+        # These three observed cache populations reached 3.4 to 3.6 GiB before collection.
+        case "$RUNNER_OS/$RUNNER_ARCH/$COHORT" in
+          macOS/ARM64/portable|Linux/X64/linux|Linux/X64/portable) gc_max_size=4G; cache_limit_kib=5242880 ;;
+        esac
+        printf 'prefix=bazel-ci-v1-%s-%s-%s-%s\nsource=%s\n' \
+          "$RUNNER_OS" "$RUNNER_ARCH" "$COHORT" "$version" "$source_commit" >> "$GITHUB_OUTPUT"
+        printf 'gc_max_size=%s\ncache_limit_kib=%s\n' \
+          "$gc_max_size" "$cache_limit_kib" >> "$GITHUB_OUTPUT"
+
+    - name: Restore Bazel action cache
+      id: disk-restore
+      if: inputs.phase == 'restore'
+      continue-on-error: true
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ~/.cache/oliphaunt/bazel-ci/disk
+        key: ${{ steps.identity.outputs.prefix }}-disk-${{ steps.identity.outputs.source }}
+        restore-keys: |
+          ${{ steps.identity.outputs.prefix }}-disk-
+
+    - name: Configure standard hosted Bazel caches
+      if: inputs.phase == 'restore'
+      shell: bash
+      run: |
+        set -euo pipefail
+        cache_root="$HOME/.cache/oliphaunt/bazel-ci"
+        # Downloads remain a per-job content-addressed cache, not hosted archives.
+        mkdir -p "$cache_root/disk" "$cache_root/repositories"
+        if [[ "$RUNNER_OS" == Windows ]]; then
+          cache_root="$(cygpath -m "$cache_root")"
+        fi
+        # Hosted user configuration stays outside source and cache transport.
+        printf '\nbuild --config=ci-cache\nbuild --disk_cache="%s/disk"\ncommon --repository_cache="%s/repositories"\n' \
+          "$cache_root" "$cache_root" >> "$HOME/.bazelrc"
+
+    - name: Freeze, collect and bound cache transport
+      id: ready
+      if: ${{ always() && inputs.phase == 'save' && steps.identity.outcome == 'success' && inputs.disk-cache-hit != 'true' }}
+      continue-on-error: true
+      shell: bash
+      env:
+        OUTPUT_BASE: ${{ inputs.output-base }}
+        JVM_ARGS: ${{ inputs.jvm-args }}
+        SERVER_LOG: ${{ inputs.server-log }}
+        GC_MAX_SIZE: ${{ steps.identity.outputs.gc_max_size }}
+        CACHE_LIMIT_KIB: ${{ steps.identity.outputs.cache_limit_kib }}
+      run: |
+        set -euo pipefail
+        startup=(bash tools/dev/bazel.sh)
+        [[ -z "$OUTPUT_BASE" ]] || startup+=("--output_base=$OUTPUT_BASE")
+        [[ -z "$JVM_ARGS" ]] || startup+=("--host_jvm_args=$JVM_ARGS")
+        [[ -z "$SERVER_LOG" ]] || startup+=("--server_jvm_out=$SERVER_LOG")
+        freeze_writer() {
+          if ! "${startup[@]}" shutdown; then
+            printf 'Bazel cache writer shutdown: failure\n' >&2
+            return 1
+          fi
+          printf 'Bazel cache writer shutdown: success\n'
+        }
+        # Later commands can need lazy outputs from this cache. Collect only
+        # after final qualification; snapshots within the budget need no GC.
+        freeze_writer || exit 0
+        cache_limit_kib="$CACHE_LIMIT_KIB"
+        cache_root="$HOME/.cache/oliphaunt/bazel-ci/disk"
+        if [[ -d "$cache_root" ]]; then
+          printf 'Bazel cache disk: present=true\n'
+          cache_kib="$(du -sk "$cache_root" | cut -f1)"
+          if [[ "$cache_kib" =~ ^[0-9]+$ ]] && (( cache_kib > cache_limit_kib )); then
+            gc_target=//tools/ci:bazel_disk_cache_gc
+            "${startup[@]}" build --jobs=2 "$gc_target"
+            gc_tool="$("${startup[@]}" cquery "config($gc_target, target)" --output=starlark \
+              '--starlark:expr=providers(target)["DefaultInfo"].files_to_run.executable.path')"
+            freeze_writer || exit 0
+            gc_root="$cache_root"
+            if [[ "$RUNNER_OS" == Windows ]]; then
+              gc_root="$(cygpath -m "$gc_root")"
+            fi
+            # The stock collector returns after collection completes. Its
+            # logical-byte target does not replace the allocated archive bound.
+            JAVABIN= "$gc_tool" "--disk_cache=$gc_root" "--max_size=$GC_MAX_SIZE"
+            cache_kib="$(du -sk "$cache_root" | cut -f1)"
+          fi
+          printf 'Bazel cache disk: allocated_kib=%s limit_kib=%s\n' \
+            "$cache_kib" "$cache_limit_kib"
+          # An unused directory must not replace a useful fallback snapshot.
+          if [[ "$cache_kib" =~ ^[0-9]+$ ]] && (( cache_kib <= cache_limit_kib )) &&
+             [[ -n "$(find "$cache_root" -type f -print -quit)" ]]; then
+            printf 'disk=true\n' >> "$GITHUB_OUTPUT"
+          fi
+        else
+          printf 'Bazel cache disk: present=false\n'
+        fi
+
+    # GitHub isolates pull_request saves under refs/pull/<number>/merge.
+    # This optional cache contains action results, never release authority.
+    - name: Save bounded Bazel action cache
+      if: ${{ always() && inputs.phase == 'save' && steps.ready.outputs.disk == 'true' }}
+      continue-on-error: true
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ~/.cache/oliphaunt/bazel-ci/disk
+        key: ${{ steps.identity.outputs.prefix }}-disk-${{ steps.identity.outputs.source }}

@@ -14,6 +14,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
+import { tmpdir } from 'node:os';
 import test from 'node:test';
 import { archiveDirectory } from '../../../../../tools/packaging/archive-directory.mts';
 import { stageReleaseNotices } from '../../../../../tools/packaging/release-notices.mts';
@@ -29,6 +30,8 @@ import {
   buildSwiftExtensionCarrierManifest,
   discoveredExtensionManifests,
   swiftExtensionCarrierAssetName,
+  writeIosCarrierManifest,
+  writeSwiftExtensionCarrierManifest,
 } from './ios-carrier-manifest.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../../../../..');
@@ -135,6 +138,172 @@ function writeManifest(root, product, body) {
   );
   return file;
 }
+
+test('declared product metadata freezes explicit Apple identities and dependencies', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'ios-declared-carrier-test-'));
+  const nativeVersion = '9.0.0';
+  const product = 'oliphaunt-extension-pgtap';
+  const version = '9.1.0';
+  const declaredProducts = {
+    [product]: {
+      product,
+      releaseProduct: product,
+      version,
+      sqlNames: ['pgtap'],
+      tag: `${product}-v${version}`,
+    },
+    'oliphaunt-extension-vector': {
+      product: 'oliphaunt-extension-vector',
+      releaseProduct: 'oliphaunt-extension-vector',
+      version: '9.2.0',
+      sqlNames: ['vector'],
+      tag: 'oliphaunt-extension-vector-v9.2.0',
+    },
+  };
+  const baseTag = `liboliphaunt-native-v${nativeVersion}`;
+  try {
+    await archive(
+      root,
+      `liboliphaunt-${nativeVersion}-apple-spm-xcframework.zip`,
+      'liboliphaunt.xcframework',
+      'zip',
+      { insideMember: true, profile: 'native-runtime' },
+    );
+    await archive(
+      root,
+      `liboliphaunt-${nativeVersion}-runtime-resources-ios-datum64.tar.gz`,
+      'oliphaunt',
+      'tar.gz',
+      { insideMember: false, profile: 'native-runtime-resources' },
+    );
+    const runtime = await archive(root, 'pgtap-runtime.tar.gz', 'oliphaunt', 'tar.gz', {
+      insideMember: false,
+      profile: 'external-native',
+      sqlName: 'pgtap',
+    });
+    const extensionManifest = writeManifest(root, product, {
+      version,
+      compatibility: compatibility(nativeVersion),
+      sqlName: 'pgtap',
+      dependencies: ['vector'],
+      nativeModuleStem: null,
+      iosNativeDependencies: [],
+      iosRegistration: null,
+      assets: [{ ...assetRow(runtime, 'runtime'), path: path.basename(runtime) }],
+    });
+    const swiftOptions = {
+      extensionManifest,
+      nativeRuntimeVersion: nativeVersion,
+      declaredProducts,
+      baseTag,
+      assetRoot: root,
+    };
+    const swift = writeSwiftExtensionCarrierManifest(path.join(root, 'swift.json'), swiftOptions);
+    assert.deepEqual(swift.release, { product, tag: `${product}-v${version}`, version });
+    assert.deepEqual(swift.base, {
+      product: 'liboliphaunt-native',
+      tag: baseTag,
+      version: nativeVersion,
+    });
+    assert.deepEqual(swift.entries[0].dependencyCarriers, [
+      {
+        product: 'oliphaunt-extension-vector',
+        releaseProduct: 'oliphaunt-extension-vector',
+        sqlName: 'vector',
+        tag: 'oliphaunt-extension-vector-v9.2.0',
+        version: '9.2.0',
+      },
+    ]);
+    assert.ok(swift.carriers.every(({ url }) => url.includes(`/${product}-v${version}/`)));
+    const iosOptions = {
+      baseAssetDir: root,
+      baseRuntimeVersion: nativeVersion,
+      extensionManifests: [extensionManifest],
+      declaredProducts,
+      baseTag,
+      assetRoot: root,
+    };
+    const ios = writeIosCarrierManifest(path.join(root, 'ios.json'), iosOptions);
+    assert.equal(ios.base.tag, baseTag);
+    assert.equal(ios.extensions[0].version, version);
+    assert.ok(ios.legal.extensions[0].files.length > 0);
+    assert.deepEqual(JSON.parse(readFileSync(path.join(root, 'ios.json'), 'utf8')), ios);
+    assert.deepEqual(JSON.parse(readFileSync(path.join(root, 'swift.json'), 'utf8')), swift);
+    assert.deepEqual(
+      buildIosCarrierManifest({
+        ...iosOptions,
+        baseCarrierManifest: path.join(root, 'ios.json'),
+      }),
+      ios,
+    );
+    assert.throws(
+      () => buildSwiftExtensionCarrierManifest({ ...swiftOptions, declaredProducts: {} }),
+      /not in declaredProducts/u,
+    );
+    assert.throws(
+      () =>
+        buildSwiftExtensionCarrierManifest({
+          ...swiftOptions,
+          declaredProducts: { [product]: declaredProducts[product] },
+        }),
+      /dependency SQL name vector is not in declaredProducts/u,
+    );
+    assert.throws(
+      () => buildSwiftExtensionCarrierManifest({ ...swiftOptions, baseTag: undefined }),
+      /baseTag/u,
+    );
+    assert.throws(
+      () => buildIosCarrierManifest({ ...iosOptions, baseRuntimeVersion: undefined }),
+      /base runtime version/u,
+    );
+    assert.throws(
+      () =>
+        buildSwiftExtensionCarrierManifest({
+          ...swiftOptions,
+          declaredProducts: {
+            [product]: { ...declaredProducts[product], tag: `${product}-v9.3.0` },
+          },
+        }),
+      /tag must match/u,
+    );
+    assert.throws(
+      () =>
+        buildSwiftExtensionCarrierManifest({
+          ...swiftOptions,
+          declaredProducts: {
+            [product]: { ...declaredProducts[product], unexpected: true },
+          },
+        }),
+      /fields must be exactly/u,
+    );
+    assert.throws(
+      () =>
+        buildSwiftExtensionCarrierManifest({
+          ...swiftOptions,
+          declaredProducts: {
+            ...declaredProducts,
+            'oliphaunt-extension-vector': {
+              ...declaredProducts['oliphaunt-extension-vector'],
+              sqlNames: ['pgtap'],
+            },
+          },
+        }),
+      /repeats SQL name pgtap/u,
+    );
+    assert.throws(
+      () =>
+        buildSwiftExtensionCarrierManifest({
+          ...swiftOptions,
+          declaredProducts: {
+            [product]: { ...declaredProducts[product], sqlNames: ['pgtap', 'pgtap'] },
+          },
+        }),
+      /must not contain duplicates/u,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('an independently pinned base carrier uses the pinned release and rejects current runtime assets', async () => {
   mkdirSync(path.join(ROOT, 'target'), { recursive: true });
@@ -591,6 +760,45 @@ test('bundle carriers verify exact nested bytes ', async () => {
           extension.assets[0].carrier === carrierName &&
           extension.assets[0].path.startsWith(`${carrierRoot}/extensions/${extension.sqlName}/`),
       ),
+    );
+
+    const declaredProduct = 'oliphaunt-extension-declared';
+    const declaredVersion = '9.1.0';
+    const declaredFile = path.join(root, 'declared-artifacts.json');
+    const declaredDocument = JSON.parse(readFileSync(manifestFile, 'utf8'));
+    declaredDocument.product = declaredProduct;
+    declaredDocument.version = declaredVersion;
+    declaredDocument.extensions = declaredDocument.extensions.slice(0, 1);
+    for (const asset of declaredDocument.extensions[0].assets) {
+      asset.path = path.relative(root, path.resolve(ROOT, asset.path));
+    }
+    declaredDocument.carrierAssets[0].path = path.relative(root, carrierFile);
+    declaredDocument.carrierAssets[0].memberCount = 1;
+    writeFileSync(declaredFile, JSON.stringify(declaredDocument));
+    const declaredOptions = {
+      extensionManifest: declaredFile,
+      nativeRuntimeVersion: declaredDocument.compatibility.nativeRuntimeVersion,
+      baseTag: `liboliphaunt-native-v${declaredDocument.compatibility.nativeRuntimeVersion}`,
+      assetRoot: root,
+      declaredProducts: {
+        [declaredProduct]: {
+          product: declaredProduct,
+          releaseProduct: declaredProduct,
+          version: declaredVersion,
+          sqlNames: [sqlNames[0]],
+          tag: `${declaredProduct}-v${declaredVersion}`,
+        },
+      },
+    };
+    const declaredCarrier = buildSwiftExtensionCarrierManifest(declaredOptions);
+    assert.equal(declaredCarrier.entries.length, 1);
+    assert.equal(declaredCarrier.entries[0].extension.product, declaredProduct);
+    assert.equal(declaredCarrier.release.version, declaredVersion);
+    declaredDocument.carrierAssets[0].memberCount = sqlNames.length;
+    writeFileSync(declaredFile, JSON.stringify(declaredDocument));
+    assert.throws(
+      () => buildSwiftExtensionCarrierManifest(declaredOptions),
+      /not an exact aggregate carrier row/u,
     );
 
     const tampered = path.join(

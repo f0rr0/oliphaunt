@@ -81,3 +81,28 @@ format = "tgz"
 binary_path = "actionlint"
 max_archive_bytes = "8388608"
 max_binary_bytes = "16777216"
+
+[zizmor]
+version = "1.25.2"
+repository = "zizmorcore/zizmor"
+license = "MIT"
+source_fallback = "cargo install zizmor --version 1.25.2 --locked"
+
+[zizmor.assets.linux-amd64]
+url = "https://github.com/zizmorcore/zizmor/releases/download/v1.25.2/zizmor-x86_64-unknown-linux-gnu.tar.gz"
+sha256 = "aa1facd105f0d83fe5c55b1adcd9d7417de5d83aa27471f91dc0b66cf3803577"
+binary_sha256 = "95d59b28ad1b3e6b56a9f2fa0c393a167565b00f65184da09eccc92211983eb2"
+format = "tgz"
+binary_path = "zizmor"
+
+[shellcheck]
+version = "0.9.0"
+repository = "koalaman/shellcheck"
+license = "GPL-3.0"
+
+[shellcheck.assets.linux-amd64]
+url = "https://github.com/koalaman/shellcheck/releases/download/v0.9.0/shellcheck-v0.9.0.linux.x86_64.tar.xz"
+sha256 = "700324c6dd0ebea0117591c6cc9d7350d9c7c5c287acbad7630fa17b1d4d9e2f"
+binary_sha256 = "7087178d54de6652b404c306233264463cb9e7a9afeb259bb663cc4dbfd64149"
+format = "tar.xz"
+binary_path = "shellcheck-v0.9.0/shellcheck"

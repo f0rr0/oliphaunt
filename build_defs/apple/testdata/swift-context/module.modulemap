@@ -1,0 +1,4 @@
+module CBridge {
+  header "Bridge.h"
+  export *
+}
