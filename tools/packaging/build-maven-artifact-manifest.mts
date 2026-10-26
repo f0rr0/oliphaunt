@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { extensionManifestMembers } from '../../src/extensions/artifacts/packages/tools/package-extension-release-carriers.mts';
 import {
   assertExtensionUpstreamLicensesInEntries,
   extensionMavenLicenses,
@@ -10,7 +9,10 @@ import {
   nativeExtensionConstructionMavenLicenses,
 } from '../../src/extensions/tools/extension-upstream-licenses.mts';
 import { requireCompatibilityVersionBounds } from '../release/compatibility-version-policy.mts';
-import { frozenExtensionOwnerRequirements } from '../release/extension-release-metadata.mts';
+import {
+  extensionManifestMembers,
+  frozenExtensionOwnerRequirements,
+} from '../release/extension-release-metadata.mts';
 import { currentVersion } from '../release/product-version.mts';
 import {
   allArtifactTargets,

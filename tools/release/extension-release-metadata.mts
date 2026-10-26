@@ -132,6 +132,16 @@ export function extensionPublicationMetadataRows(product, metadata, sourceIdenti
   }));
 }
 
+export function extensionManifestMembers(manifest) {
+  if (manifest?.schema === 'oliphaunt-extension-ci-artifacts-v1') {
+    return typeof manifest.sqlName === 'string' && manifest.sqlName ? [manifest] : [];
+  }
+  if (manifest?.schema === 'oliphaunt-extension-ci-artifacts-v2') {
+    return Array.isArray(manifest.extensions) ? manifest.extensions : [];
+  }
+  return [];
+}
+
 /** Project frozen member requirements onto conventional package owners. */
 export function frozenExtensionOwnerRequirements({
   product,

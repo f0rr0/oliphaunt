@@ -30,7 +30,7 @@ wasix_engine_sources_repository = repository_rule(
 def _windows_wee8_impl(ctx):
     pins = json.decode(ctx.read(ctx.attr.pins))["wee8"]
     ctx.download(url = pins["url"], sha256 = pins["sha256"], output = "v8-windows-amd64.tar.xz")
-    ctx.extract(archive = "v8-windows-amd64.tar.xz", type = "tar.xz")
+    ctx.extract(archive = "v8-windows-amd64.tar.xz")
     ctx.download(url = pins["header"]["url"], sha256 = pins["header"]["sha256"], output = "wasm.hh")
     if not ctx.path(pins["library"]["path"]).exists:
         fail("Pinned Wee8 archive does not contain its declared Windows library")

@@ -39,6 +39,7 @@ import {
 import { RUST_BUILD_SCRIPT_SHA256 } from '../../../../../tools/packaging/rust-build-script-sha256.mts';
 import {
   EXTENSION_VERSIONING_BY_CLASS,
+  extensionManifestMembers,
   extensionSourceMetadata,
   frozenExtensionOwnerRequirements,
 } from '../../../../../tools/release/extension-release-metadata.mts';
@@ -459,15 +460,7 @@ function extensionReleaseManifest(extensionDir, product, version) {
   return isFile(manifestPath) ? readJsonFile(manifestPath) : {};
 }
 
-export function extensionManifestMembers(manifest) {
-  if (manifest?.schema === 'oliphaunt-extension-ci-artifacts-v1') {
-    return typeof manifest.sqlName === 'string' && manifest.sqlName ? [manifest] : [];
-  }
-  if (manifest?.schema === 'oliphaunt-extension-ci-artifacts-v2') {
-    return Array.isArray(manifest.extensions) ? manifest.extensions : [];
-  }
-  return [];
-}
+export { extensionManifestMembers };
 
 const FROZEN_EXTENSION_INVENTORY_LIST_FIELDS = Object.freeze([
   'dependencies',

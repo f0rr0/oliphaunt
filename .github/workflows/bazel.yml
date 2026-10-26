@@ -352,6 +352,7 @@ jobs:
               //:packaging_contract_test
               //build_defs/extensions:member_payload_test
               //build_defs/extensions:mobile_carriers_test
+              //build_defs/resources:resource_contract_test
               //build_defs/resources:desktop_seed_profile_test
               //build_defs/resources:desktop_seed_consumer_profile_test
               //build_defs/resources:desktop_payload_macos_profile_test
@@ -850,7 +851,6 @@ jobs:
             //build_defs/native/apple:mobile_seed_contract_test
             //src/native/runtime:npm
             //src/native/postgres-tools:cargo_facade
-            //build_defs/resources:resource_contract_test
             //src/database-resources:android_datum64_standard_carriers
             //src/database-resources:android_datum64_icu_carriers
             //src/native/sdks/react-native:lifecycle_test
