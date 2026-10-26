@@ -24,10 +24,40 @@ import {
   nativeBuildMetadata,
   nativeQualificationInputBindings,
   nativeRequiredCaptureInputs,
+  nativeShippingRootsHaveQualification,
   validateNativeBuildEvidence,
   validateNativeSeedConstructions,
 } from './native-build-qualification.mts';
 import { captureNativeOutputMembers } from './native-publication-staging.mts';
+
+test('constructor policies require mandatory tests for every shipping owner', () => {
+  const llvm = { label: '//build_defs/wasix:macos_aot_repeatability_test' };
+  const v8 = { label: '//src/wasix/runtime/tools/v8-serializer:options_test' };
+  for (const [backend, qualifier] of [
+    ['llvm', llvm],
+    ['v8', v8],
+  ] as const) {
+    const roots = ['portable', 'runtime', 'tools', 'contrib', 'external'].map((owner) => ({
+      label: `//constructor:${owner}_${backend}`,
+    }));
+    const policy = {
+      policies: roots.map((root, index) => ({
+        owner: `${root.label}_export`,
+        roots: [root.label],
+        requiredTests: index === 0 ? [llvm] : [],
+      })),
+    } as any;
+    expect(nativeShippingRootsHaveQualification(policy, roots)).toBe(false);
+    for (const owner of policy.policies.slice(1)) owner.requiredTests = [qualifier];
+    expect(nativeShippingRootsHaveQualification(policy, roots)).toBe(true);
+    for (const owner of policy.policies) {
+      const tests = owner.requiredTests;
+      owner.requiredTests = [];
+      expect(nativeShippingRootsHaveQualification(policy, roots)).toBe(false);
+      owner.requiredTests = tests;
+    }
+  }
+});
 
 test('source WASIX host probes cannot replace prepared exact-host final qualification', () => {
   const product = 'oliphaunt-extension-pg-textsearch';

@@ -5,7 +5,7 @@ load("//build_defs/release:identity.bzl", "ReleaseIdentityInfo")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo", "file_shipping_supplier", "merge_shipping_suppliers")
 load("//build_defs/wasix:cargo.bzl", "RUNTIME_CARGO_HELPERS")
-load("//build_defs/wasix:aot.bzl", "WasixAotInfo", "wasix_aot", "wasix_aot_constructor_exports")
+load("//build_defs/wasix:aot.bzl", "WASIX_AOT_CONSTRUCTOR_TESTS", "WasixAotInfo", "wasix_aot", "wasix_aot_constructor_exports")
 load("//build_defs/wasix:platform.bzl", "WASIX_PORTABLE_TRANSITION")
 load("//build_defs/wasix:wasm.bzl", "WasmModuleInfo")
 load("//build_defs/wasix:napi.bzl", "WasixNapiCarrierInfo")
@@ -237,7 +237,7 @@ def wasix_compiled_extension_carriers(name, sql_name, module, resources, host, s
                 exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"])
             aot.append(":" + image)
             constructors[target_id].append(":" + image)
-    wasix_aot_constructor_exports(name, constructors)
+    wasix_aot_constructor_exports(name, constructors, WASIX_AOT_CONSTRUCTOR_TESTS)
     _wasix_compiled_carriers(name = name, sql_name = sql_name, module = module, resources = resources, main_sql = main_sql, host = host, support_modules = support_modules, data_resources = data_resources,
         aot = aot, owner = owner, legal = native_extension_carrier_legal(sql_name), exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"])
 

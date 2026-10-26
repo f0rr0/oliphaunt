@@ -3,14 +3,14 @@ load("//build_defs/foundation:bun.bzl", "bun_binary", "bun_test")
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load(":extensions.bzl", "extension_default_version", "extension_perl_runtime")
-load(":smoke.bzl", "desktop_members_sql_test", "native_extension_sql_test")
-load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_MEMBERS", "EXTENSION_COMPATIBILITY")
+load(":smoke.bzl", "desktop_members_sql_test")
+load("@oliphaunt_metadata//:metadata.bzl", "EXTENSION_COMPATIBILITY")
 load("//build_defs/extensions:platforms.bzl", NATIVE_EXTENSION_COMPATIBLE = "NATIVE_EXTENSION_LINUX_COMPATIBLE", NATIVE_EXTENSION_DESKTOP_COMPATIBLE = "NATIVE_EXTENSION_COMPATIBLE")
 load(":native_carriers.bzl", "native_extension_carrier_helpers", "native_extension_carrier_legal", "native_extension_carrier_unit_inputs")
 load("//build_defs/foundation:bun.bzl", "bun_script_test")
 load(":contrib_carriers.bzl", "native_contrib_carrier_legal", "native_contrib_carrier_unit_inputs")
 load(":owner_carriers.bzl", "native_extension_final_collection", "native_extension_final_contract_test", "native_extension_final_import", "native_extension_final_receipt_fixture", "native_owner_carrier_helpers", "native_owner_carrier_legal")
-load(":construction.bzl", "desktop_member_payloads", "desktop_members_construction_test")
+load(":construction.bzl", "desktop_members_construction_test")
 load(":wasix_carriers.bzl", "wasix_sql_carrier_helpers", "wasix_sql_carrier_unit_inputs")
 load(":declared_final_inputs.bzl", "native_declared_apple_base")
 load(":family_carriers.bzl", "native_extension_final_families")
@@ -25,7 +25,6 @@ native_windows_module_tests()
 mobile_host_profile_tests()
 
 exports_files(["contrib.bzl", "extensions.bzl", "repositories.bzl", "uuid_config.h", "pgtap_upstream_parity_test.mts", "validate_member_payload.mts"])
-exports_files(["native_extension_all_sql_test.sh"])
 exports_files(["native_carriers.bzl", "native_carriers.mts", "native_carriers_installed.test.mts"])
 exports_files(["contrib_carriers.bzl", "contrib_carriers.mts", "contrib_carriers_installed.test.mts"])
 exports_files(["native_carrier_install_helpers.mts"])
@@ -240,38 +239,23 @@ bun_test(
     size = "small",
 )
 
-native_extension_sql_test(
+desktop_members_sql_test(
     name = "native_built_extension_sql_test",
-    members = ["//src/extensions/contrib:" + member["id"] + "_native_payload" for member in CONTRIB_MEMBERS] +
-              ["//src/extensions/external/" + name + ":native_payload" for name in ["pg_hashids", "pg_uuidv7", "pg_ivm", "pg_textsearch", "pgtap", "vector", "postgis"]],
-)
-
-native_extension_sql_test(
-    name = "native_postgis_sql_test",
-    members = ["//src/extensions/external/postgis:native_payload"],
-)
-
-native_extension_sql_test(
-    name = "native_frozen_postgis_sql_test",
-    members = ["//src/extensions/external/postgis:native_payload"],
-    runtime = "@extension_frozen_native//:archive_linux_x64_gnu",
-    consumer = ":native_frozen_extension_smoke",
-    host_version = EXTENSION_COMPATIBILITY["postgis"]["native_runtime_version"],
-    host_product = EXTENSION_COMPATIBILITY["postgis"]["native_runtime_product"],
-    runtime_prefix = "runtime",
+    include_postgis = True,
     library_prefix = "lib",
-    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    target_compatible_with = NATIVE_EXTENSION_COMPATIBLE,
 )
 
-native_extension_sql_test(
+desktop_members_sql_test(
     name = "native_frozen_extension_sql_test",
-    members = desktop_member_payloads() + ["//src/extensions/external/postgis:native_payload"],
+    include_postgis = True,
     runtime = "@extension_frozen_native//:archive_linux_x64_gnu",
     consumer = ":native_frozen_extension_smoke",
     host_version = EXTENSION_COMPATIBILITY["postgis"]["native_runtime_version"],
     host_product = EXTENSION_COMPATIBILITY["postgis"]["native_runtime_product"],
     runtime_prefix = "runtime",
     library_prefix = "lib",
+    published_runtime = True,
     target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
 )
 

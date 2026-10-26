@@ -206,13 +206,28 @@ wasix_aot_payload = rule(
     },
 )
 
-def wasix_aot_constructor_exports(name, constructors):
+WASIX_AOT_CONSTRUCTOR_TESTS = {
+    "llvm-opta": ["//build_defs/wasix:macos_aot_repeatability_test"],
+    "v8": ["//src/wasix/runtime/tools/v8-serializer:options_test"],
+}
+
+def wasix_aot_constructor_exports(name, constructors, qualification):
     """Group the actual declarations by their canonical serializer execution domain."""
     for engine, suffix in [("llvm-opta", "llvm"), ("v8", "v8")]:
-        shipping_export(name = name + "_" + suffix + "_constructor_export", packages = [
+        packages = [
             image + "_constructor_shipping" for target_id, images in constructors.items()
             if _profile(target_id)["engine"] == engine for image in images
-        ], tags = ["manual"])
+        ]
+        tests = qualification.get(engine, [])
+        if packages and not tests:
+            fail("WASIX " + engine + " constructor roots require source-owned qualification")
+        shipping_export(
+            name = name + "_" + suffix + "_constructor_export",
+            packages = packages,
+            qualification = tests,
+            testonly = True,
+            tags = ["manual"],
+        )
 
 def _wasix_aot_targets(images, owner):
     constructors = {}
@@ -240,7 +255,7 @@ def _wasix_aot_targets(images, owner):
             tags = ["manual"],
             target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
         )
-    wasix_aot_constructor_exports("aot", constructors)
+    wasix_aot_constructor_exports("aot", constructors, WASIX_AOT_CONSTRUCTOR_TESTS)
 
 def wasix_runtime_aot_targets():
     """Declare the four frozen runtime images for each canonical AOT target."""

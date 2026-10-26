@@ -1,8 +1,7 @@
 """SQL proof from selected candidate payloads and canonical lifecycle fixtures."""
 
 load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS", "EXTENSION_COMPATIBILITY", "EXTENSION_RECIPES", "PRODUCTS")
-load("@rules_shell//shell:sh_test.bzl", "sh_test")
-load("//build_defs/extensions:platforms.bzl", NATIVE_EXTENSION_COMPATIBLE = "NATIVE_EXTENSION_LINUX_COMPATIBLE", _desktop_compatible = "NATIVE_EXTENSION_COMPATIBLE")
+load("//build_defs/extensions:platforms.bzl", _desktop_compatible = "NATIVE_EXTENSION_COMPATIBLE")
 load(":extensions.bzl", "ExtensionMemberInfo", "extension_default_version", "extension_native_dependency_modules")
 load(":construction.bzl", "desktop_member_inventory", "desktop_member_payloads")
 load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action", "bun_script_test")
@@ -103,37 +102,6 @@ def native_extension_payload_closure(members):
         if not added:
             break
     return [names[name].label for name in sorted(selected.keys())]
-
-def native_extension_sql_test(name, members, runtime = "//src/native/runtime:runtime_payload", consumer = "//build_defs/extensions:native_extension_smoke", host_version = "", host_product = "", runtime_prefix = ".", library_prefix = "lib", target_compatible_with = NATIVE_EXTENSION_COMPATIBLE):
-    """Exercise selected archives in the embedded and ordinary PG ABI profiles."""
-    plan = name + "_plan"
-    members = native_extension_payload_closure(members)
-    if bool(host_version) != bool(host_product):
-        fail("immutable host tests require both the canonical product and version")
-    for prefix in [runtime_prefix, library_prefix]:
-        if prefix != "." and any([not part or part in [".", ".."] or "\\" in part for part in prefix.split("/")]):
-            fail("native host layout must use a safe carrier-relative directory")
-    extension_smoke_plan(name = plan, members = members, fixtures = ["//src/test-fixtures/extensions:sql"], host_version = host_version, host_product = host_product)
-    plans = []
-    for group in ["install", "smoke", "startup", "environment", "dependencies"]:
-        label = name + "_" + group
-        native.filegroup(name = label, srcs = [":" + plan], output_group = group)
-        plans.append(":" + label)
-    archives = []
-    for index, member in enumerate(members):
-        label = name + "_archive_" + str(index)
-        native.filegroup(name = label, srcs = [member], output_group = "archive")
-        archives.append(":" + label)
-    data = [runtime, consumer] + plans + archives
-    sh_test(
-        name = name,
-        srcs = ["//build_defs/extensions:native_extension_all_sql_test.sh"],
-        args = ["$(location %s)" % label for label in [runtime, consumer] + plans] +
-               [runtime_prefix, library_prefix] + ["$(location %s)" % label for label in archives],
-        data = data,
-        size = "medium",
-        target_compatible_with = target_compatible_with,
-    )
 
 def desktop_members_sql_test(name, runtime = "//src/native/runtime:runtime_payload", consumer = "//build_defs/extensions:native_extension_smoke", host_version = "", host_product = "", runtime_prefix = ".", library_prefix = None, published_runtime = False, include_postgis = False, target_compatible_with = _desktop_compatible):
     """Use the maintained SQL plan and consumer on each native desktop host."""

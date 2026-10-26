@@ -11,7 +11,7 @@ load("//build_defs/foundation:bun.bzl", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_test_e
 load("//build_defs/release:identity.bzl", "ReleaseIdentityInfo")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo", "merge_shipping_suppliers")
-load("//build_defs/wasix:aot.bzl", "WasixAotInfo", "wasix_aot", "wasix_aot_constructor_exports")
+load("//build_defs/wasix:aot.bzl", "WASIX_AOT_CONSTRUCTOR_TESTS", "WasixAotInfo", "wasix_aot", "wasix_aot_constructor_exports")
 load("//build_defs/wasix:platform.bzl", "WASIX_PORTABLE_TRANSITION")
 load("//build_defs/wasix:wasm.bzl", "WasmModuleInfo")
 load("//build_defs/wasix:npm.bzl", "RUNTIME_NPM_NOTICES")
@@ -139,7 +139,7 @@ def wasix_contrib_extension_carriers(name, host):
                       exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"])
             aot.append(":" + image)
             constructors[target_id].append(":" + image)
-    wasix_aot_constructor_exports(name, constructors)
+    wasix_aot_constructor_exports(name, constructors, WASIX_AOT_CONSTRUCTOR_TESTS)
     _wasix_contrib_carriers(name = name, modules = modules, resources = resources, aot = aot, host = host,
                            owner = owner, legal = native_contrib_carrier_legal(),
                            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"])
