@@ -226,7 +226,7 @@ test('optional terminal cache saves preserve restore policy, writer bounds and s
     '$' + "{{ always() && inputs.phase == 'save' && steps.ready.outputs.disk == 'true' }}",
   );
   const saves = callers.filter((step: any) => step.with.phase === 'save');
-  assert.equal(saves.length, 8);
+  assert.equal(saves.length, 10);
   for (const step of saves) {
     assert.equal(step['timeout-minutes'], 10);
     assert.equal(step['continue-on-error'], true);

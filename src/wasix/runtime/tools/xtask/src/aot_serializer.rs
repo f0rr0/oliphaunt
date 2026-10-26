@@ -176,6 +176,10 @@ fn target_from_args(args: &[String]) -> Result<wasmer_types::target::Target> {
             .map_err(|error| anyhow!("invalid AOT target {value}: {error}"))?,
         None => Triple::host(),
     };
+    ensure!(
+        triple.to_string() != "x86_64-pc-windows-msvc",
+        "Windows AOT requires the native V8 serializer"
+    );
     let mut cpu_features = CpuFeature::set();
     match triple.architecture {
         Architecture::X86_64 => {
@@ -326,7 +330,7 @@ mod tests {
     fn explicit_targets_preserve_portable_cpu_baselines() {
         for (triple, baseline) in [
             ("x86_64-unknown-linux-gnu", "sse2"),
-            ("x86_64-pc-windows-msvc", "sse2"),
+            ("aarch64-unknown-linux-gnu", "neon"),
             ("aarch64-apple-darwin", "neon"),
         ] {
             let target = target_from_args(&["--target".into(), triple.into()]).unwrap();
@@ -346,6 +350,7 @@ mod tests {
             vec!["--target", "--input"],
             vec!["--target", "not-a-triple"],
             vec!["--target", "wasm32-unknown-unknown"],
+            vec!["--target", "x86_64-pc-windows-msvc"],
             vec!["--target=invalid"],
             vec![
                 "--target",

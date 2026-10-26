@@ -1480,3 +1480,62 @@ test('late current carrier projection distinguishes absent transport from partia
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('private constructor projection checks source ownership without adding a public carrier or release selection', () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'native-constructor-metadata-'));
+  try {
+    fixture((root) => {
+      const metadata = loadReleaseMetadata(root);
+      const source = { commit: 'a'.repeat(40), tree: 'b'.repeat(40) };
+      const physical = path.join(directory, 'postgres.wasix.wasm');
+      const bytes = Buffer.from('original constructor File, not a public archive');
+      writeFileSync(physical, bytes);
+      const row = {
+        product: 'wasix',
+        version: metadata.products.wasix.version,
+        artifact: 'constructor:postgres-wasix-wasm',
+        configuration: 'wasm32',
+        source,
+        file: {
+          path: physical,
+          size: bytes.length,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+          producer: {
+            evidenceDigest: `sha256:${'c'.repeat(64)}`,
+            invocationId: 'original-linux-constructor',
+            root: '//src/wasix/runtime:postgres_wasm_shipping',
+            configuration: 'd'.repeat(64),
+            output: 'bazel-out/cfg/bin/postgres.wasix.wasm',
+          },
+        },
+      };
+      const projected = nativePublicationInputProjection(
+        { source, nativeCurrentArtifacts: [row] },
+        metadata,
+      );
+      expect(Object.keys(projected.nativeCurrentArtifacts!)).toEqual([
+        `wasix/${row.version}/constructor:postgres-wasix-wasm`,
+      ]);
+      expect(projected.prepared).toBe(false);
+      expect(projected.selectedProducts).toEqual([]);
+      expect(
+        projected.nativeCurrentArtifacts![`wasix/${row.version}/${row.artifact}`].file.producer,
+      ).toEqual(row.file.producer);
+      for (const mutate of [
+        (value) => (value.product = 'missing-owner'),
+        (value) => (value.version = '9.0.0'),
+        (value) => (value.artifact = 'github-release:postgres.wasix.wasm'),
+        (value) => (value.artifact = 'constructor:../postgres'),
+        (value) => (value.source.commit = 'e'.repeat(40)),
+      ]) {
+        const changed = structuredClone(row);
+        mutate(changed);
+        expect(() =>
+          nativePublicationInputProjection({ source, nativeCurrentArtifacts: [changed] }, metadata),
+        ).toThrow();
+      }
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

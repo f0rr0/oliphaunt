@@ -10,6 +10,8 @@ load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRY
 # Unknown conditions fail instead of silently dropping a dependency. The labels
 # are the same exact triple conditions used by crate_universe for external deps.
 _TARGET_CONDITIONS = {
+    "cfg(windows)": ["x86_64-pc-windows-msvc"],
+    "cfg(not(windows))": ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin", "aarch64-apple-ios", "aarch64-apple-ios-sim", "aarch64-linux-android", "x86_64-linux-android"],
     'cfg(all(target_os = "macos", target_arch = "aarch64"))': ["aarch64-apple-darwin"],
     'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))': ["x86_64-unknown-linux-gnu"],
     'cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))': ["aarch64-unknown-linux-gnu"],
@@ -66,14 +68,15 @@ def _table_dependencies(table, facts, features, path_dependencies, proc_macro_na
     for name, declaration in table.items():
         if not _active(declaration, name, facts, features):
             continue
+        package = declaration.get("package", name) if type(declaration) == "dict" else name
         if type(declaration) == "dict" and "path" in declaration:
             if name not in path_dependencies:
                 fail("Missing native Cargo path dependency " + name + " for " + native.package_name())
             normal.append(path_dependencies[name])
         elif name in proc_macro_names:
-            macros.extend(crate_dependencies([name], package_name = package_name))
+            macros.extend(crate_dependencies([package], package_name = package_name))
         else:
-            normal.extend(crate_dependencies([name], package_name = package_name))
+            normal.extend(crate_dependencies([package], package_name = package_name))
     return normal, macros
 
 def _dependencies(facts, features, section, path_dependencies, proc_macro_names, crate_dependencies = crate_deps, include_dev = False, package_name = None):

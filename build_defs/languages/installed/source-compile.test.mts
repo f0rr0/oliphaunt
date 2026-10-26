@@ -85,6 +85,41 @@ test('query-only own version retargets one local row and preserves registry reso
   const result = Bun.TOML.parse(sourceLock(original, sourceCandidates(childNext, [], original)));
   expect(result.package).toEqual([{ name: child.name, version: childNext.version }, registry]);
 });
+test('captured generated carriers remain payload inputs while every source-cohort archive stays explicit', async () => {
+  const engine = await archive('fixture-owned-engine', '0.2.0');
+  const sdk = await archive('fixture-owning-sdk', '0.2.0', {
+    [child.name]: '=0.1.0',
+    [engine.name]: '=0.2.0',
+  });
+  const captured = lock([sdk, child, engine]);
+  expect(() => sourceCandidates(sdk, [child], captured, [child])).toThrow(
+    'Missing actual held local archive: fixture-owned-engine',
+  );
+  expect(
+    identities(
+      sourceCandidates(sdk, [child], captured, [child], {
+        payloadNames: new Set([engine.name]),
+      }),
+    ),
+  ).toEqual([`${child.name}@${child.version}`, `${sdk.name}@${sdk.version}`].sort());
+  expect(() =>
+    sourceCandidates(sdk, [], captured, [], {
+      payloadNames: new Set([engine.name]),
+    }),
+  ).toThrow('Missing actual held local archive: fixture-child');
+  const overlapping = renderCargoToml({
+    version: 4,
+    package: [
+      ...Bun.TOML.parse(captured).package,
+      { ...registry, name: engine.name, version: engine.version },
+    ],
+  });
+  expect(() =>
+    sourceCandidates(sdk, [child], overlapping, [child], {
+      payloadNames: new Set([engine.name]),
+    }),
+  ).toThrow('Captured local/registry identity overlaps');
+});
 test('SDK-only bump retains exact query even when a newer candidate is present', () => {
   expect(identities(sourceCandidates(parentNext, [childNext, child], parentLock, [child]))).toEqual(
     ['fixture-child@0.1.0', 'fixture-parent@0.2.1'],

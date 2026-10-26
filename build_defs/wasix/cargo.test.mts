@@ -53,7 +53,7 @@ async function fixture(target: string | null = null) {
   );
   let manifest;
   if (target) {
-    const canonical = canonicalWasixAotMetadata();
+    const canonical = canonicalWasixAotMetadata(undefined, AOT_TARGET_TRIPLES[target]);
     manifest = {
       'format-version': 1,
       'source-lane': canonical.sourceLane,
@@ -114,11 +114,13 @@ async function fixture(target: string | null = null) {
     sources,
     notices,
     toolchain: path.resolve('src/wasix/runtime/toolchain.toml'),
+    engineSources: path.resolve('src/wasix/runtime/engine/sources.json'),
   };
   const sourceRoot = path.join(root, 'canonical-source');
   for (const [relative, source] of Object.entries({
     ...notices,
     'src/wasix/runtime/toolchain.toml': spec.toolchain,
+    'src/wasix/runtime/engine/sources.json': spec.engineSources,
   })) {
     const file = path.join(sourceRoot, relative);
     await mkdir(path.dirname(file), { recursive: true });

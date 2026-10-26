@@ -6,11 +6,13 @@ load("//build_defs/wasix:aot.bzl", "wasix_runtime_aot_targets")
 load("//build_defs/wasix:package.bzl", "postgres_patch_inputs", "wasix_runtime_payload")
 load("//build_defs/wasix:platform.bzl", "wasix_artifact")
 load("//build_defs/wasix:config.bzl", "WASIX_COPTS")
+load("//build_defs/wasix:constructor-inputs.bzl", "constructor_source_label")
 load("@postgres_wasix//:patches.bzl", "POSTGRES_PATCHES")
 load("//build_defs/wasix:npm.bzl", "wasix_runtime_npm")
 load("//build_defs/wasix:cargo.bzl", "wasix_runtime_cargo_exports")
 load("//build_defs/wasix:runtime-release.bzl", "wasix_runtime_release_assets")
 load("//build_defs/release:supplier.bzl", "shipping_suppliers")
+load("//build_defs/release:shipping.bzl", "shipping_export")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -48,6 +50,7 @@ wasix_relocatable(
 
 wasix_module(
     name = "plpgsql",
+    constructor_owner = "@oliphaunt_metadata//:product_liboliphaunt-wasix",
     output_name = "plpgsql.so",
     deps = ["@postgres_wasix//:plpgsql"],
     target_compatible_with = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
@@ -55,6 +58,7 @@ wasix_module(
 
 wasix_module(
     name = "dict_snowball",
+    constructor_owner = "@oliphaunt_metadata//:product_liboliphaunt-wasix",
     output_name = "dict_snowball.so",
     deps = ["@postgres_wasix//:snowball"],
     target_compatible_with = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
@@ -76,6 +80,7 @@ wasix_export_policy(
 
 wasix_module(
     name = "postgres",
+    constructor_owner = "@oliphaunt_metadata//:product_liboliphaunt-wasix",
     output_name = "postgres.wasm",
     srcs = [":postgres_core"],
     deps = ["@postgres_wasix//:main", ":bridge", "@icu_wasix//:i18n"],
@@ -94,6 +99,7 @@ cc_library(
 
 wasix_module(
     name = "initdb",
+    constructor_owner = "@oliphaunt_metadata//:product_liboliphaunt-wasix",
     output_name = "initdb.wasm",
     kind = "command",
     deps = ["@postgres_wasix//:initdb_objects", ":initdb_shim", "@icu_wasix//:i18n"],
@@ -103,6 +109,7 @@ wasix_module(
 
 wasix_module(
     name = "pg_dump",
+    constructor_owner = "@oliphaunt_metadata//:product_postgres-tools-wasix",
     output_name = "pg_dump.wasm",
     kind = "command",
     deps = ["@postgres_wasix//:pg_dump_objects", "@icu_wasix//:i18n_tools"],
@@ -111,10 +118,21 @@ wasix_module(
 
 wasix_module(
     name = "psql",
+    constructor_owner = "@oliphaunt_metadata//:product_postgres-tools-wasix",
     output_name = "psql.wasm",
     kind = "command",
     deps = ["@postgres_wasix//:psql_objects", "@icu_wasix//:i18n_tools"],
     target_compatible_with = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
+)
+
+shipping_export(
+    name = "modules_constructor_export",
+    testonly = True,
+    packages = [":" + module + "_constructor_shipping" for module in ["postgres", "initdb", "plpgsql", "dict_snowball", "pg_dump", "psql"]] + [
+        constructor_source_label(module) + "_constructor_shipping" for module in _EXTENSION_MODULES
+    ],
+    qualification = ["//build_defs/wasix:macos_aot_repeatability_test"],
+    tags = ["manual"],
 )
 
 wasix_runtime_payload(
@@ -142,7 +160,7 @@ wasix_artifact(
 
 wasix_runtime_aot_targets()
 
-shipping_suppliers(name = "runtime_public_suppliers", inputs = [])
+shipping_suppliers(name = "runtime_public_suppliers", inputs = [":portable_payload"])
 
 wasix_runtime_npm()
 

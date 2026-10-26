@@ -19,6 +19,7 @@ import {
 import { currentVersion } from './product-version.mts';
 import { assertPublicationLockSource, loadPublicationLock } from './publication-lock.mts';
 import {
+  allArtifactTargets,
   artifactTargetConfig,
   contribCarrierDescriptor,
   expectedAssets as expectedDesktopAssets,
@@ -54,15 +55,6 @@ const GITHUB_ATTESTATION_RECEIPT_SCHEMA = 'oliphaunt-github-release-attestation-
 const SLSA_PROVENANCE_V1 = 'https://slsa.dev/provenance/v1';
 const IN_TOTO_STATEMENT_V1 = 'https://in-toto.io/Statement/v1';
 const GITHUB_RELEASE_ARTIFACT_ROLES = new Set(['github-release-asset', 'github-release-metadata']);
-
-const BASE_ASSET_BACKED_PRODUCTS = new Set([
-  'liboliphaunt-native',
-  'liboliphaunt-wasix',
-  'liboliphaunt-wasix-postmaster',
-  'oliphaunt-broker',
-  'oliphaunt-node-direct',
-  'oliphaunt-wasix-napi',
-]);
 
 const PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS = new Set([
   'schema',
@@ -246,7 +238,10 @@ async function exactExtensionProducts() {
 }
 
 async function assetBackedProducts() {
-  return new Set([...BASE_ASSET_BACKED_PRODUCTS, ...(await exactExtensionProducts())]);
+  return new Set([
+    ...allArtifactTargets({ surface: 'github-release' }, PREFIX).map(({ product }) => product),
+    ...(await exactExtensionProducts()),
+  ]);
 }
 
 function compareText(left, right) {
@@ -405,6 +400,9 @@ async function expectedAssets(product, version, { extensionAssets } = {}) {
   if (product === 'oliphaunt-wasix-napi') {
     return expectedDesktopAssets(product, 'wasix-napi-addon', version, PREFIX);
   }
+  const declared = allArtifactTargets({ product, surface: 'github-release' }, PREFIX);
+  if (declared.length)
+    return declared.map(({ asset }) => asset.replaceAll('{version}', version)).sort(compareText);
   fail(`asset expectation is not defined for ${product}`);
 }
 

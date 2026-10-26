@@ -34,6 +34,7 @@ function copyFile(sourceRoot: string, relative: string, source: string) {
 async function makeInput(targetId: string | null) {
   const packageName = targetId === null ? RUNTIME_PACKAGE : AOT_PACKAGES[targetId];
   const triple = targetId === null ? null : AOT_TARGET_TRIPLES[targetId];
+  const canonical = canonicalWasixAotMetadata(undefined, triple ?? undefined);
   const payload = path.join(root, `payload-${targetId ?? 'portable'}`);
   mkdirSync(payload, { recursive: true });
   const moduleBytes = Buffer.from('\0asm\x01\0\0\0');
@@ -47,10 +48,10 @@ async function makeInput(targetId: string | null) {
           },
         }
       : {
-          'source-lane': canonicalWasixAotMetadata().sourceLane,
-          engine: canonicalWasixAotMetadata().engine,
-          'wasmer-version': canonicalWasixAotMetadata().wasmerVersion,
-          'wasmer-wasix-version': canonicalWasixAotMetadata().wasmerWasixVersion,
+          'source-lane': canonical.sourceLane,
+          engine: canonical.engine,
+          'wasmer-version': canonical.wasmerVersion,
+          'wasmer-wasix-version': canonical.wasmerWasixVersion,
           'format-version': 1,
           'target-triple': triple,
           'source-fingerprint': 'independent fixture',
@@ -113,6 +114,11 @@ async function makeInput(targetId: string | null) {
     'src/wasix/runtime/toolchain.toml',
     path.resolve('src/wasix/runtime/toolchain.toml'),
   );
+  copyFile(
+    sourceRoot,
+    'src/wasix/runtime/engine/sources.json',
+    path.resolve('src/wasix/runtime/engine/sources.json'),
+  );
 
   const payloadFiles = [manifestFile];
   if (targetId === null) {
@@ -132,6 +138,7 @@ async function makeInput(targetId: string | null) {
     sources,
     notices,
     toolchain: path.resolve('src/wasix/runtime/toolchain.toml'),
+    engineSources: path.resolve('src/wasix/runtime/engine/sources.json'),
   };
   const file = path.join(root, `${packageName}-${version}.crate`);
   packageRuntimeCargo(spec, file);

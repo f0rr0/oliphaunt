@@ -1,4 +1,7 @@
-import { isNativeAppleBaseInputRoot } from './bazel-shipping-inputs.mts';
+import {
+  isNativeAppleBaseInputRoot,
+  isNativeConstructorInputRoot,
+} from './bazel-shipping-inputs.mts';
 import { fileIdentity, safeRelative } from './native-file-identity.mts';
 
 export { copyNativeInputFile } from './native-file-identity.mts';
@@ -143,6 +146,7 @@ export function isNativeFinalTransportRoot(root: NativeRoot) {
   const pkg = root.package;
   return (
     isNativeAppleBaseInputRoot(root) ||
+    isNativeConstructorInputRoot(root) ||
     pkg.ecosystem !== 'internal' ||
     (NATIVE_EXTENSION_RELEASE_INPUT_ROLES as readonly string[]).includes(pkg.role)
   );
@@ -164,6 +168,9 @@ export function captureNativePublicationOutputs(
       throw new Error('native stage requires the captured absolute executionRoot');
     const executionRoot = realpathSync(cohort.executionRoot);
     const roots = (cohort.roots as NativeRoot[]).filter(isNativeFinalTransportRoot);
+    for (const root of roots.filter(isNativeConstructorInputRoot))
+      if (!lstatSync(nativeOutputPath(executionRoot, root.package.outputs[0].path)).isFile())
+        throw new Error('native constructor input must be one original regular File');
     const declarations = roots
       .map(({ package: pkg }) => ({
         product: pkg.product,

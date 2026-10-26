@@ -3,6 +3,7 @@
 load("@rules_cc//cc:find_cc_toolchain.bzl", "use_cc_toolchain")
 load("@oliphaunt_metadata//:metadata.bzl", "COMPLETED_SUPPLIER_ARTIFACTS", "PREPARED_NATIVE_SELECTED_PRODUCTS", "PRODUCTS", "PUBLICATION_CARRIERS")
 load("@wasix_tool_metadata//:targets.bzl", "WASIX_AOT_TARGETS")
+load("@native_cargo_metadata//:cargo.bzl", "CARGO")
 load("//build_defs/languages:source.bzl", "CargoSourceInfo")
 load(":defs.bzl", "cargo_payload_inputs", "cargo_payload_sources", "cargo_source_owners")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_test_entrypoint", "bun_test_entrypoint_args")
@@ -151,10 +152,7 @@ def source_compile_selection_test(name, args = [], **kwargs):
 
 def _source_cargo_name(target):
     package = native.package_relative_label(target).package
-    carriers = [row for row in PUBLICATION_CARRIERS if row["ecosystem"] == "cargo" and row["target"] == None and PRODUCTS[row["product"]]["path"] == package]
-    if len(carriers) != 1:
-        fail("source archive needs one canonical Cargo declaration for its package: " + package)
-    return carriers[0]["name"]
+    return CARGO[package]["name"]
 
 def source_compile_test(name, dependencies = [], args = [], **kwargs):
     source_names = [_source_cargo_name(target) for target in [kwargs["archive"]] + dependencies]

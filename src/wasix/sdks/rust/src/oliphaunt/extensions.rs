@@ -1761,7 +1761,7 @@ mod package_requirement_tests {
         let postgres = crate::oliphaunt::assets::asset_manifest_metadata()
             .unwrap()
             .postgres_version;
-        let manifest = Box::leak(serde_json::json!({"format-version": 1, "postgres-version": postgres, "target-triple": target, "engine": "llvm-opta", "wasmer-version": "7.2.1", "wasmer-wasix-version": "0.702.1", "artifacts": [{"name": "extension:postgis", "sha256": "a".repeat(64), "module-sha256": format!("{:x}", Sha256::digest(module))}]}).to_string().into_boxed_str());
+        let manifest = Box::leak(serde_json::json!({"format-version": 1, "postgres-version": postgres, "target-triple": target, "engine": super::super::aot::EXPECTED_AOT_ENGINE, "wasmer-version": super::super::aot::EXPECTED_WASMER_VERSION, "wasmer-wasix-version": super::super::aot::EXPECTED_WASMER_WASIX_VERSION, "artifacts": [{"name": "extension:postgis", "sha256": "a".repeat(64), "module-sha256": format!("{:x}", Sha256::digest(module))}]}).to_string().into_boxed_str());
         let package = Box::leak(Box::new(unsafe {
             ExtensionPackage::from_trusted_release(
                 "oliphaunt-extension-postgis",

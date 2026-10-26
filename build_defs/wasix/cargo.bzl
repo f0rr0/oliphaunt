@@ -6,6 +6,7 @@ load("@wasix_tool_metadata//:targets.bzl", "WASIX_AOT_TARGETS")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 load("//build_defs/release:identity.bzl", "ReleaseIdentityInfo")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo")
 load(":npm.bzl", "RUNTIME_NPM_NOTICES")
 
 RUNTIME_CARGO_HELPERS = [
@@ -13,6 +14,7 @@ RUNTIME_CARGO_HELPERS = [
     "//src/wasix/runtime:tools/check-release-assets.mts",
     "//src/wasix/runtime:tools/wasix-aot-manifest.mts",
     "//src/wasix/runtime:tools/wasix-cargo-toolchain-policy.mts",
+    "//src/wasix/runtime/engine:sources.json",
     "//src/wasix/runtime:tools/wasix-cargo-artifact-contract.mts",
     "//src/wasix/runtime:tools/wasix-runtime-npm-contract.mts",
     "//src/extensions/tools:extension-upstream-licenses.mts",
@@ -58,6 +60,8 @@ def _runtime_cargo_impl(ctx):
     if identity.id != "liboliphaunt-wasix":
         fail("WASIX runtime Cargo envelope requires its canonical release owner")
     inputs = payload + [ctx.file.toolchain]
+    if ctx.attr.target_id == "windows-x64-msvc":
+        inputs.append(ctx.file.engine_sources)
     spec = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
     ctx.actions.write(spec, json.encode({
         "version": identity.version,
@@ -67,6 +71,7 @@ def _runtime_cargo_impl(ctx):
         "sources": _source_map(ctx.attr.sources, inputs),
         "notices": _source_map(ctx.attr.notices, inputs),
         "toolchain": ctx.file.toolchain.path,
+        "engineSources": ctx.file.engine_sources.path if ctx.attr.target_id == "windows-x64-msvc" else None,
     }))
     output = ctx.actions.declare_file(ctx.attr.package_name + "-" + identity.version + ".crate")
     args = ctx.actions.args()
@@ -77,19 +82,20 @@ def _runtime_cargo_impl(ctx):
     leaves.set_param_file_format("multiline")
     bun_file_action(ctx, ctx.file._packager, arguments = [args, leaves], inputs = depset(inputs + [spec]),
                     source_files = ctx.files._helpers, outputs = [output], mnemonic = "WasixRuntimeCargoEnvelope")
-    return [DefaultInfo(files = depset([output]))]
+    return [DefaultInfo(files = depset([output])), ctx.attr.payload[ShippingSupplierInfo]]
 
 _runtime_cargo = rule(
     implementation = _runtime_cargo_impl,
     toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = {
-        "payload": attr.label(mandatory = True),
+        "payload": attr.label(mandatory = True, providers = [ShippingSupplierInfo]),
         "product": attr.label(mandatory = True, providers = [ReleaseIdentityInfo]),
         "package_name": attr.string(mandatory = True),
         "target_id": attr.string(),
         "sources": attr.label_keyed_string_dict(allow_files = True, mandatory = True),
         "notices": attr.label_keyed_string_dict(default = RUNTIME_NPM_NOTICES, allow_files = True),
         "toolchain": attr.label(default = "//src/wasix/runtime:toolchain.toml", allow_single_file = True),
+        "engine_sources": attr.label(default = "//src/wasix/runtime/engine:sources.json", allow_single_file = True),
         "_packager": attr.label(default = "//build_defs/wasix:cargo.mts", allow_single_file = True),
         "_helpers": attr.label_list(default = RUNTIME_CARGO_HELPERS, allow_files = True),
     },
@@ -109,7 +115,7 @@ def wasix_runtime_cargo(payload, target_id = ""):
     _runtime_cargo(name = "crate", payload = payload, product = owner, package_name = package,
                    target_id = target_id, sources = {file: file for file in sources})
     shipping_package(name = "shipping_package", owner = owner, artifacts = [":crate"], ecosystem = "cargo",
-                     package_name = package, configuration = target_id or "portable", role = rows[0]["role"], suppliers = "//src/wasix/runtime:runtime_public_suppliers")
+                     package_name = package, configuration = target_id or "portable", role = rows[0]["role"], suppliers = ":crate")
     shipping_export(name = "shipping_export", packages = [":shipping_package"])
 
 def wasix_runtime_cargo_exports():

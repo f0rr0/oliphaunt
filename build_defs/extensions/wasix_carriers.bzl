@@ -5,7 +5,7 @@ load("//build_defs/release:identity.bzl", "ReleaseIdentityInfo")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo", "file_shipping_supplier", "merge_shipping_suppliers")
 load("//build_defs/wasix:cargo.bzl", "RUNTIME_CARGO_HELPERS")
-load("//build_defs/wasix:aot.bzl", "WasixAotInfo", "wasix_aot")
+load("//build_defs/wasix:aot.bzl", "WasixAotInfo", "wasix_aot", "wasix_aot_constructor_exports")
 load("//build_defs/wasix:platform.bzl", "WASIX_PORTABLE_TRANSITION")
 load("//build_defs/wasix:wasm.bzl", "WasmModuleInfo")
 load("//build_defs/wasix:napi.bzl", "WasixNapiCarrierInfo")
@@ -177,7 +177,7 @@ def _compiled_carriers_impl(ctx):
         if len(matches) != 1:
             fail("WASIX AOT image is outside its member's exact portable closure")
         row = matches[0]
-        images.append({"target": image.target, "image": image.image.path, "module": image.module.path, "name": "extension:" + ctx.attr.sql_name + (":" + row["name"] if row["name"] != ctx.attr.sql_name else "")})
+        images.append({"target": image.target, "profile": image.profile, "image": image.image.path, "module": image.module.path, "name": "extension:" + ctx.attr.sql_name + (":" + row["name"] if row["name"] != ctx.attr.sql_name else "")})
     outputs = {"npm": [], "cargo": []}
     cargo_parts = {}
     carrier_groups = {}
@@ -209,15 +209,16 @@ def _compiled_carriers_impl(ctx):
     bun_file_action(ctx, ctx.file._tool, arguments = [inputs.path, leaves], inputs = modules + resource_files + image_files + [link, inputs, ctx.file.toolchain] + ctx.files.legal,
                     source_files = [ctx.file._tool] + ctx.files._helpers + ctx.files.legal, outputs = output_files, mnemonic = "WasixCompiledExtensionEnvelopes")
     supplier = ctx.attr.host[ShippingSupplierInfo] if ShippingSupplierInfo in ctx.attr.host else ShippingSupplierInfo(suppliers = None, files = depset([host.module, host.manifest]))
+    supplier = merge_shipping_suppliers([supplier] + [target[ShippingSupplierInfo] for target in [ctx.attr.module[0]] + ctx.attr.support_modules + ctx.attr.aot])
     return [DefaultInfo(files = depset(output_files)), supplier, selected_host, ExtensionFinalLeafInfo(product = spec["product"], owner = owner.id, version = owner.version, family = "wasix", target = "wasix-portable", metadata = spec,
         github = outputs["github"], npm = outputs["npm"], cargo = outputs["cargo"] + cargo_parts.values(), manifest = outputs["manifest"][0], frozen = outputs["frozen"][0], spec = inputs, validation = link, receipt = None, origin = None),
         OutputGroupInfo(**{name: depset(files + (cargo_parts.values() if name == "cargo" else [])) for name, files in outputs.items()} | carrier_groups | {"spec": depset([inputs]), "link": depset([link])})]
 
 _wasix_compiled_carriers = rule(implementation = _compiled_carriers_impl, toolchains = BUN_SOURCE_TOOLCHAINS,
-    attrs = {"sql_name": attr.string(mandatory = True), "module": attr.label(mandatory = True, cfg = WASIX_PORTABLE_TRANSITION),
-        "support_modules": attr.label_list(providers = [WasmModuleInfo], cfg = WASIX_PORTABLE_TRANSITION),
+    attrs = {"sql_name": attr.string(mandatory = True), "module": attr.label(mandatory = True, providers = [WasmModuleInfo, ShippingSupplierInfo], cfg = WASIX_PORTABLE_TRANSITION),
+        "support_modules": attr.label_list(providers = [WasmModuleInfo, ShippingSupplierInfo], cfg = WASIX_PORTABLE_TRANSITION),
         "resources": attr.label_list(allow_files = True, cfg = WASIX_PORTABLE_TRANSITION), "main_sql": attr.label(allow_single_file = True, cfg = WASIX_PORTABLE_TRANSITION), "data_resources": attr.label_keyed_string_dict(allow_files = True, cfg = WASIX_PORTABLE_TRANSITION),
-        "aot": attr.label_list(providers = [WasixAotInfo], mandatory = True), "owner": attr.label(mandatory = True, providers = [ReleaseIdentityInfo]), "legal": attr.label_list(allow_files = True),
+        "aot": attr.label_list(providers = [WasixAotInfo, ShippingSupplierInfo], mandatory = True), "owner": attr.label(mandatory = True, providers = [ReleaseIdentityInfo]), "legal": attr.label_list(allow_files = True),
         "host": attr.label(mandatory = True, providers = [WasixExtensionHostInfo]),
         "toolchain": attr.label(default = "//src/wasix/runtime:toolchain.toml", allow_single_file = True),
         "_tool": attr.label(default = "//build_defs/extensions:wasix_carriers.mts", allow_single_file = True), "_helpers": attr.label_list(default = wasix_sql_carrier_helpers(), allow_files = True),
@@ -227,14 +228,18 @@ _wasix_compiled_carriers = rule(implementation = _compiled_carriers_impl, toolch
 def wasix_compiled_extension_carriers(name, sql_name, module, resources, host, support_modules = [], data_resources = {}, main_sql = None):
     """Reuse the admitted portable module graph and canonical serializer for one owner."""
     aot = []
+    constructors = {target_id: [] for target_id in WASIX_AOT_TARGETS}
+    owner = extension_identity(sql_name, family = "wasix")
     for target_id in WASIX_AOT_TARGETS:
         for index, source in enumerate([module] + support_modules):
             image = name + "_aot_" + target_id.replace("-", "_") + "_" + str(index)
-            wasix_aot(name = image, module = source, target_id = target_id, output_name = sql_name + "_" + str(index) + "-llvm-opta.bin.zst",
+            wasix_aot(name = image, module = source, target_id = target_id, constructor_owner = owner, output_name = sql_name + "_" + str(index) + "-llvm-opta.bin.zst",
                 exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"])
             aot.append(":" + image)
+            constructors[target_id].append(":" + image)
+    wasix_aot_constructor_exports(name, constructors)
     _wasix_compiled_carriers(name = name, sql_name = sql_name, module = module, resources = resources, main_sql = main_sql, host = host, support_modules = support_modules, data_resources = data_resources,
-        aot = aot, owner = extension_identity(sql_name, family = "wasix"), legal = native_extension_carrier_legal(sql_name), exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"])
+        aot = aot, owner = owner, legal = native_extension_carrier_legal(sql_name), exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"])
 
 def wasix_compiled_extension_shipping(name, sql_name, carriers, qualification):
     """Expose this member's canonical WASIX leaves through existing owner rules."""
@@ -395,7 +400,7 @@ _compiled_installed_test = rule(implementation = _compiled_installed_impl, test 
     "_runner": attr.label(default = "//build_defs/extensions/wasix:compiled_carriers.test.mts", allow_single_file = True),
     "_consumer": attr.label(default = "//build_defs/extensions/wasix:installed_consumer.mts", allow_single_file = True),
     "_fixtures": attr.label_list(default = ["//src/test-fixtures/extensions:sql"], allow_files = True),
-    "_helpers": attr.label_list(default = wasix_sql_carrier_helpers() + ["//src/wasix/sdks/ts:tools/pgwire-client.mts", "//src/wasix/node-addon:tools/carrier-contract.mts", "//build_defs/extensions:wasix_carriers.mts"], allow_files = True),
+    "_helpers": attr.label_list(default = wasix_sql_carrier_helpers() + ["//build_defs/extensions/wasix:consumer_inputs.mts", "//src/wasix/sdks/ts:tools/pgwire-client.mts", "//src/wasix/node-addon:tools/carrier-contract.mts", "//build_defs/extensions:wasix_carriers.mts"], allow_files = True),
     "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist")}))
 
 def wasix_compiled_extension_installed_test(name, sql_name, **kwargs):

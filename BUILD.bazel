@@ -146,6 +146,7 @@ filegroup(
         "//build_defs/wasix/browser:quality_sources",
         "//build_defs/wasix/browser/std:quality_sources",
         "//build_defs/wasix/dependencies:quality_sources",
+        "//build_defs/wasix/engine:quality_sources",
         "//build_defs/wasix/postmaster:quality_sources",
         "//src/database-resources:quality_sources",
         "//src/database-resources/icu:quality_sources",
@@ -182,6 +183,7 @@ filegroup(
         "//src/wasix/postgres-tools/ts/tests/installed:quality_sources",
         "//src/wasix/postmaster:quality_sources",
         "//src/wasix/runtime:quality_sources",
+        "//src/wasix/runtime/engine:quality_sources",
         "//src/wasix/sdks/rust:quality_sources",
         "//src/wasix/sdks/ts:quality_sources",
         "//src/wasix/sdks/ts/src/host:quality_sources",
@@ -216,6 +218,9 @@ filegroup(
         "//src/wasix/node-addon:rustfmt_sources",
         "//src/wasix/runtime:rustfmt_sources",
         "//src/wasix/runtime/tools/xtask:rustfmt_sources",
+        "//src/wasix/runtime/tools/v8-serializer:rustfmt_sources",
+        "//build_defs/wasix/engine:rustfmt_sources",
+        "//src/wasix/runtime/engine:rustfmt_sources",
         "//src/wasix/runtime/crates/assets:rustfmt_sources",
         "//src/wasix/runtime/crates/aot/aarch64-apple-darwin:rustfmt_sources",
         "//src/wasix/runtime/crates/aot/aarch64-unknown-linux-gnu:rustfmt_sources",
@@ -326,6 +331,13 @@ test_suite(
         "//build_defs/native:ios_simulator_profile_test",
         "//build_defs/native:runtime_builtin_link_test",
         "//build_defs/wasix:package_test",
+        "//build_defs/wasix:constructor_inputs_test",
+        "//build_defs/wasix/engine:generate_test",
+        "//build_defs/wasix/engine:acquisition_test",
+        "//build_defs/wasix/engine:carriers_test",
+        "//src/wasix/runtime/engine:package_test",
+        "//src/wasix/runtime/engine:notices_test",
+        "//src/wasix/runtime/engine:relink_test",
         "//build_defs/wasix:runtime_npm_test",
         "//build_defs/wasix:runtime_cargo_test",
         "//build_defs/wasix:tools_carriers_test",
@@ -455,6 +467,28 @@ shipping_export(
         "//src/wasix/sdks/rust:napi_release_compiled_shipping_export",
         "//src/wasix/pgwire-server:napi_release_compiled_shipping_export",
     ],
+)
+
+_WASIX_AOT_EXTENSION_CONSTRUCTORS = ["contrib", "pg_hashids", "pg_ivm", "pg_textsearch", "pg_uuidv7", "postgis", "vector"]
+
+shipping_export(
+    name = "wasix_modules_shipping_export",
+    testonly = True,
+    exports = [
+        "//src/wasix/runtime:modules_constructor_export",
+        "//src/wasix/runtime:aot_llvm_constructor_export",
+        "//src/wasix/postgres-tools:aot_llvm_constructor_export",
+    ] + ["//build_defs/extensions/wasix:" + name + "_llvm_constructor_export" for name in _WASIX_AOT_EXTENSION_CONSTRUCTORS],
+)
+
+shipping_export(
+    name = "wasix_windows_aot_shipping_export",
+    testonly = True,
+    exports = [
+        "//src/wasix/runtime/engine:shipping_export",
+        "//src/wasix/runtime:aot_v8_constructor_export",
+        "//src/wasix/postgres-tools:aot_v8_constructor_export",
+    ] + ["//build_defs/extensions/wasix:" + name + "_v8_constructor_export" for name in _WASIX_AOT_EXTENSION_CONSTRUCTORS],
 )
 
 shipping_export(

@@ -3,7 +3,7 @@
 load("@bazel_skylib//lib:unittest.bzl", "analysistest", "asserts")
 load("@rules_rust//rust:defs.bzl", "rust_common")
 load(":rust.bzl", "napi_artifact")
-load("//build_defs/wasix:napi.bzl", "WasixNapiInputsInfo", "WasixNapiReleaseInfo", "wasix_napi_release")
+load("//build_defs/wasix:napi.bzl", "WASIX_NAPI_IMPORT_FINAL_INPUTS", "WasixNapiInputsInfo", "WasixNapiReleaseInfo", "wasix_napi_release")
 load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo")
 load("@oliphaunt_metadata//:metadata.bzl", "NATIVE_CURRENT_ARTIFACTS", "PRODUCTS", "WASIX_ARTIFACTS")
 
@@ -92,7 +92,7 @@ _SdkAotPayloadInfo = provider(fields = ["files"])
 
 def _sdk_aot_payload_impl(target, ctx):
     files = []
-    if NATIVE_CURRENT_ARTIFACTS == None:
+    if not WASIX_NAPI_IMPORT_FINAL_INPUTS:
         sdk = ctx.rule.attr.sdk[0][rust_common.crate_info]
         for dependency in sdk.deps.to_list():
             crate = dependency.crate_info
@@ -177,12 +177,12 @@ def napi_artifact_tests():
             for package in packages
             for original in [NATIVE_CURRENT_ARTIFACTS.get("liboliphaunt-wasix/" + version + "/cargo:" + package)]
             if original
-        ] if NATIVE_CURRENT_ARTIFACTS != None else [
+        ] if WASIX_NAPI_IMPORT_FINAL_INPUTS else [
             "//src/wasix/runtime/crates/assets:crate", "//src/wasix/runtime/crates/aot/" + row["triple"] + ":crate", "//build_defs/extensions/wasix:contrib",
         ]
         names[condition] = [package + "-" + version + ".crate" for package in packages]
-        if NATIVE_CURRENT_ARTIFACTS == None:
+        if not WASIX_NAPI_IMPORT_FINAL_INPUTS:
             aot_payloads[condition] = "//src/wasix/runtime:aot_" + row["target"].replace("-", "_") + "_payload"
     _payload_profile_test(name = "napi_payload_profile_test", target_under_test = "//src/wasix/node-addon:release_addon",
                           public_archives = select(archives), archive_names = select(names),
-                          public_aot_payload = select(aot_payloads) if NATIVE_CURRENT_ARTIFACTS == None else None)
+                          public_aot_payload = select(aot_payloads) if not WASIX_NAPI_IMPORT_FINAL_INPUTS else None)

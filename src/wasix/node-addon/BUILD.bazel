@@ -4,8 +4,10 @@ load("//build_defs/languages:napi-noop.bzl", "napi_unit_crate_deps")
 load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
 load("@native_cargo_metadata//:cargo.bzl", "CARGO")
 load("@cargo_crates//:defs.bzl", "crate_deps")
-load("//build_defs/wasix:napi.bzl", "wasix_napi_carriers", "wasix_napi_inputs", "wasix_napi_installed_test", "wasix_napi_release")
+load("//build_defs/wasix:napi.bzl", "WASIX_NAPI_IMPORT_FINAL_INPUTS", "wasix_napi_carriers", "wasix_napi_inputs", "wasix_napi_installed_test", "wasix_napi_release")
 load("//build_defs/native/carriers:release-family.bzl", "native_release_checksum_family")
+
+load("//build_defs/extensions:declared_final_inputs.bzl", "native_extension_declared_final_import")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -52,7 +54,11 @@ wasix_napi_carriers(producer = ":release_addon", qualification = [":release_inst
     "//build_defs/native:linux_x86_64": [":clippy_test", ":unit_test"],
     "//conditions:default": [],
 }))
-wasix_napi_installed_test(name = "release_installed_test", producer = ":release_addon", carrier = ":release_carriers", size = "large", timeout = "long", tags = ["manual", "installed-consumer"])
+# Existing host staging imports this run's qualified Linux constructor Files.
+native_extension_declared_final_import(name = "postgis_host_input", product = "oliphaunt-extension-postgis", family = "wasix", target = "wasix-portable")
+_EXTERNAL_HOST_INPUT = ":postgis_host_input" if WASIX_NAPI_IMPORT_FINAL_INPUTS else None
+wasix_napi_installed_test(name = "release_installed_test", producer = ":release_addon", carrier = ":release_carriers",
+                         extension = _EXTERNAL_HOST_INPUT, size = "large", timeout = "long", tags = ["manual", "installed-consumer"])
 
 source_quality_files()
 

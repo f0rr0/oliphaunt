@@ -203,6 +203,76 @@ test('payload aliases, all target pins and original part requirements reject mis
   }
 });
 
+test('ordinary current source consumes its own exact-version generated carrier family without release selection', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'oliphaunt-owned-carriers-'));
+  try {
+    const make = (name: string, manifest = '') => {
+      const file = join(directory, `${name}.crate`);
+      writeFileSync(
+        file,
+        archive({
+          [`${name}-0.3.2/Cargo.toml`]: Buffer.from(
+            `[package]\nname="${name}"\nversion="0.3.2"\n${manifest}`,
+          ),
+          [`${name}-0.3.2/src/lib.rs`]: Buffer.from('pub fn original() {}\n'),
+        }),
+      );
+      return cargoCandidate(file);
+    };
+    const part = make('fixture-owned-part');
+    const facade = make('fixture-owned-facade', `[dependencies]\n${part.name}="=0.3.2"\n`);
+    const sdk = make(
+      'fixture-owning-sdk',
+      `[target.'cfg(windows)'.dependencies]\nengine={package="${facade.name}",version="=0.3.2"}\n`,
+    );
+    const sourceOwners = { [sdk.name]: { product: 'sdk', version: sdk.version } };
+    const owners = Object.fromEntries(
+      [part, facade].map(({ name, version }) => [name, { product: 'sdk', version }]),
+    );
+    const rows = [part, facade].map((candidate) => ({
+      product: 'sdk',
+      version: candidate.version,
+      artifact: `cargo:${candidate.name}`,
+      file: {
+        path: candidate.file,
+        size: readFileSync(candidate.file).length,
+        sha256: candidate.sha256,
+      },
+    }));
+    const options = { currentSources: [sdk], sourceOwners, selectedProducts: [] };
+    let count = 0;
+    const pool = (completed: typeof rows = [], current = rows) => {
+      const destination = join(directory, `read-${count++}`);
+      mkdirSync(destination);
+      return cargoPayloadPool(
+        { completed, current, owners },
+        sourceOwners,
+        (name) => name,
+        destination,
+      );
+    };
+    expect(
+      cargoPayloadInputs([sdk], pool(), options)
+        .map(({ name }) => name)
+        .sort(),
+    ).toEqual([part.name, facade.name].sort());
+    expect(() => cargoPayloadInputs([sdk], pool(), { ...options, currentSources: [] })).toThrow(
+      'Missing actual exact payload',
+    );
+    expect(() =>
+      cargoPayloadInputs([sdk], pool(), {
+        ...options,
+        sourceOwners: { [sdk.name]: { product: 'other-sdk', version: sdk.version } },
+      }),
+    ).toThrow('Missing actual exact payload');
+    expect(() => cargoPayloadInputs([sdk], pool([rows[1]], [rows[0]]), options)).toThrow(
+      'Missing actual exact payload',
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('Cargo compiler artifacts join staged manifests without parsing opaque package IDs', () => {
   const directory = mkdtempSync(join(tmpdir(), 'oliphaunt-cargo-artifacts-'));
   try {

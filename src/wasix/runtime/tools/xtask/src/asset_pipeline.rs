@@ -1186,7 +1186,60 @@ struct DeclaredAotManifestSpec {
     portable_manifest: PathBuf,
     toolchain: PathBuf,
     target_triple: String,
+    profile: DeclaredAotProfile,
+    engine_sources: Option<PathBuf>,
     artifacts: Vec<DeclaredAotArtifact>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeclaredAotProfile {
+    engine: String,
+    wasmer_version: String,
+    wasmer_wasix_version: String,
+}
+
+fn validate_declared_aot_profile(spec: &DeclaredAotManifestSpec) -> Result<()> {
+    let toolchain: WasixToolchainManifest = toml::from_str(&fs::read_to_string(&spec.toolchain)?)
+        .context("parse declared WASIX toolchain manifest")?;
+    let (engine, wasmer, wasmer_wasix) = if spec.target_triple == "x86_64-pc-windows-msvc" {
+        let source = spec
+            .engine_sources
+            .as_ref()
+            .context("Windows V8 AOT requires declared engine sources")?;
+        let sources: serde_json::Value = serde_json::from_slice(&fs::read(source)?)
+            .context("parse declared V8 engine sources")?;
+        let version = |name: &str| -> Result<String> {
+            let value = sources["crates"][name]["version"]
+                .as_str()
+                .filter(|version| !version.is_empty())
+                .with_context(|| format!("V8 engine source has no {name} version"))?;
+            Ok(value.to_owned())
+        };
+        ("v8", version("wasmer")?, version("wasmer-wasix")?)
+    } else {
+        (
+            "llvm-opta",
+            toolchain.toolchain.wasmer,
+            toolchain.toolchain.wasmer_wasix,
+        )
+    };
+    ensure!(
+        !wasmer.is_empty() && !wasmer_wasix.is_empty(),
+        "declared AOT requires pinned Wasmer versions"
+    );
+    ensure_eq(&spec.profile.engine, engine, "declared AOT engine")?;
+    ensure_eq(
+        &spec.profile.wasmer_version,
+        &wasmer,
+        "declared AOT Wasmer version",
+    )?;
+    ensure_eq(
+        &spec.profile.wasmer_wasix_version,
+        &wasmer_wasix,
+        "declared AOT WASIX version",
+    )?;
+    Ok(())
 }
 
 #[derive(serde::Deserialize)]
@@ -1340,12 +1393,7 @@ fn declared_aot_manifest(spec: DeclaredAotManifestSpec) -> Result<AotManifest> {
         "invalid declared AOT target triple"
     );
     let portable = declared_aot_modules(&spec.portable_manifest)?;
-    let toolchain: WasixToolchainManifest = toml::from_str(&fs::read_to_string(&spec.toolchain)?)
-        .context("parse declared WASIX toolchain manifest")?;
-    ensure!(
-        !toolchain.toolchain.wasmer.is_empty() && !toolchain.toolchain.wasmer_wasix.is_empty(),
-        "declared AOT requires pinned Wasmer versions"
-    );
+    validate_declared_aot_profile(&spec)?;
     let mut seen = BTreeSet::new();
     let mut artifacts = Vec::new();
     for item in &spec.artifacts {
@@ -1391,9 +1439,9 @@ fn declared_aot_manifest(spec: DeclaredAotManifestSpec) -> Result<AotManifest> {
         source_fingerprint: portable.source_fingerprint,
         postgres_version: Some(portable.postgres_version),
         target_triple: spec.target_triple,
-        engine: "llvm-opta".to_owned(),
-        wasmer_version: toolchain.toolchain.wasmer,
-        wasmer_wasix_version: toolchain.toolchain.wasmer_wasix,
+        engine: spec.profile.engine,
+        wasmer_version: spec.profile.wasmer_version,
+        wasmer_wasix_version: spec.profile.wasmer_wasix_version,
         artifacts,
     })
 }
@@ -1406,6 +1454,7 @@ pub(crate) fn generate_declared_aot_manifest(args: &[String]) -> Result<()> {
     ensure!(
         output != spec.portable_manifest
             && output != spec.toolchain
+            && spec.engine_sources.as_ref() != Some(&output)
             && spec
                 .artifacts
                 .iter()
@@ -4121,7 +4170,7 @@ mod tests {
         let mut portable = serde_json::json!({"schema": "postgres-tools-wasix-portable-v1", "version": "0.2.4", "runtimeVersion": "0.3.2", "sourceFingerprint": format!("18.4:{}:{}", "a".repeat(64), "b".repeat(64))});
         portable.as_object_mut().unwrap().extend(identities);
         fs::write(&portable_path, serde_json::to_vec(&portable).unwrap()).unwrap();
-        let spec = serde_json::json!({"portable_manifest": portable_path, "toolchain": toolchain, "target_triple": "aarch64-apple-darwin", "artifacts": artifacts});
+        let spec = serde_json::json!({"portable_manifest": portable_path, "toolchain": toolchain, "target_triple": "aarch64-apple-darwin", "profile": {"engine": "llvm-opta", "wasmer_version": "9.8.7", "wasmer_wasix_version": "0.987.0"}, "artifacts": artifacts});
         let input = root.join("spec.json");
         let output = root.join("manifest.json");
         let args = [
@@ -4185,6 +4234,12 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let portable_path = root.join("portable.json");
         let toolchain = root.join("toolchain.toml");
+        let engine_sources = root.join("engine-sources.json");
+        fs::write(
+            &engine_sources,
+            br#"{"crates":{"wasmer":{"version":"8.7.6"},"wasmer-wasix":{"version":"0.876.0"}}}"#,
+        )
+        .unwrap();
         fs::write(
             &toolchain,
             "[toolchain]\nwasmer = '9.8.7'\nwasmer-wasix = '0.987.0'\n",
@@ -4229,6 +4284,8 @@ mod tests {
         fs::write(&portable_path, serde_json::to_vec(&portable).unwrap()).unwrap();
         let spec = serde_json::json!({
             "portable_manifest": portable_path, "toolchain": toolchain,
+            "engine_sources": engine_sources,
+            "profile": {"engine": "v8", "wasmer_version": "8.7.6", "wasmer_wasix_version": "0.876.0"},
             "target_triple": "x86_64-pc-windows-msvc", "artifacts": artifacts,
         });
         let input = root.join("spec.json");
@@ -4245,8 +4302,9 @@ mod tests {
         let manifest: AotManifest = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(manifest.format_version, AOT_MANIFEST_FORMAT_VERSION);
         assert_eq!(manifest.target_triple, "x86_64-pc-windows-msvc");
-        assert_eq!(manifest.wasmer_version, "9.8.7");
-        assert_eq!(manifest.wasmer_wasix_version, "0.987.0");
+        assert_eq!(manifest.engine, "v8");
+        assert_eq!(manifest.wasmer_version, "8.7.6");
+        assert_eq!(manifest.wasmer_wasix_version, "0.876.0");
         assert_eq!(
             manifest.source_fingerprint.as_deref(),
             Some("physical source identity")
@@ -4272,6 +4330,10 @@ mod tests {
             "missing",
             "duplicate",
             "missing-image",
+            "wrong-engine",
+            "wrong-wasmer",
+            "wrong-wasix",
+            "missing-engine-source",
         ] {
             let mut invalid = spec.clone();
             match case {
@@ -4288,6 +4350,12 @@ mod tests {
                 "missing-image" => {
                     invalid["artifacts"][0]["image"] = serde_json::json!(root.join("missing"))
                 }
+                "wrong-engine" => invalid["profile"]["engine"] = serde_json::json!("llvm-opta"),
+                "wrong-wasmer" => invalid["profile"]["wasmer_version"] = serde_json::json!("9.8.7"),
+                "wrong-wasix" => {
+                    invalid["profile"]["wasmer_wasix_version"] = serde_json::json!("0.987.0")
+                }
+                "missing-engine-source" => invalid["engine_sources"] = serde_json::Value::Null,
                 _ => unreachable!(),
             }
             fs::write(&input, serde_json::to_vec(&invalid).unwrap()).unwrap();

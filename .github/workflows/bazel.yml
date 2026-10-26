@@ -922,13 +922,218 @@ jobs:
           cohort: linux
           disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
 
-  wasix:
-    name: Linux WASIX and installed browser
-    if: ${{ !cancelled() && needs.release-inputs.result == 'success' && contains(fromJSON(needs.release-inputs.outputs.ci_selected_jobs), 'wasix') }}
+  wasix-modules:
+    name: Linux WASIX constructor modules
+    if: ${{ !cancelled() && needs.release-inputs.result == 'success' && contains(fromJSON(needs.release-inputs.outputs.ci_selected_jobs), 'wasix-modules') }}
     needs: release-inputs
     runs-on: ubuntu-24.04
-    # The cold full request reached its final Rust actions at the old two-hour
-    # bound; retain time for browser/SQL qualification and evidence capture.
+    timeout-minutes: 150
+    env:
+      CI_REQUEST_JOB: wasix-modules
+      CI_MODE: ${{ needs.release-inputs.outputs.ci_mode }}
+      CI_SELECTED_REQUESTS: ${{ needs.release-inputs.outputs.ci_selected_requests }}
+      CI_CAPTURE_REQUESTS: ${{ needs.release-inputs.outputs.ci_capture_requests }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Acquire source-bound native inputs
+        uses: ./.github/actions/native-release-inputs
+        with:
+          run-id: ${{ needs.release-inputs.outputs.run_id }}
+          pull-number: ${{ needs.release-inputs.outputs.pull_number }}
+          public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
+
+      - name: Restore bounded standard Bazel caches
+        id: bazel-cache
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: restore
+          cohort: wasix-modules
+
+      - name: Construct portable WASIX modules and three LLVM AOT targets
+        if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
+        env:
+          CI_REQUEST_ID: wasix-modules/portable-llvm
+          CI_REQUIRES: '[]'
+          QUALIFICATION_JOB_NAME: Linux WASIX constructor modules
+        run: |
+          input_root="$RUNNER_TEMP/wasix-modules-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job "$QUALIFICATION_JOB_NAME" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          jq -nc '[
+            "-c","opt","--config=wasix-aot","--platforms=//build_defs/native:linux_x86_64_glibc_2_28",
+            "--host_platform=//build_defs/native:linux_x86_64_glibc_2_28","--jobs=2","--local_test_jobs=1"
+          ]' > "$input_root/configuration.json"
+          printf '%s\n' "$CI_REQUIRES" > "$input_root/ci-requires.json"
+          ci_arguments=(--ci-request-id "$CI_REQUEST_ID" --ci-job "$CI_REQUEST_JOB" --ci-mode "$CI_MODE"
+            --ci-requires-json "$input_root/ci-requires.json")
+          if jq -e --arg id "$CI_REQUEST_ID" 'index($id) != null' <<< "$CI_CAPTURE_REQUESTS" >/dev/null; then
+            ci_arguments+=(--ci-handoff)
+          fi
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts "${ci_arguments[@]}" \
+            --github-json "$input_root/github.json" --configuration-json "$input_root/configuration.json" \
+            --shipping-export //:wasix_modules_shipping_export \
+            --output-directory "$RUNNER_TEMP/wasix-modules-build-capture"
+          mkdir -p "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+          cp "$RUNNER_TEMP/wasix-modules-build-capture/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
+
+      - name: Upload original Linux constructor evidence
+        if: needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), 'wasix-modules/portable-llvm')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-wasix-modules
+          path: ${{ runner.temp }}/wasix-modules-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload constructor diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-wasix-modules-build-diagnostics
+          path: ${{ runner.temp }}/wasix-modules-build-capture/diagnostics/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - *ci_request_receipts
+
+      - name: Save bounded standard Bazel caches
+        if: ${{ always() }}
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: save
+          cohort: wasix-modules
+          disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
+
+  wasix-windows-aot:
+    name: Windows WASIX V8 constructor
+    if: ${{ !cancelled() && needs.release-inputs.result == 'success' && needs.wasix-modules.result == 'success' && contains(fromJSON(needs.release-inputs.outputs.ci_selected_jobs), 'wasix-windows-aot') }}
+    needs: [release-inputs, wasix-modules]
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 150
+    env:
+      CI_REQUEST_JOB: wasix-windows-aot
+      CI_MODE: ${{ needs.release-inputs.outputs.ci_mode }}
+      CI_SELECTED_REQUESTS: ${{ needs.release-inputs.outputs.ci_selected_requests }}
+      CI_CAPTURE_REQUESTS: ${{ needs.release-inputs.outputs.ci_capture_requests }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Acquire source-bound native inputs
+        uses: ./.github/actions/native-release-inputs
+        with:
+          run-id: ${{ needs.release-inputs.outputs.run_id }}
+          pull-number: ${{ needs.release-inputs.outputs.pull_number }}
+          public-artifact-id: ${{ needs.release-inputs.outputs.public_artifact_id }}
+
+      - name: Restore bounded standard Bazel caches
+        id: bazel-cache
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: restore
+          cohort: wasix-windows-aot
+
+      - name: Select declared MSVC SDK
+        uses: ./.github/actions/setup-msvc
+
+      - name: Authenticate original Linux WASIX modules
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          input_root="$RUNNER_TEMP/wasix-windows-aot-build-inputs"
+          mkdir -p "$input_root"
+          printf '%s\n' '["oliphaunt-wasix-rust"]' > "$input_root/consumer-products.json"
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/release/native-release-preparation.mts \
+            --stage-release-archives --run-id "$GITHUB_RUN_ID" --ref "$GITHUB_REF" \
+            --consumer-products-json "$input_root/consumer-products.json" --wasix-constructor-phase windows-v8 \
+            --output-directory target/native-wasix-windows-constructor-inputs
+
+      - name: Construct the production V8 serializer, engine carriers and Windows AOT Files
+        if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
+        env:
+          CI_REQUEST_ID: wasix-windows-aot/v8-carriers
+          CI_REQUIRES: '["wasix-modules/portable-llvm"]'
+          QUALIFICATION_JOB_NAME: Windows WASIX V8 constructor
+        run: |
+          input_root="$RUNNER_TEMP/wasix-windows-aot-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job "$QUALIFICATION_JOB_NAME" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          jq -nc --arg base "$RUNNER_TEMP/b" '["--output_base="+$base]' > "$input_root/startup.json"
+          jq -nc '[
+            "-c","opt","--platforms=//build_defs/host:native_windows_x64",
+            "--repo_env=OLIPHAUNT_WASIX_CONSTRUCTOR_PHASE=windows-v8",
+            "--host_platform=//build_defs/host:native_windows_x64","--jobs=2","--local_test_jobs=1"
+          ]' > "$input_root/configuration.json"
+          printf '%s\n' "$CI_REQUIRES" > "$input_root/ci-requires.json"
+          ci_arguments=(--ci-request-id "$CI_REQUEST_ID" --ci-job "$CI_REQUEST_JOB" --ci-mode "$CI_MODE"
+            --ci-requires-json "$input_root/ci-requires.json")
+          if jq -e --arg id "$CI_REQUEST_ID" 'index($id) != null' <<< "$CI_CAPTURE_REQUESTS" >/dev/null; then
+            ci_arguments+=(--ci-handoff)
+          fi
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts "${ci_arguments[@]}" \
+            --github-json "$input_root/github.json" --startup-json "$input_root/startup.json" --configuration-json "$input_root/configuration.json" \
+            --shipping-export //:wasix_windows_aot_shipping_export \
+            --output-directory "$RUNNER_TEMP/wasix-windows-aot-build-capture"
+          mkdir -p "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID"
+          cp "$RUNNER_TEMP/wasix-windows-aot-build-capture/ci-request.json" "$RUNNER_TEMP/ci-requests/$CI_REQUEST_ID/ci-request.json"
+
+      - name: Upload original Windows constructor evidence
+        if: needs.release-inputs.outputs.ci_mode == 'full' || contains(fromJSON(needs.release-inputs.outputs.ci_capture_requests), 'wasix-windows-aot/v8-carriers')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-wasix-windows-aot
+          path: ${{ runner.temp }}/wasix-windows-aot-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload constructor diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-wasix-windows-aot-build-diagnostics
+          path: ${{ runner.temp }}/wasix-windows-aot-build-capture/diagnostics/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - *ci_request_receipts
+
+      - name: Save bounded standard Bazel caches
+        if: ${{ always() }}
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: save
+          cohort: wasix-windows-aot
+          disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
+          output-base: ${{ format('{0}/b', runner.temp) }}
+
+  wasix:
+    name: Linux WASIX and installed browser
+    if: ${{ !cancelled() && needs.release-inputs.result == 'success' && needs.wasix-modules.result == 'success' && needs.wasix-windows-aot.result == 'success' && contains(fromJSON(needs.release-inputs.outputs.ci_selected_jobs), 'wasix') }}
+    needs: [release-inputs, wasix-modules, wasix-windows-aot]
+    runs-on: ubuntu-24.04
+    # Final SQL, SDK and browser consumers share one captured invocation.
     timeout-minutes: 150
     outputs:
       source_commit: ${{ steps.wasix-cargo-capture.outputs.source_commit }}
@@ -960,10 +1165,23 @@ jobs:
           phase: restore
           cohort: wasix
 
-      - name: Construct platform AOT packages and qualify Linux SDK, resources and browser
+      - name: Authenticate original Linux and Windows WASIX constructor inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          input_root="$RUNNER_TEMP/wasix-tools-build-inputs"
+          mkdir -p "$input_root"
+          printf '%s\n' '["oliphaunt-wasix-rust"]' > "$input_root/consumer-products.json"
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/release/native-release-preparation.mts \
+            --stage-release-archives --run-id "$GITHUB_RUN_ID" --ref "$GITHUB_REF" \
+            --consumer-products-json "$input_root/consumer-products.json" --wasix-constructor-phase package \
+            --output-directory target/native-wasix-package-constructor-inputs
+
+      - name: Package original AOT Files and qualify Linux SDK, resources and browser
         if: contains(fromJSON(needs.release-inputs.outputs.ci_selected_requests), env.CI_REQUEST_ID)
         env:
           CI_REQUEST_ID: wasix/tools-sdk-browser
+          CI_REQUIRES: '["wasix-modules/portable-llvm","wasix-windows-aot/v8-carriers"]'
           QUALIFICATION_JOB_NAME: Linux WASIX and installed browser
         run: |
           chrome_binary="$(bash tools/dev/bun.sh build_defs/wasix/browser/chrome-receipt.mts "$RUNNER_TEMP/chrome-host.json" "$ImageOS" "$ImageVersion")"
@@ -977,6 +1195,7 @@ jobs:
           jq -nc --arg cache "$RUNNER_TEMP/wasix-source-sdk-cache" \
             --arg chrome "$chrome_binary" --arg chromeReceipt "$RUNNER_TEMP/chrome-host.json" '[
             "-c","opt","--config=wasix-aot","--platforms=//build_defs/native:linux_x86_64_glibc_2_28",
+            "--repo_env=OLIPHAUNT_WASIX_CONSTRUCTOR_PHASE=package",
             "--host_platform=//build_defs/native:linux_x86_64_glibc_2_28","--local_test_jobs=1",
             "--test_env=OLIPHAUNT_WASM_AOT_VERIFY=full","--test_env=XDG_CACHE_HOME="+$cache,"--test_env=RUST_TEST_THREADS=1",
             "--test_env=OLIPHAUNT_BROWSER_CHROME="+$chrome,"--test_env=OLIPHAUNT_BROWSER_CHROME_RECEIPT="+$chromeReceipt
@@ -1678,6 +1897,7 @@ jobs:
           bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh tools/release/native-release-preparation.mts \
             --stage-release-archives --run-id "$GITHUB_RUN_ID" --ref "$GITHUB_REF" \
             --consumer-products-json "$input_root/consumer-products.json" \
+            --wasix-constructor-phase host \
             --output-directory target/native-wasix-host-archive-inputs
 
       - name: Qualify imported AOT runtime on its native host
@@ -1806,7 +2026,7 @@ jobs:
 
   required:
     name: Required
-    needs: [release-inputs, portable, linux, wasix, postmaster, postmaster-host, react-native, release-families, wasix-host]
+    needs: [release-inputs, portable, linux, wasix-modules, wasix-windows-aot, wasix, postmaster, postmaster-host, react-native, release-families, wasix-host]
     if: always() && (github.event_name != 'pull_request' || github.event.action != 'closed') && needs.release-inputs.outputs.ci_mode == 'full'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -1844,7 +2064,7 @@ jobs:
 
   source-ci:
     name: Source CI
-    needs: [release-inputs, portable, linux, wasix, postmaster, postmaster-host, react-native, release-families, wasix-host, required]
+    needs: [release-inputs, portable, linux, wasix-modules, wasix-windows-aot, wasix, postmaster, postmaster-host, react-native, release-families, wasix-host, required]
     if: always() && (github.event_name != 'pull_request' || github.event.action != 'closed')
     runs-on: ubuntu-24.04
     timeout-minutes: 20

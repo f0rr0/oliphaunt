@@ -4,6 +4,7 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_MEMBERS")
 load("//build_defs/extensions:contrib.bzl", "CONTRIB_C_SOURCES", "CONTRIB_HEADERS", "contrib_generated_sources")
 load("//build_defs/extensions:external.bzl", "EXTERNAL_C_SOURCES", "VECTOR_COPTS", "external_extension_inputs")
+load("//build_defs/extensions:extensions.bzl", "extension_identity")
 load(":config.bzl", "WASIX_COPTS")
 load(":wasm.bzl", "wasix_module")
 
@@ -50,7 +51,7 @@ def wasix_contrib_modules(crypto = None):
         elif identity == "pgcrypto":
             deps.append(crypto)
         cc_library(name = name + "_objects", srcs = sources, hdrs = headers, deps = deps, copts = copts, linkstatic = True, target_compatible_with = _COMPATIBLE)
-        wasix_module(name = name, output_name = member["module-file"], deps = [":" + name + "_objects"], target_compatible_with = _COMPATIBLE)
+        wasix_module(name = name, output_name = member["module-file"], deps = [":" + name + "_objects"], constructor_owner = "@oliphaunt_metadata//:product_liboliphaunt-wasix", target_compatible_with = _COMPATIBLE)
         modules.append(":" + name)
     return modules
 
@@ -71,6 +72,6 @@ def wasix_external_c_modules():
             # Internal hashids helpers are not the PostgreSQL module API.
             attrs["copts"].append("-fvisibility=hidden")
         cc_library(name = name + "_objects", linkstatic = True, target_compatible_with = _COMPATIBLE, **attrs)
-        wasix_module(name = name, output_name = sql_name + ".so", deps = [":" + name + "_objects"], linkopts = linkopts, target_compatible_with = _COMPATIBLE)
+        wasix_module(name = name, output_name = sql_name + ".so", deps = [":" + name + "_objects"], linkopts = linkopts, constructor_owner = extension_identity(sql_name, family = "wasix"), target_compatible_with = _COMPATIBLE)
         modules.append(":" + name)
     return modules

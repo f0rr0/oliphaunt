@@ -440,6 +440,49 @@ test('WASIX optional public requirements change only when the SDK explicitly ret
   );
 });
 
+test('WASIX source packaging resolves Cargo aliases and inherited engine pins', () => {
+  const source = `
+[package]
+name = "oliphaunt-wasix"
+version = "1.2.3"
+[package.metadata.oliphaunt]
+runtime-version = "2.3.4"
+[dependencies]
+"runtime-alias" = { package = "liboliphaunt-wasix-portable", version = "*", path = "../runtime" }
+query = { package = "oliphaunt-query", version = "=0.1.0" }
+[target.'cfg(windows)'.dependencies.wasmer]
+workspace = true
+features = ["v8", "headless"]
+[target.'cfg(windows)'.build-dependencies.engine]
+package = "oliphaunt-wasmer-v8-windows-x64-msvc"
+version = "*"
+`;
+  const workspace = (version) => `
+[workspace.dependencies]
+wasmer = { package = "oliphaunt-wasmer", version = "=${version}", default-features = false }
+`;
+  for (const version of ['1.2.3', '1.2.4']) {
+    const staged = Bun.TOML.parse(
+      renderOliphauntWasixReleaseCargoToml(
+        source.replace('version = "1.2.3"', `version = "${version}"`),
+        undefined,
+        workspace(version),
+      ),
+    );
+    assert.equal(staged.dependencies['runtime-alias'].version, '=2.3.4');
+    assert.equal(staged.dependencies['runtime-alias'].path, undefined);
+    assert.equal(staged.dependencies.query.version, '=0.1.0');
+    const target = staged.target['cfg(windows)'];
+    assert.deepEqual(target.dependencies.wasmer, {
+      package: 'oliphaunt-wasmer',
+      version: `=${version}`,
+      'default-features': false,
+      features: ['v8', 'headless'],
+    });
+    assert.equal(target['build-dependencies'].engine.version, `=${version}`);
+  }
+});
+
 test('WASIX Rust package qualification does not patch older pins with newer workspace sources', () => {
   const source = read('src/wasix/sdks/rust/Cargo.toml');
   const stage = path.join(ROOT, 'target', 'independent-version-pins', 'cargo-closure');

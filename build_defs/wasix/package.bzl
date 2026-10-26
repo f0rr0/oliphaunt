@@ -1,6 +1,7 @@
 """A declared portable runtime tree for source carriers and installed consumers."""
 
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
+load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo", "merge_shipping_suppliers")
 load(":wasm.bzl", "WasmExportPolicyInfo", "WasmModuleInfo")
 
 def postgres_patch_inputs(paths):
@@ -81,16 +82,18 @@ def _payload_impl(ctx):
         mnemonic = "WasixRuntimeEnvelope",
         progress_message = "Package declared portable WASIX runtime %{label}",
     )
-    return [DefaultInfo(files = depset([output]))]
+    return [DefaultInfo(files = depset([output])), merge_shipping_suppliers([
+        target[ShippingSupplierInfo] for target in [ctx.attr.runtime, ctx.attr.initdb] + list(ctx.attr.support)
+    ])]
 
 wasix_runtime_payload = rule(
     implementation = _payload_impl,
     toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = {
-        "runtime": attr.label(providers = [WasmModuleInfo], mandatory = True),
-        "initdb": attr.label(providers = [WasmModuleInfo], mandatory = True),
+        "runtime": attr.label(providers = [WasmModuleInfo, ShippingSupplierInfo], mandatory = True),
+        "initdb": attr.label(providers = [WasmModuleInfo, ShippingSupplierInfo], mandatory = True),
         "export_policy": attr.label(providers = [WasmExportPolicyInfo], mandatory = True),
-        "support": attr.label_keyed_string_dict(providers = [WasmModuleInfo], mandatory = True),
+        "support": attr.label_keyed_string_dict(providers = [WasmModuleInfo, ShippingSupplierInfo], mandatory = True),
         "resources": attr.label_keyed_string_dict(allow_files = True, mandatory = True),
         "patches": attr.label_list(allow_files = [".patch"], mandatory = True),
         "postgres_source": attr.label(default = "//src/third-party/postgres:source.toml", allow_single_file = True),

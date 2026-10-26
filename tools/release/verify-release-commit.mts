@@ -6,6 +6,7 @@ import { cargoSatisfies } from '../../build_defs/languages/cargo-metadata.mts';
 import { electronReleaseDependencies } from '../../src/examples/tools/example-release-dependencies.mts';
 import { isDefaultExtensionRequirement } from './consumer-compatibility.mts';
 import { exampleCargoReleaseVersionBindings } from './example-cargo-versions.mts';
+import { loadPublicationCatalog } from './publication-catalog.mts';
 import {
   nativeToolsOptionalPackageProducts,
   registryPackageRows,
@@ -21,6 +22,8 @@ import {
 } from './release-graph.mts';
 import { RELEASE_PLEASE_BOOTSTRAP_SHA } from './release-please-bootstrap.mts';
 import {
+  cargoLocalVersions,
+  cargoSameOwnerDependencyBindings,
   desiredCargoPathDependencyVersion,
   releaseDerivedPathInventory,
 } from './sync-release-pr.mts';
@@ -631,14 +634,17 @@ function cargoDependencyVersionChange({
   );
 }
 
-function localCargoPackageVersions(repo, commit, cache) {
+function localCargoContext(repo, commit, cache) {
   if (cache.has(commit)) return cache.get(commit);
   const versions = new Map();
-  const manifests = commitData(repo, commit, 'files')
-    .split('\0')
-    .filter((file) => file === 'Cargo.toml' || file.endsWith('/Cargo.toml'));
-  for (const file of manifests) {
-    const packageConfig = parseCargoManifest(repo, commit, file).package;
+  const files = commitData(repo, commit, 'files').split('\0');
+  const manifests = new Map(
+    files
+      .filter((file) => file === 'Cargo.toml' || file.endsWith('/Cargo.toml'))
+      .map((file) => [file, { manifest: parseCargoManifest(repo, commit, file) }]),
+  );
+  for (const { manifest } of manifests.values()) {
+    const packageConfig = manifest.package;
     if (
       packageConfig === null ||
       Array.isArray(packageConfig) ||
@@ -652,8 +658,66 @@ function localCargoPackageVersions(repo, commit, cache) {
     packageVersions.add(packageConfig.version);
     versions.set(packageConfig.name, packageVersions);
   }
-  cache.set(commit, versions);
-  return versions;
+  const config = showJson(repo, commit, 'release-please-config.json');
+  const released = showJson(repo, commit, '.release-please-manifest.json');
+  const ownerVersions = new Map(
+    Object.entries(config.packages).map(([file, entry]) => [entry.component, released[file]]),
+  );
+  const carriers = loadPublicationCatalog(TOOL)
+    .carriers.filter((carrier) => ownerVersions.has(carrier.product))
+    .map((carrier) => ({ ...carrier, version: ownerVersions.get(carrier.product) }));
+  const lock = files.includes('Cargo.lock')
+    ? parseStructured(show(repo, commit, 'Cargo.lock'), 'toml', 'Cargo.lock', commit)
+    : { package: [] };
+  for (const [name, version] of cargoLocalVersions(new Map(), carriers, lock)) {
+    if (!versions.has(name)) versions.set(name, new Set([version]));
+  }
+  const result = { versions, manifests };
+  cache.set(commit, result);
+  return result;
+}
+
+function cargoSameOwnerVersionChange(context) {
+  if (path.posix.basename(context.file) !== 'Cargo.toml') return false;
+  const owners = new Map(
+    Object.entries(context.products).flatMap(([id, product]) =>
+      (product.registry_packages ?? [])
+        .filter((name) => name.startsWith('crates:'))
+        .map((name) => [name.slice(7), id]),
+    ),
+  );
+  const products = Object.fromEntries(
+    Object.entries(context.products).map(([id, product]) => [
+      id,
+      { ...product, version: context.productVersions.get(id) ?? product.version },
+    ]),
+  );
+  const bindings = cargoSameOwnerDependencyBindings(
+    context.beforeRoot,
+    owners,
+    products,
+    new Set(context.transitions.map(({ product }) => product)),
+    { manifests: localCargoContext(context.repo, context.parent, context.cargoVersions).manifests },
+  );
+  return bindings.some((binding) => {
+    const prior = valueAt(context.beforeRoot, binding.entryParts);
+    const next = valueAt(context.afterRoot, binding.entryParts);
+    const before = typeof prior === 'string' ? { version: prior } : prior;
+    const after = typeof next === 'string' ? { version: next } : next;
+    const parts =
+      typeof prior === 'string' ? binding.entryParts : [...binding.entryParts, 'version'];
+    if (pathKey(parts) !== pathKey(context.parts) || !before || !after) return false;
+    const owner = owners.get(before.package ?? binding.name);
+    const transition = context.transitions.find(({ product }) => product === owner);
+    return (
+      transition &&
+      before.version ===
+        desiredCargoPathDependencyVersion(before.version, transition.before, true) &&
+      after.version === binding.expected &&
+      semanticDiffs({ ...before, version: undefined }, { ...after, version: undefined }).length ===
+        0
+    );
+  });
 }
 
 function cargoLockVersionChange({
@@ -669,6 +733,32 @@ function cargoLockVersionChange({
   cargoVersions,
 }) {
   const names = parts.map(String);
+  if (
+    path.posix.basename(file) === 'Cargo.lock' &&
+    names.length === 4 &&
+    names[0] === 'package' &&
+    names[2] === 'dependencies' &&
+    /^[0-9]+$/u.test(names[1]) &&
+    /^[0-9]+$/u.test(names[3]) &&
+    typeof before === 'string' &&
+    typeof after === 'string'
+  ) {
+    const prior = /^([^ ]+) ([^ ]+)$/u.exec(before);
+    const next = /^([^ ]+) ([^ ]+)$/u.exec(after);
+    if (!prior || !next || prior[1] !== next[1]) return false;
+    const local = beforeRoot.package.flatMap((entry, index) =>
+      entry.name === prior[1] && entry.version === prior[2] && !entry.source ? [index] : [],
+    );
+    const changed = local.length === 1 ? afterRoot.package[local[0]] : undefined;
+    return (
+      changed?.name === next[1] &&
+      changed.version === next[2] &&
+      changed.source === undefined &&
+      localCargoContext(repo, parent, cargoVersions).versions.get(prior[1])?.has(prior[2]) ===
+        true &&
+      localCargoContext(repo, commit, cargoVersions).versions.get(next[1])?.has(next[2]) === true
+    );
+  }
   if (
     path.posix.basename(file) !== 'Cargo.lock' ||
     names.length !== 3 ||
@@ -695,9 +785,9 @@ function cargoLockVersionChange({
     return false;
   }
   return (
-    localCargoPackageVersions(repo, parent, cargoVersions).get(priorPackage.name)?.has(before) ===
+    localCargoContext(repo, parent, cargoVersions).versions.get(priorPackage.name)?.has(before) ===
       true &&
-    localCargoPackageVersions(repo, commit, cargoVersions).get(priorPackage.name)?.has(after) ===
+    localCargoContext(repo, commit, cargoVersions).versions.get(priorPackage.name)?.has(after) ===
       true
   );
 }
@@ -743,7 +833,11 @@ function authorizedDerivedStructuredChange(context, rules) {
       context.productVersions,
     );
   if (context.type !== 'toml') return false;
-  return cargoDependencyVersionChange(context) || cargoLockVersionChange(context);
+  return (
+    cargoDependencyVersionChange(context) ||
+    cargoSameOwnerVersionChange(context) ||
+    cargoLockVersionChange(context)
+  );
 }
 
 function structuredType(file) {

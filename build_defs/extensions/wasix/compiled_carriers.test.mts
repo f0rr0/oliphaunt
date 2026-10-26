@@ -28,6 +28,7 @@ import {
   readPortableArchiveEntries,
 } from '../../../tools/packaging/portable-archive.mts';
 import { readWasixCargoCarrierPayload, readWasixCargoCarrierSet } from '../wasix_carriers.mts';
+import { prepareWasixConsumerInput } from './consumer_inputs.mts';
 
 const [
   input,
@@ -251,6 +252,7 @@ try {
     );
   }
   const installed = new Map<string, string>();
+  const packageJsons = new Map<string, string>();
   for (const filename of readdirSync(npmRoot).filter((name) => name.endsWith('.tgz'))) {
     const archivePath = realpathSync(path.join(npmRoot, filename));
     const entries = readPortableArchiveEntries(archivePath);
@@ -260,6 +262,10 @@ try {
     const destination = path.join(root, 'node_modules', manifest.name);
     extractPortableArchiveTree(archivePath, destination, 'package');
     installed.set(manifest.name, destination);
+    packageJsons.set(
+      manifest.oliphaunt.kind === 'exact-extension-wasix' ? 'portable' : manifest.oliphaunt.target,
+      path.join(destination, 'package.json'),
+    );
     if (manifest.oliphaunt.kind === 'exact-extension-wasix')
       assert.deepEqual(
         entries.get(`package/extensions/${spec.sqlName}/extension.tar.zst`)!.data(),
@@ -416,8 +422,6 @@ try {
     addonProvenance.binary.sha256,
     digest(addonMember('package/prebuilds/oliphaunt_wasix_napi.node')),
   );
-  const dependencyFacts: { sqlName: string; sha256: string; size: number; modules: string[] }[] =
-    [];
   const dependencyArchives = new Map<string, any>(
     addonProvenance.buildInputs.inputs.extensionArtifacts.flatMap((row: any) => {
       assert.equal(row.product, 'oliphaunt-extension-contrib-pg18');
@@ -435,52 +439,36 @@ try {
     assert.equal(bytes.length, original.file.size);
     completedContrib = readPortableArchiveEntries(realpathSync(contribPortableInput));
   }
-  const visitedDependencies = new Set<string>();
-  const visitDependency = (sqlName: string) => {
-    if (sqlName === 'plpgsql' || sqlName === spec.sqlName || visitedDependencies.has(sqlName))
-      return;
-    visitedDependencies.add(sqlName);
-    const declared = dependencyArchives.get(sqlName);
-    assert(declared, `selected addon has no declared dependency ${sqlName}`);
-    let bytes: Buffer;
-    if (selectedInputs !== '-') bytes = readFileSync(path.join(selectedInputs, declared.path));
-    else {
-      const member = completedContrib?.get(
-        `oliphaunt-extension-contrib-pg18-wasix-${addonManifest.oliphaunt.runtimeVersion}/payload/files/extensions/${sqlName}/extension.tar.zst`,
-      );
-      assert(member?.isFile && !member.isSymbolicLink, `missing original ${sqlName} archive`);
-      bytes = Buffer.from(member.data());
-    }
-    assert.equal(digest(bytes), declared.sha256, `${sqlName} differs from addon input`);
-    // Published v1 provenance carries SHA-256 only; the executing addon also checks size.
-    if (declared.size !== undefined)
-      assert.equal(bytes.length, declared.size, `${sqlName} size differs from addon input`);
-    const archiveFile = path.join(root, `${sqlName}.tar.zst`);
-    writeFileSync(archiveFile, bytes);
-    const entries = readPortableArchiveEntries(archiveFile);
-    for (const [name, entry] of entries) {
-      if (!entry.isFile || !name.endsWith('.control')) continue;
-      for (const line of entry.data().toString().split('\n')) {
-        if (!/^\s*requires\s*=/u.test(line)) continue;
-        const value = line.match(/^\s*requires\s*=\s*(?:'([^']*)'|([^#]*?))\s*(?:#.*)?$/u);
-        assert(value, `${sqlName} has malformed control requires`);
-        for (const dependency of (value[1] ?? value[2]).split(',').map((name) => name.trim()))
-          if (dependency) visitDependency(dependency);
+  const prepared = prepareWasixConsumerInput({
+    frozen,
+    sqlName: spec.sqlName,
+    portable,
+    addonName: addonManifest.name,
+    packageJson: packageJsons.get('portable'),
+    aotPackageJson: packageJsons.get(addonManifest.oliphaunt.target),
+    fixturePath: realpathSync(fixtureInput),
+    hostManifestPath: realpathSync(hostManifestInput),
+    readDependency: (sqlName) => {
+      const declared = dependencyArchives.get(sqlName);
+      assert(declared, `selected addon has no original dependency ${sqlName}`);
+      let bytes;
+      if (selectedInputs !== '-') bytes = readFileSync(path.join(selectedInputs, declared.path));
+      else {
+        const member = completedContrib?.get(
+          'oliphaunt-extension-contrib-pg18-wasix-' +
+            addonManifest.oliphaunt.runtimeVersion +
+            '/payload/files/extensions/' +
+            sqlName +
+            '/extension.tar.zst',
+        );
+        assert(member?.isFile && !member.isSymbolicLink, 'missing original dependency archive');
+        bytes = Buffer.from(member.data());
       }
-    }
-    dependencyFacts.push({
-      sqlName,
-      sha256: declared.sha256,
-      size: bytes.length,
-      modules: [...entries]
-        .filter(([name, entry]) => entry.isFile && name.startsWith('lib/postgresql/'))
-        .map(([name]) => name)
-        .sort(),
-    });
-  };
-  for (const dependency of frozen.wasixInstall.dependencies) visitDependency(dependency);
-  const dependenciesInput = path.join(root, 'selected-dependencies.json');
-  writeFileSync(dependenciesInput, JSON.stringify(dependencyFacts));
+      return { ...declared, bytes };
+    },
+  });
+  const preparedInput = path.join(root, 'consumer-input.json');
+  writeFileSync(preparedInput, JSON.stringify(prepared));
   extractPortableArchiveTree(
     addonArchive,
     path.join(root, 'node_modules', addonManifest.name),
@@ -495,14 +483,7 @@ try {
       '--experimental-strip-types',
       '--preserve-symlinks-main',
       realpathSync(consumerInput),
-      addonManifest.name,
-      spec.product,
-      spec.sqlName,
-      realpathSync(input),
-      realpathSync(frozenInput),
-      realpathSync(fixtureInput),
-      realpathSync(hostManifestInput),
-      dependenciesInput,
+      preparedInput,
     ],
     { cwd: root, env, stdout: 'pipe', stderr: 'pipe', timeout: 240_000 },
   );

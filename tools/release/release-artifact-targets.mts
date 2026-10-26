@@ -928,6 +928,23 @@ export function swiftArtifactRows() {
   ];
 }
 
+export function wasixRustRelinkRows(config) {
+  if (!config?.release_artifacts?.includes('windows-v8-relink')) return [];
+  const product = 'oliphaunt-wasix-rust';
+  return [
+    {
+      id: `${product}.windows-v8-relink`,
+      product,
+      kind: 'windows-v8-relink',
+      target: 'windows-x64-msvc',
+      asset: `${product}-{version}-windows-v8-relink.tar.zst`,
+      surfaces: ['github-release'],
+      _source_file: 'src/wasix/sdks/rust/release.toml',
+    },
+    githubChecksumRow(product),
+  ];
+}
+
 export function rawArtifactTargetRows(
   prefix = 'release-artifact-targets.mts',
   inputContext = undefined,
@@ -938,6 +955,7 @@ export function rawArtifactTargetRows(
     const selected = product === undefined ? Object.keys(products) : [product];
     return selected.flatMap((id) => {
       productConfig(id, prefix, inputContext);
+      if (id === 'oliphaunt-wasix-rust') return wasixRustRelinkRows(products[id]);
       if (id === 'oliphaunt-swift') return swiftArtifactRows();
       if (id === 'database-resources')
         return databaseResourceArtifactRows(
@@ -955,6 +973,7 @@ export function rawArtifactTargetRows(
     });
   }
   return [
+    ...wasixRustRelinkRows(productConfigs(prefix)['oliphaunt-wasix-rust']),
     ...swiftArtifactRows(),
     ...databaseResourceArtifactRows(),
     ...liboliphauntNativeRows(prefix),

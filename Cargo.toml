@@ -28,6 +28,7 @@ members = [
   "src/native/runtime/packaging",
   "src/native/postgres-tools/tests",
   "src/wasix/runtime/tools/xtask",
+  "src/wasix/runtime/tools/v8-serializer",
 ]
 resolver = "3"
 
@@ -42,6 +43,7 @@ license = "MIT"
 # These adapters exchange Rust types/state with the SDK they adopt.
 liboliphaunt-native-bindings = { path = "src/native/rust-bindings", version = "0.2.0" }
 oliphaunt-wasix = { path = "src/wasix/sdks/rust", version = "0.3.2" }
+wasmer = { package = "oliphaunt-wasmer", version = "=0.3.2", default-features = false }
 
 [profile.release]
 strip = "symbols"

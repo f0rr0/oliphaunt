@@ -41,6 +41,7 @@ import {
   swiftArtifactRows,
   validateExtensionCatalogRows,
   wasixArtifactRows,
+  wasixRustRelinkRows,
 } from './release-artifact-targets.mts';
 
 export interface ProductIdentity {
@@ -601,13 +602,15 @@ export function loadReleaseMetadata(root: string): ReleaseMetadata {
     'postgres-tools-wasix',
     'liboliphaunt-wasix-postmaster',
     'oliphaunt-wasix-napi',
-  ].flatMap((product) => {
-    const identity = products[product];
-    if (!identity) return [];
-    if (!identity.artifact_targets)
-      throw new Error(`${product} must declare WASIX artifact targets`);
-    return wasixArtifactRows(product, identity.artifact_targets.targets, 'release metadata');
-  });
+  ]
+    .flatMap((product) => {
+      const identity = products[product];
+      if (!identity) return [];
+      if (!identity.artifact_targets)
+        throw new Error(`${product} must declare WASIX artifact targets`);
+      return wasixArtifactRows(product, identity.artifact_targets.targets, 'release metadata');
+    })
+    .concat(wasixRustRelinkRows(descriptors.get('oliphaunt-wasix-rust')));
   const extensionReleaseMetadata = [];
   for (const [product, descriptor] of descriptors) {
     if (descriptor.extension === undefined) continue;
@@ -859,6 +862,7 @@ export function nativePublicationInputProjection(value: unknown, _metadata?: Rel
         if (carrier.product !== row.product)
           throw new Error('current native Cargo artifact owner differs');
       } else if (
+        !row.artifact.startsWith('constructor:') &&
         !github.some(
           (declaration) =>
             declaration.product === row.product &&

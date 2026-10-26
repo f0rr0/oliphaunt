@@ -17,7 +17,7 @@ import { createDeterministicTar } from '../../tools/packaging/cargo-source-packa
 import { canonicalGzipSync } from '../../tools/packaging/portable-archive.mts';
 import { stageReleaseNotices } from '../../tools/packaging/release-notices.mts';
 import { packageSpec } from '../../tools/packaging/wasix-cargo-payload.mts';
-import { copyDeclaredSources, stageDeclaredPayload } from './cargo.mts';
+import { copyDeclaredSources, copyDeclaredToolchain, stageDeclaredPayload } from './cargo.mts';
 import { type RuntimePayloadSpec, sourceFacts } from './package.mts';
 
 export interface ToolsCarrierSpec
@@ -40,6 +40,7 @@ export interface ToolsCarrierSpec
   sources: Record<string, string>;
   notices: Record<string, string>;
   toolchain: string;
+  engineSources?: string | null;
   outputs: { github: string; npm: string; cargo: string };
 }
 
@@ -74,7 +75,7 @@ export async function packageToolsCarriers(spec: ToolsCarrierSpec): Promise<void
     const sourceRoot = path.join(scratch, 'notices');
     copyDeclaredSources(spec.sources, templateDir);
     copyDeclaredSources(spec.notices, sourceRoot);
-    copyDeclaredSources({ 'src/wasix/runtime/toolchain.toml': spec.toolchain }, sourceRoot);
+    copyDeclaredToolchain(spec, sourceRoot);
     const payloadRoot = path.join(scratch, 'payload');
     stageDeclaredPayload(spec, payloadRoot);
     const { source_fingerprint: sourceFingerprint } = await sourceFacts(spec);

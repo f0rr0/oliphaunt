@@ -1,9 +1,34 @@
 load("//build_defs/foundation:bun.bzl", "bun_test")
 load("//build_defs/quality:sources.bzl", "rust_quality_files", "source_quality_files")
+load(":carriers-repository.bzl", "ENGINE_CARRIER_HELPERS")
+load(":packages.bzl", "ENGINE_PACKAGE_HELPERS")
+load("@rules_rust//rust:defs.bzl", "rust_binary")
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["defs.bzl", "generate.mts", "bridge.cc", "embedded-engine.rs", "build.rs.tpl", "build-script-regression.mts", "README.md"])
+exports_files(["defs.bzl", "binding-generator.bzl", "repositories.bzl", "extension.bzl", "acquisition.bzl", "acquisition.mts", "construction.bzl", "packages.bzl", "relink.bzl", "relink-package.mts", "relink-smoke.mts", "generate.mts", "bridge.cc", "embedded-engine.rs", "build.rs.tpl", "build-script-regression.mts", "README.md", "carriers-repository.bzl", "carriers.mts"])
+
+rust_binary(
+    name = "binding_generator",
+    srcs = ["binding-generator.rs"],
+    edition = "2024",
+    deps = ["@cargo_crates//:v8_bindgen"],
+    tags = ["manual"],
+)
+
+bun_test(
+    name = "carriers_test",
+    entry_point = "carriers.test.mts",
+    data = ENGINE_CARRIER_HELPERS + ["build.rs.tpl"],
+    size = "small",
+)
+
+bun_test(
+    name = "acquisition_test",
+    entry_point = "acquisition.test.mts",
+    data = ["acquisition.mts", "//build_defs/languages:cargo-metadata.mts", "//src/wasix/runtime/engine:package.mts", "//src/wasix/runtime/engine:sources.json"] + ENGINE_PACKAGE_HELPERS,
+    size = "small",
+)
 
 bun_test(
     name = "generate_test",

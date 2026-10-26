@@ -1303,6 +1303,7 @@ export async function acquireNativeReleaseArchives(
     ref = 'refs/heads/main',
     publicationInputs,
     consumerProducts,
+    wasixConstructorPhase,
   }: {
     source: NativeBuildSource;
     runId: number;
@@ -1310,6 +1311,7 @@ export async function acquireNativeReleaseArchives(
     ref?: string;
     publicationInputs?: string;
     consumerProducts?: string[];
+    wasixConstructorPhase?: string;
   },
   {
     readJson = requestGithubRepositoryJson,
@@ -1328,6 +1330,10 @@ export async function acquireNativeReleaseArchives(
     !existsSync(snapshotDirectory),
     'native archive assembly requires a new owned input snapshot directory',
   );
+  assert.ok(
+    wasixConstructorPhase === undefined || consumerProducts !== undefined,
+    'WASIX constructor phase requires its canonical consumer',
+  );
   try {
     const construction = await acquireNativePublicationBuilds(
       {
@@ -1342,7 +1348,10 @@ export async function acquireNativeReleaseArchives(
         ...(consumerProducts === undefined
           ? {}
           : {
-              requestedArtifactNames: nativeConstructorProducerArtifacts(consumerProducts),
+              requestedArtifactNames: nativeConstructorProducerArtifacts(
+                consumerProducts,
+                wasixConstructorPhase,
+              ),
             }),
       },
       { readJson, readPages, acquire },
@@ -1370,7 +1379,10 @@ export async function acquireNativeReleaseArchives(
 
 /** Existing producer composition owns the tuple used by the selected factory.
  * This narrows construction acquisition, never release necessity or admission. */
-export function nativeConstructorProducerArtifacts(consumerProducts: string[]) {
+export function nativeConstructorProducerArtifacts(
+  consumerProducts: string[],
+  wasixConstructorPhase?: string,
+) {
   const artifactByConsumer: Record<string, string> = {
     'oliphaunt-react-native': 'native-build-evidence-mobile-ios',
     'oliphaunt-wasix-napi': 'native-build-evidence-wasix-tools',
@@ -1381,10 +1393,25 @@ export function nativeConstructorProducerArtifacts(consumerProducts: string[]) {
     consumerProducts.length === 1 && Object.hasOwn(artifactByConsumer, consumerProducts[0]),
     'native constructor bootstrap requires one canonical consumer',
   );
-  const roles = reviewedNativeProducerArtifacts().filter(
-    ({ artifactName }) => artifactName === artifactByConsumer[consumerProducts[0]],
+  const phases: Record<string, string[]> = {
+    'windows-v8': ['native-build-evidence-wasix-modules'],
+    package: ['native-build-evidence-wasix-modules', 'native-build-evidence-wasix-windows-aot'],
+    host: ['native-build-evidence-wasix-windows-aot', 'native-build-evidence-wasix-tools'],
+  };
+  if (wasixConstructorPhase !== undefined)
+    assert.ok(
+      ['oliphaunt-wasix-napi', 'oliphaunt-wasix-rust'].includes(consumerProducts[0]) &&
+        Object.hasOwn(phases, wasixConstructorPhase),
+      'WASIX constructor phase requires its declared source consumer and phase',
+    );
+  const requested =
+    wasixConstructorPhase === undefined
+      ? [artifactByConsumer[consumerProducts[0]]]
+      : phases[wasixConstructorPhase];
+  const roles = reviewedNativeProducerArtifacts().filter(({ artifactName }) =>
+    requested.includes(artifactName),
   );
-  assert.equal(roles.length, 1, 'source-owned constructor role is absent');
+  assert.equal(roles.length, requested.length, 'source-owned constructor role is absent');
   return roles.map(({ artifactName }) => artifactName);
 }
 
@@ -2476,6 +2503,7 @@ if (import.meta.main) {
       'publication-inputs': { type: 'boolean' },
       'seed-adoption-anchor': { type: 'boolean' },
       'consumer-products-json': { type: 'string' },
+      'wasix-constructor-phase': { type: 'string' },
       'metadata-publisher-sha': { type: 'string' },
       'metadata-bundles-json': { type: 'string' },
       'run-id': { type: 'string' },
@@ -2497,10 +2525,11 @@ if (import.meta.main) {
       (!values['run-id'] || !/^[1-9][0-9]*$/u.test(values['run-id']) || !values.ref)) ||
     (values['publication-inputs'] &&
       (values['run-id'] !== undefined || values.ref !== undefined)) ||
+    (values['wasix-constructor-phase'] !== undefined && !values['stage-release-archives']) ||
     Boolean(values['metadata-publisher-sha']) !== Boolean(values['metadata-bundles-json'])
   )
     throw new Error(
-      'usage: native-release-preparation.mts (--stage-release-archives --run-id ID [--ref REF] | --publication-inputs [--consumer-products-json FILE]) --output-directory DIR',
+      'usage: native-release-preparation.mts (--stage-release-archives --run-id ID [--ref REF] [--wasix-constructor-phase windows-v8|package|host] | --publication-inputs [--consumer-products-json FILE]) --output-directory DIR',
     );
   try {
     if (values['publication-inputs']) {
@@ -2537,6 +2566,7 @@ if (import.meta.main) {
       const result = await acquireNativeReleaseArchives({
         source: sourceIdentity('HEAD'),
         publicationInputs: process.env.OLIPHAUNT_NATIVE_PUBLICATION_INPUTS,
+        wasixConstructorPhase: values['wasix-constructor-phase'],
         ...(values['consumer-products-json']
           ? { consumerProducts: JSON.parse(readFileSync(values['consumer-products-json'], 'utf8')) }
           : {}),

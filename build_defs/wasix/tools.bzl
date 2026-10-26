@@ -2,6 +2,7 @@
 
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action")
 load("//build_defs/release:identity.bzl", "ReleaseIdentityInfo")
+load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo", "merge_shipping_suppliers")
 load(":npm.bzl", "RUNTIME_NPM_NOTICES")
 load(":wasm.bzl", "WasmModuleInfo")
 
@@ -47,14 +48,16 @@ def _tools_impl(ctx):
         mnemonic = "WasixToolsEnvelope",
         progress_message = "Package declared portable WASIX tools %{label}",
     )
-    return [DefaultInfo(files = depset([output]))]
+    return [DefaultInfo(files = depset([output])), merge_shipping_suppliers([
+        ctx.attr.pg_dump[ShippingSupplierInfo], ctx.attr.psql[ShippingSupplierInfo],
+    ])]
 
 wasix_tools_payload = rule(
     implementation = _tools_impl,
     toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = {
-        "pg_dump": attr.label(providers = [WasmModuleInfo], mandatory = True),
-        "psql": attr.label(providers = [WasmModuleInfo], mandatory = True),
+        "pg_dump": attr.label(providers = [WasmModuleInfo, ShippingSupplierInfo], mandatory = True),
+        "psql": attr.label(providers = [WasmModuleInfo, ShippingSupplierInfo], mandatory = True),
         "product": attr.label(default = "@oliphaunt_metadata//:product_postgres-tools-wasix", providers = [ReleaseIdentityInfo]),
         "runtime_product": attr.label(default = "@oliphaunt_metadata//:product_liboliphaunt-wasix", providers = [ReleaseIdentityInfo]),
         "patches": attr.label_list(allow_files = [".patch"], mandatory = True),

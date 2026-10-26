@@ -39,6 +39,7 @@ export function projectCargoWorkspace(
   sourceExists: (relative: string) => boolean,
   activations: Record<string, string[]> = {},
   workspacePrefix = '',
+  acquisitionPatches: Record<string, { path: string; version: string }> = {},
 ) {
   if (lock.version !== 4) throw new Error('Native Cargo import requires lockfile schema 4');
   if (!workspace.workspace || (workspace.package && !workspacePrefix))
@@ -57,6 +58,36 @@ export function projectCargoWorkspace(
   const declaredMembers = workspace.workspace.members.map((member: string) =>
     path.posix.normalize(path.posix.join(workspacePrefix, member)),
   );
+  for (const [name, patch] of Object.entries(acquisitionPatches)) {
+    if (
+      !/^[A-Za-z0-9_-]+$/u.test(name) ||
+      typeof patch.path !== 'string' ||
+      !/^[A-Za-z0-9_./+-]+$/u.test(patch.path) ||
+      path.posix.isAbsolute(patch.path) ||
+      patch.path.split('/').some((part) => !part || part === '.' || part === '..') ||
+      typeof patch.version !== 'string' ||
+      !Bun.semver.satisfies(patch.version, `=${patch.version}`)
+    )
+      throw new Error(`Invalid Cargo acquisition patch: ${name}`);
+  }
+  const candidates = new Map<string, Table[]>();
+  for (const item of lock.package)
+    candidates.set(item.name, [...(candidates.get(item.name) ?? []), item]);
+  function lockedDependency(text: string): Table {
+    const identity = /^([^ ]+)(?: ([^ ]+)(?: \(([^)]+)\))?)?$/u.exec(text);
+    if (!identity) throw new Error(`Invalid canonical Cargo lock dependency: ${text}`);
+    const [, name, version, source] = identity;
+    let matches = (candidates.get(name) ?? []).filter(
+      (item) => (!version || item.version === version) && (!source || item.source === source),
+    );
+    // Cargo includes a source qualifier for registry identities when a local
+    // package has the same name and version; the unqualified identity is local.
+    if (!source && version && matches.length > 1) matches = matches.filter((item) => !item.source);
+    if (matches.length !== 1)
+      throw new Error(`Missing or ambiguous canonical Cargo lock dependency: ${text}`);
+    return matches[0];
+  }
+  const included = new Set<Table>();
   const pending = roots.length ? [...roots] : [...declaredMembers];
   for (const candidate of pending) {
     const relative = path.posix.normalize(candidate);
@@ -89,6 +120,17 @@ export function projectCargoWorkspace(
       }
     }
     members.set(relative, copy);
+    const local = (candidates.get(copy.package.name) ?? []).filter((item) => !item.source);
+    if (local.length !== 1)
+      throw new Error(`Missing canonical Cargo lock member: ${copy.package.name}`);
+    const frontier = [local[0]];
+    for (const item of frontier) {
+      if (included.has(item)) continue;
+      included.add(item);
+      const patch = !item.source && acquisitionPatches[item.name];
+      if (patch && declaredMembers.includes(patch.path)) pending.push(patch.path);
+      for (const dependency of item.dependencies ?? []) frontier.push(lockedDependency(dependency));
+    }
   }
   const byName = new Map<string, string>();
   for (const [relative, manifest] of members) {
@@ -96,22 +138,22 @@ export function projectCargoWorkspace(
       throw new Error(`Duplicate Cargo package ${manifest.package.name}`);
     byName.set(manifest.package.name, relative);
   }
-  const candidates = new Map<string, Table[]>();
-  for (const item of lock.package)
-    candidates.set(item.name, [...(candidates.get(item.name) ?? []), item]);
-  function lockedDependency(text: string): Table {
-    const identity = /^([^ ]+)(?: ([^ ]+)(?: \(([^)]+)\))?)?$/u.exec(text);
-    if (!identity) throw new Error(`Invalid canonical Cargo lock dependency: ${text}`);
-    const [, name, version, source] = identity;
-    let matches = (candidates.get(name) ?? []).filter(
-      (item) => (!version || item.version === version) && (!source || item.source === source),
-    );
-    // Cargo includes a source qualifier for registry identities when a local
-    // package has the same name and version; the unqualified identity is local.
-    if (!source && version && matches.length > 1) matches = matches.filter((item) => !item.source);
-    if (matches.length !== 1)
-      throw new Error(`Missing or ambiguous canonical Cargo lock dependency: ${text}`);
-    return matches[0];
+  const selectedPatches: Record<string, { path: string }> = {};
+  for (const item of included) {
+    if (item.source) continue;
+    const member = byName.get(item.name);
+    const patch = acquisitionPatches[item.name];
+    if (member) {
+      if (
+        patch &&
+        (patch.path !== member ||
+          patch.version !== item.version ||
+          patch.version !== members.get(member)?.package.version)
+      )
+        throw new Error(`Cargo acquisition patch differs from workspace member: ${item.name}`);
+    } else if (!patch || patch.version !== item.version || declaredMembers.includes(patch.path))
+      throw new Error(`Unrepresented nonworkspace Cargo source: ${item.name} ${item.version}`);
+    if (patch) selectedPatches[item.name] = { path: patch.path };
   }
   const facts: Table = {};
   const files: Record<string, string> = {};
@@ -238,28 +280,20 @@ export function projectCargoWorkspace(
       files[`${relative}/${source}`] = source === 'src/lib.rs' ? '' : 'fn main() {}\n';
     }
   }
-  const included = new Set<Table>();
-  const frontier = [...byName.keys()].map((name) => {
-    const local = (candidates.get(name) ?? []).filter((item) => !item.source);
-    if (local.length !== 1) throw new Error(`Missing canonical Cargo lock member: ${name}`);
-    return local[0];
-  });
-  for (const item of frontier) {
-    if (included.has(item)) continue;
-    included.add(item);
-    for (const dependency of item.dependencies ?? []) frontier.push(lockedDependency(dependency));
-  }
+  const isMember = (item: Table) => !item.source && byName.has(item.name);
   const projectedLock = {
     version: lock.version,
     package: [...included]
       .map((item) => ({
         ...item,
-        ...(!item.source ? { version: '0.0.0' } : {}),
+        ...(isMember(item) ? { version: '0.0.0' } : {}),
         ...(item.dependencies
           ? {
               dependencies: item.dependencies.map((text: string) => {
                 const dependency = lockedDependency(text);
-                return !dependency.source && text.includes(' ') ? `${dependency.name} 0.0.0` : text;
+                return isMember(dependency) && text.includes(' ')
+                  ? `${dependency.name} 0.0.0`
+                  : text;
               }),
             }
           : {}),
@@ -275,6 +309,7 @@ export function projectCargoWorkspace(
       members: [...members.keys()].sort(),
       resolver: workspace.workspace.resolver ?? '3',
     },
+    ...(Object.keys(selectedPatches).length ? { patch: { 'crates-io': selectedPatches } } : {}),
   });
   files['Cargo.lock'] = renderToml(projectedLock);
   for (const member of Object.keys(activations))
@@ -296,26 +331,57 @@ if (import.meta.main) {
   const root = workspacePrefix
     ? path.resolve(path.dirname(workspaceFile), path.relative(workspacePrefix, '.'))
     : path.dirname(workspaceFile);
+  const acquisitionIndex = options.indexOf('--acquisition');
+  const acquisition =
+    acquisitionIndex < 0
+      ? { files: {}, members: [], patch: {}, sources: {} }
+      : JSON.parse(readFileSync(options.splice(acquisitionIndex, 2)[1], 'utf8'));
   const activationIndex = options.indexOf('--activate');
   const activations = activationIndex < 0 ? {} : JSON.parse(options[activationIndex + 1]);
   const roots = activationIndex < 0 ? options : options.slice(0, activationIndex);
   if (activationIndex >= 0 && activationIndex !== options.length - 2)
     throw new Error('Expected --activate followed by one feature-map JSON argument');
+  const workspace = Bun.TOML.parse(readFileSync(workspaceFile, 'utf8'));
+  workspace.workspace.members.push(...acquisition.members);
   const result = projectCargoWorkspace(
-    Bun.TOML.parse(readFileSync(workspaceFile, 'utf8')),
+    workspace,
     Bun.TOML.parse(readFileSync(lockFile, 'utf8')),
     roots,
-    (relative) => Bun.TOML.parse(readFileSync(path.join(root, relative), 'utf8')),
-    (relative) => existsSync(path.join(root, relative)),
+    (relative) =>
+      Bun.TOML.parse(
+        acquisition.files[relative] ?? readFileSync(path.join(root, relative), 'utf8'),
+      ),
+    (relative) =>
+      Object.hasOwn(acquisition.files, relative) || existsSync(path.join(root, relative)),
     activations,
     workspacePrefix,
+    acquisition.patch,
   );
-  for (const [relative, text] of Object.entries(result.files)) {
+  // Generated acquisition stubs precede the ordinary workspace projection: its
+  // zeroed delivery-member manifests must be the ones Cargo actually resolves.
+  for (const [relative, text] of Object.entries({ ...acquisition.files, ...result.files })) {
     const destination = path.join(output, relative);
     mkdirSync(path.dirname(destination), { recursive: true });
-    writeFileSync(destination, text);
+    writeFileSync(destination, text as string);
   }
+  const selected = new Set(
+    Bun.TOML.parse(result.files['Cargo.lock'])
+      .package.filter((item: Table) => !item.source)
+      .map((item: Table) => `${item.name} ${item.version}`),
+  );
+  const sources = Object.fromEntries(
+    Object.entries(acquisition.sources).filter(([identity]) => selected.has(identity)),
+  );
   console.log(
-    JSON.stringify({ facts: result.facts, watched: result.watched, manifests: result.manifests }),
+    JSON.stringify({
+      facts: result.facts,
+      watched: [...new Set([...result.manifests, ...result.watched])].filter(
+        (relative) =>
+          !Object.hasOwn(acquisition.files, relative) &&
+          !acquisition.members.some((member: string) => relative.startsWith(`${member}/`)),
+      ),
+      manifests: result.manifests,
+      sources,
+    }),
   );
 }

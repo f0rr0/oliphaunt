@@ -1321,6 +1321,74 @@ function historicalFileResponse(file: string, contents: string) {
   };
 }
 
+test('the historical Cargo-only WASIX SDK stays asset-free while declared relink kits use archive delivery', async () =>
+  asyncScratch(async (directory) => {
+    const fixture = await publicFixture(directory, 'oliphaunt-wasix-rust');
+    const { publication } = fixture.input;
+    const ownerPath = 'historical/wasix-sdk';
+    const descriptor =
+      'id="oliphaunt-wasix-rust"\nkind="sdk"\npublish_targets=["crates-io"]\n' +
+      'registry_packages=["crates:oliphaunt-wasix"]\nrelease_artifacts=["cargo-crate"]\n';
+    const visited = new Set<string>();
+    const readJson = async (endpoint: string) => {
+      const file = endpoint.match(/\/contents\/(.+)\?ref=/u)?.[1];
+      if (!file) return fixture.options.readJson(endpoint);
+      visited.add(file);
+      const text = {
+        'release-please-config.json': JSON.stringify({
+          packages: { [ownerPath]: { component: publication.product } },
+        }),
+        '.release-please-manifest.json': JSON.stringify({ [ownerPath]: publication.version }),
+        [`${ownerPath}/release.toml`]: descriptor,
+      }[file];
+      if (!text) throw new Error(`unexpected historical SDK inventory input ${file}`);
+      return historicalFileResponse(file, text);
+    };
+    const options = { ...fixture.options, readJson };
+    const frozen = {
+      publication,
+      metadata: {
+        repository: 'f0rr0/oliphaunt',
+        source: { commit: publication.publicationSha, tree: publication.publicationTree },
+        product: { id: publication.product, version: publication.version },
+        carriers: [
+          {
+            id: 'cargo:oliphaunt-wasix',
+            ecosystem: 'cargo',
+            product: publication.product,
+            name: 'oliphaunt-wasix',
+            version: publication.version,
+            role: 'facade',
+            target: null,
+            declared: true,
+            artifacts: [{ path: 'oliphaunt-wasix.crate', size: 1, sha256: 'a'.repeat(64) }],
+          },
+        ],
+        productArtifacts: [],
+      },
+    };
+    for (const metadataBaseline of [undefined, frozen]) {
+      const inventory = await readCompletedNativeDeliveryInventory(publication, {
+        ...options,
+        ...(metadataBaseline ? { metadataBaseline, assertMetadataBaseline: (value) => value } : {}),
+      });
+      expect(inventory.carriers.map(({ id }) => id)).toEqual(['cargo:oliphaunt-wasix']);
+      expect(inventory.publicRows).toEqual([]);
+      expect(inventory.catalog.products[0].publishTargets).toEqual(['crates-io']);
+    }
+    expect([...visited].sort()).toEqual([
+      '.release-please-manifest.json',
+      `${ownerPath}/release.toml`,
+      'release-please-config.json',
+    ]);
+    const current = await captureCompletedNativePublicArtifacts(fixture.input, fixture.options);
+    expect(current.unknowns).toEqual([]);
+    expect(current.archives.map(({ kind }) => kind)).toEqual(['windows-v8-relink']);
+    expect(current.archives[0].members).toEqual(
+      nativeArchiveDeliveryMembers(fixture.input.files[current.archives[0].id]),
+    );
+  }));
+
 test('missing published baselines cannot become first deliveries through explicit IDs', async () => {
   const candidate = {
     ...buildPublicationCandidate({ products: sourceProducts, artifactRoots: [sourceFixture] }),

@@ -11,7 +11,7 @@ export type NativeShippingSupplier = {
   origin:
     | {
         kind: 'current-source';
-        /** Original authenticated final archive, for a consumed imported File. */
+        /** Original authenticated output, for a consumed imported File. */
         producer?: {
           evidenceDigest: string;
           invocationId: string;
@@ -23,7 +23,7 @@ export type NativeShippingSupplier = {
         };
       }
     | { kind: 'completed-publication'; publication: CompletedPublication; artifact: string };
-  /** Imported Files bind the authenticated outer File, or one of its archive members. */
+  /** Imported Files bind the authenticated whole File, or one of its archive members. */
   files: { path: string; member?: string }[];
 };
 
@@ -85,6 +85,27 @@ function required<T>(map: Map<string, T>, key: string): T {
 /** Bazel prints the main repository as //, @// or @@// across its query/event APIs. */
 export function canonicalShippingLabel(value: unknown): string {
   return text(value).replace(/^@@?\/\//, '//');
+}
+
+/** One source-owned generated File, retained only for same-source construction. */
+export function isNativeConstructorInputRoot(root: {
+  label: string;
+  package: {
+    ecosystem: string;
+    name: string;
+    role: string;
+    outputs: readonly { path: string }[];
+  };
+}) {
+  const pkg = root.package;
+  return (
+    canonicalShippingLabel(root.label).startsWith('//') &&
+    pkg.ecosystem === 'internal' &&
+    pkg.role === 'constructor-input' &&
+    /^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(pkg.name) &&
+    pkg.outputs.length === 1 &&
+    pkg.outputs[0].path.startsWith('bazel-out/')
+  );
 }
 
 /** The one declared private Apple document needed by foreign final construction. */

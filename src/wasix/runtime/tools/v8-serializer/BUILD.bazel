@@ -1,0 +1,37 @@
+load("@rules_rust//rust:defs.bzl", "rust_clippy_test", "rust_test")
+load("//build_defs/languages:rust.bzl", "cargo_binary", "cargo_package_env")
+load("//build_defs/quality:sources.bzl", "rust_quality_files")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["Cargo.toml"])
+
+cargo_package_env()
+
+cargo_binary(
+    name = "serializer",
+    source = "src/main.rs",
+    experimental_use_cc_common_link = 1,
+    target_compatible_with = ["@platforms//os:windows", "@platforms//cpu:x86_64"],
+    exec_compatible_with = ["@platforms//os:windows", "@platforms//cpu:x86_64"],
+)
+
+rust_test(
+    name = "options_test",
+    crate = ":serializer",
+    experimental_use_cc_common_link = 1,
+    target_compatible_with = ["@platforms//os:windows", "@platforms//cpu:x86_64"],
+    size = "small",
+    tags = ["manual"],
+)
+
+rust_quality_files()
+
+rust_clippy_test(
+    name = "clippy_test",
+    targets = [":serializer"],
+    transitive = False,
+    target_compatible_with = ["@platforms//os:windows", "@platforms//cpu:x86_64"],
+    size = "small",
+    tags = ["quality", "static"],
+)

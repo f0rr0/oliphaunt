@@ -985,6 +985,81 @@ test('imported current member binds the qualified invocation without inventing a
   });
 });
 
+async function importedConstructorFixture(run) {
+  await importedFixture(async (context) => {
+    const { original, supplier, packetArchive, executionRoot, cohort, build, roots } = context;
+    const root = original.roots[0];
+    Object.assign(root.package, {
+      ecosystem: 'internal',
+      role: 'constructor-input',
+      name: 'postgres-wasix-wasm',
+    });
+    const bytes = Buffer.from('original Linux constructor image: not an archive');
+    writeFileSync(path.join(executionRoot, supplier.origin.producer.output), bytes);
+    writeFileSync(packetArchive, bytes);
+    writeFileSync(path.join(executionRoot, heldFile), bytes);
+    original.outputs[0].members = captureNativeOutputMembers(
+      executionRoot,
+      supplier.origin.producer.output,
+    ).members;
+    cohort.inputs.find(({ path }) => path === heldFile).members = captureNativeInputMembers(
+      executionRoot,
+      heldFile,
+    ).members;
+    Object.assign(build.origin.finalFiles.files[0], {
+      size: bytes.length,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    });
+    roots[2].package.configuration = 'windows-x64';
+    await run(context);
+  }, true);
+}
+
+test('a private constructor File binds its original Linux producer across foreign-host consumption without archive parsing', async () => {
+  await importedConstructorFixture(async ({ project, supplier, build, roots }) => {
+    const producer = structuredClone(supplier.origin.producer);
+    const windows = await project();
+    expect(windows.unknowns).toEqual([]);
+    expect([...windows.buildBound!.get(consumer)!]).toEqual([product]);
+    expect(
+      windows.suppliers.find(({ origin }) => origin.kind === 'current-source' && origin.producer)!
+        .origin,
+    ).toEqual({ kind: 'current-source', producer });
+    roots[2].package.configuration = 'linux-x64-gnu';
+    const linux = await project();
+    expect(linux.unknowns).toEqual([]);
+    expect(
+      linux.suppliers.find(({ origin }) => origin.kind === 'current-source' && origin.producer)!
+        .origin,
+    ).toEqual({ kind: 'current-source', producer });
+    expect(build.origin.github.job).toBe('Original Linux builder');
+  });
+});
+
+test('private constructor reuse rejects fabricated roles, public identity, Tree/member, owner, source and bytes', async () => {
+  for (const mutate of [
+    ({ original }) => (original.roots[0].package.role = 'construction'),
+    ({ original }) => (original.roots[0].package.ecosystem = 'github'),
+    ({ original }) => (original.roots[0].package.name = '../postgres'),
+    ({ original }) =>
+      original.roots[0].package.outputs.push({
+        path: 'bazel-out/cfg/bin/other.wasm',
+        owner: '//runtime:other',
+      }),
+    ({ original }) => (original.roots[0].package.product = consumer),
+    ({ build }) => (build.evidence.source.tree = 'e'.repeat(40)),
+    ({ supplier }) => (supplier.origin.producer.member = 'postgres.wasm'),
+    ({ supplier }) => (supplier.files[0].member = 'postgres.wasm'),
+    ({ cohort }) =>
+      (cohort.inputs.find(({ path }) => path === heldFile).members[0].sha256 = '0'.repeat(64)),
+    ({ packetArchive }) => writeFileSync(packetArchive, 'substituted constructor bytes'),
+  ])
+    await importedConstructorFixture(async (context) => {
+      mutate(context);
+      await expect(context.project()).rejects.toThrow();
+    });
+});
+
 for (const wholeArchive of [false, true]) {
   const kind = wholeArchive ? 'whole archive' : 'member';
   test(`missing original current ${kind} evidence or transported bytes stays unknown`, async () => {

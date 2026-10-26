@@ -533,7 +533,7 @@ where
         stdin,
         args,
     } = invocation;
-    let engine = aot::headless_engine();
+    let engine = aot::headless_engine()?;
     let module = match assets {
         // SAFETY: ToolAssets construction requires trusted compiler output.
         Some(assets) => unsafe {
@@ -570,6 +570,10 @@ where
             tokio::runtime::Handle::current(),
         )));
         wasix_runtime.set_engine(engine.clone());
+        #[cfg(windows)]
+        {
+            wasix_runtime.module_cache_only = true;
+        }
         wasix_runtime.set_networking_implementation(networking);
         (host_fs, wasix_runtime)
     };

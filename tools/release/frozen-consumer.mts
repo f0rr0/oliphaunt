@@ -19,7 +19,7 @@ import {
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { stageCargoCarrierInputs } from '../packaging/frozen-cargo.mts';
+import { assertCargoSourceArtifacts, stageCargoCarrierInputs } from '../packaging/frozen-cargo.mts';
 import {
   extractPortableArchiveTree,
   readPortableArchiveEntries,
@@ -74,9 +74,35 @@ export function frozenConsumerPlan(
   } = {},
 ) {
   const cases = [];
+  const cargoEntryPoints = new Map(
+    lock.products.flatMap((product) => {
+      const metadata = products[product.id];
+      if (metadata?.kind !== 'sdk') return [];
+      const manifestFile = path.join(ROOT, metadata.path, 'Cargo.toml');
+      if (!existsSync(manifestFile)) return [];
+      const name = Bun.TOML.parse(readFileSync(manifestFile, 'utf8')).package?.name;
+      const entry = lock.carriers.find(
+        (carrier) =>
+          carrier.ecosystem === 'cargo' &&
+          carrier.product === product.id &&
+          carrier.name === name &&
+          carrier.version === product.version,
+      );
+      if (!entry) throw new Error(`${product.id} has no frozen Cargo SDK entrypoint ${name}`);
+      return [[product.id, entry.id]];
+    }),
+  );
   for (const carrier of lock.carriers) {
     if (!['cargo', 'npm', 'maven'].includes(carrier.ecosystem))
       throw new Error(`no frozen consumer adapter for ${carrier.ecosystem}`);
+    // The conventional SDK manifest owns its public default install. Cargo
+    // supplies the implementation crates' target and feature context.
+    if (
+      carrier.ecosystem === 'cargo' &&
+      cargoEntryPoints.has(carrier.product) &&
+      cargoEntryPoints.get(carrier.product) !== carrier.id
+    )
+      continue;
     for (const [target] of TARGETS) {
       if (carrier.ecosystem === 'maven' && target !== 'linux-x64-gnu') continue;
       const host = consumerHostTarget(carrier.target);
@@ -894,8 +920,11 @@ async function npmConsumer(
 
 async function cargoConsumer(test, carrier, lock, directory, config, environment) {
   mkdirSync(path.join(directory, 'src'), { recursive: true });
-  let manifest = `[package]\nname = "frozen-consumer"\nversion = "0.0.0"\nedition = "2024"\n[workspace]\n[dependencies]\n${JSON.stringify(carrier.name)} = ${JSON.stringify(`=${carrier.version}`)}\n`;
-  let fixture = `extern crate ${carrier.name.replaceAll('-', '_')};\nfn main() {}\n`;
+  const dependency = ['oliphaunt', 'oliphaunt-wasix'].includes(carrier.name)
+    ? carrier.name
+    : 'locked_entry';
+  let manifest = `[package]\nname = "frozen-consumer"\nversion = "0.0.0"\nedition = "2024"\n[workspace]\n[dependencies]\n${JSON.stringify(dependency)} = { package = ${JSON.stringify(carrier.name)}, version = ${JSON.stringify(`=${carrier.version}`)} }\n`;
+  let fixture = `extern crate ${dependency.replaceAll('-', '_')};\nfn main() {}\n`;
   if (['oliphaunt', 'oliphaunt-wasix'].includes(carrier.name)) {
     const archive = lockedCarrierFile(lock, 'cargo', carrier.name).file;
     const entries = readPortableArchiveEntries(archive);
@@ -920,12 +949,40 @@ async function cargoConsumer(test, carrier, lock, directory, config, environment
   }
   writeFileSync(path.join(directory, 'Cargo.toml'), manifest);
   writeFileSync(path.join(directory, 'src/main.rs'), fixture);
+  const executionLog = path.join(directory, 'execute.log');
   await command(
-    ['cargo', '--config', config, 'run', '--manifest-path', path.join(directory, 'Cargo.toml')],
+    [
+      'cargo',
+      '--config',
+      config,
+      'run',
+      '--message-format=json',
+      '--manifest-path',
+      path.join(directory, 'Cargo.toml'),
+    ],
     directory,
     environment,
-    path.join(directory, 'execute.log'),
+    executionLog,
   );
+  const compiledSources = assertCargoSourceArtifacts(
+    readFileSync(executionLog, 'utf8')
+      .split('\n')
+      .filter((line) => line.startsWith('{"reason":'))
+      .join('\n'),
+    lock.carriers
+      .filter((input) => input.ecosystem === 'cargo')
+      .map((input) => ({
+        name: input.name,
+        version: input.version,
+        manifestPath: path.join(
+          path.dirname(config),
+          'crates',
+          `${input.name}-${input.version}`,
+          'Cargo.toml',
+        ),
+      })),
+    [carrier.name],
+  ).map(({ name, version }) => ({ name, version }));
   const resolution = Bun.TOML.parse(readFileSync(path.join(directory, 'Cargo.lock'), 'utf8'));
   if (
     !resolution.package.some(
@@ -933,8 +990,9 @@ async function cargoConsumer(test, carrier, lock, directory, config, environment
     )
   )
     throw new Error(`Cargo did not consume the frozen ${carrier.id}`);
+  writeJson(path.join(directory, 'resolution.json'), { resolution, compiledSources });
   return {
-    resolutionDigest: consumerDigest(resolution),
+    resolutionDigest: consumerDigest({ resolution, compiledSources }),
     resolvedInputs: resolution.package
       .filter((pkg) => pkg.name !== 'frozen-consumer')
       .map((pkg) => {

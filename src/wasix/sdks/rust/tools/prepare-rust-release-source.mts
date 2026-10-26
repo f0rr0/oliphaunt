@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
+import { readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { renderCargoToml } from '../../../../../tools/packaging/cargo-manifest.mts';
 import {
   packagedCargoManifestText,
   parseCargoPackageNameVersion,
@@ -13,6 +15,7 @@ import { loadPublicationCatalog } from '../../../../../tools/release/publication
 import { productCompatibilityVersion } from '../../../../../tools/release/release-graph.mts';
 import {
   canonicalWasixCargoToolchainVersions,
+  canonicalWasixEngineSourcePackages,
   validateWasixConsumerDependencyPins,
 } from '../../../runtime/tools/wasix-cargo-toolchain-policy.mts';
 import { ROOT as root, stageWasixRustPackageSource } from './package-source.mts';
@@ -40,40 +43,43 @@ export async function currentOliphauntWasixSdkVersion() {
   return parseCargoPackageNameVersion(text, 'src/wasix/sdks/rust/Cargo.toml').version;
 }
 
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-}
-
-export function renderOliphauntWasixReleaseCargoToml(source, runtimeVersion) {
-  const metadata = Bun.TOML.parse(source).package?.metadata?.oliphaunt ?? {};
+export function renderOliphauntWasixReleaseCargoToml(
+  source,
+  runtimeVersion,
+  workspaceSource = readFileSync(path.join(root, 'Cargo.toml'), 'utf8'),
+) {
+  const manifest = Bun.TOML.parse(packagedCargoManifestText(source, workspaceSource));
+  const metadata = manifest.package?.metadata?.oliphaunt ?? {};
   const requirements = {
     'liboliphaunt-wasix': runtimeVersion ?? metadata['runtime-version'],
     'postgres-tools-wasix': metadata['tools-version'],
     'database-resources': metadata['icu-version'],
+    'oliphaunt-wasix-rust': manifest.package.version,
   };
-  let text = packagedCargoManifestText(source);
   const catalog = loadPublicationCatalog('prepare-rust-release-source.mts');
-  for (const carrier of catalog.carriers.filter((entry) => entry.ecosystem === 'cargo')) {
-    const crate = carrier.name;
-    const pattern = new RegExp(
-      `^(${escapeRegExp(crate)}\\s*=\\s*\\{[^}\\n]*version\\s*=\\s*")([^"]+)("[^}\\n]*\\})$`,
-      'gmu',
-    );
-    if (!pattern.test(text)) {
-      continue;
-    }
-    text = text.replace(pattern, (_, before, declaredVersion, after) => {
-      const version =
-        declaredVersion === '*'
-          ? requirements[carrier.product]
-          : declaredVersion.replace(/^=/u, '');
-      if (typeof version !== 'string' || version.length === 0) {
-        throw new Error(`Missing installed compatibility pin for ${crate}`);
+  const carriers = new Map(
+    catalog.carriers
+      .filter((entry) => entry.ecosystem === 'cargo')
+      .map((entry) => [entry.name, entry]),
+  );
+  for (const table of [manifest, ...Object.values(manifest.target ?? {})]) {
+    for (const kind of ['dependencies', 'build-dependencies', 'dev-dependencies']) {
+      for (const [alias, dependency] of Object.entries(table[kind] ?? {})) {
+        const spec = typeof dependency === 'string' ? { version: dependency } : dependency;
+        const crate = spec.package ?? alias;
+        const carrier = carriers.get(crate);
+        if (!carrier) continue;
+        const version =
+          spec.version === '*' ? requirements[carrier.product] : spec.version?.replace(/^=/u, '');
+        if (typeof version !== 'string' || version.length === 0) {
+          throw new Error(`Missing installed compatibility pin for ${crate}`);
+        }
+        table[kind][alias] =
+          typeof dependency === 'string' ? `=${version}` : { ...spec, version: `=${version}` };
       }
-      return `${before}=${version}${after}`;
-    });
+    }
   }
-  return text;
+  return renderCargoToml(manifest);
 }
 
 function validateGeneratedOliphauntWasixReleaseArtifactCoverage(manifestText) {
@@ -84,6 +90,7 @@ function validateGeneratedOliphauntWasixReleaseArtifactCoverage(manifestText) {
   const toolchainFailures = validateWasixConsumerDependencyPins(Bun.TOML.parse(manifestText), {
     manifestPath: 'generated oliphaunt-wasix release source',
     toolchainVersions,
+    engineSourcePackages: canonicalWasixEngineSourcePackages(root, toolchainVersions),
   });
   if (toolchainFailures.length > 0) {
     fail(toolchainFailures.join('\n'));

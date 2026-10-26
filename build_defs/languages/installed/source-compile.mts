@@ -85,12 +85,14 @@ export function sourceCandidates(
     includeDev = true,
     sourceOwners = {},
     selectedProducts = [],
+    payloadNames = new Set<string>(),
   }: {
     minimum?: boolean;
     currentPaths?: Record<string, string[]>;
     includeDev?: boolean;
     sourceOwners?: Record<string, { product: string; version: string }>;
     selectedProducts?: string[];
+    payloadNames?: ReadonlySet<string>;
   } = {},
 ) {
   const lock = Bun.TOML.parse(lockText);
@@ -104,6 +106,7 @@ export function sourceCandidates(
     );
     locals.set(row.name, row);
   }
+  for (const name of payloadNames) locals.delete(name);
   const available = (rows: Candidate[]) => {
     const result = new Map<string, Candidate>();
     for (const row of rows) {
@@ -292,18 +295,19 @@ export async function sourceCompile(
           .map((row: any) => row.name),
       ),
     );
-    const sourcePool = sourceCandidates(
-      archivePool[0],
-      archivePool.slice(1),
-      capturedLock,
-      heldPool,
-      { currentPaths },
-    );
     const payloadPool = cargoPayloadPool(
       spec.payloadPool ?? { completed: [], current: [], owners: {} },
       spec.sourceOwners ?? {},
       file,
       archiveDirectory,
+    );
+    const payloadNames = new Set(Object.keys(payloadPool.owners));
+    const sourcePool = sourceCandidates(
+      archivePool[0],
+      archivePool.slice(1),
+      capturedLock,
+      heldPool,
+      { currentPaths, payloadNames },
     );
     const payloadOptions = {
       currentSources: archivePool,
@@ -540,6 +544,7 @@ export async function sourceCompile(
           includeDev: false,
           sourceOwners: spec.sourceOwners ?? {},
           selectedProducts: spec.selectedProducts ?? [],
+          payloadNames,
         },
       );
       const minimumCandidates = [

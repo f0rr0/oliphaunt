@@ -18,7 +18,7 @@ export type ExtensionFinalInputFile = {
   /** Existing captured TreeArtifact member path; absent for a regular output. */
   member?: string;
 };
-/** Original payload carriers from the existing same-source producer handoff. */
+/** Original payload carriers and private Files from the same-source producer handoff. */
 export type NativeCurrentArtifact = {
   product: string;
   version: string;
@@ -94,7 +94,7 @@ export function projectOriginalNativeFinalFile(file: ExtensionFinalInputFile, pr
   if (file.member !== undefined) safeRelative(file.member);
   safeRelative(prefix);
   const basename = path.basename(file.path);
-  assert.match(basename, /^[A-Za-z0-9][A-Za-z0-9._-]*$/u);
+  assert.match(basename, /^[A-Za-z0-9_][A-Za-z0-9._-]*$/u);
   const output = `${prefix}/${file.sha256}/${basename}`;
   return {
     file: { ...structuredClone(file), path: `@oliphaunt_metadata//:${output}` },
@@ -122,7 +122,9 @@ export function projectNativeCurrentArtifacts(
     fields(row.source, ['commit', 'tree'], 'current native artifact source');
     for (const sha of [row.source.commit, row.source.tree]) assert.match(sha, /^[a-f0-9]{40}$/u);
     assert.deepEqual(row.source, source, 'current native artifact source differs');
-    const match = row.artifact.match(/^(cargo|github-release):([A-Za-z0-9][A-Za-z0-9._-]*)$/u);
+    const match = row.artifact.match(
+      /^(cargo|github-release|constructor):([A-Za-z0-9][A-Za-z0-9._-]*)$/u,
+    );
     assert.ok(match, 'current native artifact needs a canonical carrier identity');
     if (match[1] === 'github-release')
       assert.equal(
@@ -130,7 +132,14 @@ export function projectNativeCurrentArtifacts(
         match[2],
         'current native artifact filename differs',
       );
-    else assert.ok(row.file.path.endsWith('.crate'), 'current native Cargo File needs .crate');
+    else if (match[1] === 'cargo')
+      assert.ok(row.file.path.endsWith('.crate'), 'current native Cargo File needs .crate');
+    else
+      assert.equal(
+        row.file.member,
+        undefined,
+        'current native constructor input needs its whole regular original File',
+      );
     const key = `${row.product}/${row.version}/${row.artifact}`;
     assert.ok(!Object.hasOwn(artifacts, key), 'current native artifact repeats');
     const projected = projectOriginalNativeFinalFile(

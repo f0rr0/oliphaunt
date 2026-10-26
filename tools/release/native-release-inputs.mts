@@ -271,7 +271,7 @@ export function parseNativeReleaseInputRecord(value: NativeReleaseInputRecord) {
 
 const relativeFile = (file: { path: string; size: number; sha256: string }) => {
   assert.match(file.sha256, /^[a-f0-9]{64}$/u);
-  const name = path.basename(file.path);
+  const name = path.win32.basename(file.path);
   assert.match(name, /^[A-Za-z0-9][A-Za-z0-9._-]*$/u);
   return path.join('files', file.sha256, name);
 };
@@ -354,11 +354,12 @@ function assertSupplierFiles(value: unknown, publications: CompletedPublication[
   return rows;
 }
 
-function assertFinalInputFiles(inputs: NativeReleaseFinalInputs & { source?: NativeBuildSource }) {
-  if (inputs.nativeCurrentArtifacts !== undefined) {
-    const source = inputs.source ?? inputs.nativeCurrentArtifacts[0]?.source;
-    projectNativeCurrentArtifacts(inputs.nativeCurrentArtifacts, source);
-  }
+function assertFinalInputFiles(
+  inputs: NativeReleaseFinalInputs & { source?: NativeBuildSource },
+  expectedSource = inputs.source,
+) {
+  if (inputs.nativeCurrentArtifacts !== undefined)
+    projectNativeCurrentArtifacts(inputs.nativeCurrentArtifacts, expectedSource);
   if (inputs.extensionFinalInputs !== undefined)
     projectNativeExtensionFinalInputs(inputs.extensionFinalInputs);
   if (inputs.nativeAppleBase !== undefined) projectNativeAppleBaseInput(inputs.nativeAppleBase);
@@ -496,7 +497,7 @@ export function transportPublicNativePublicationInputs(
       ...copyInputFile(file, destination),
     }));
     projectNativeSeedInputs(seedControls, currentSource);
-    assertFinalInputFiles(finalInputs);
+    assertFinalInputFiles(finalInputs, currentSource);
     const result = path.join(destination, 'native-publication-inputs.json');
     writeJson(result, {
       ...snapshot,
@@ -535,7 +536,7 @@ export function importPublicNativePublicationInputs(
     ...file,
     path: path.join(path.resolve(directory), relativeFile(file)),
   }));
-  assertFinalInputFiles(finalInputs);
+  assertFinalInputFiles(finalInputs, currentSource);
   const output = path.join(directory, 'native-publication-inputs-current.json');
   writeJson(output, {
     ...snapshot,
@@ -570,7 +571,7 @@ export function writeNativeReleaseInputs(
   projectNativeSeedInputs(seedControls, record.preparedSource);
   assertSupplierFiles(supplierArtifacts, supplierPublications);
   fields(finalInputs, finalInputFields(finalInputs));
-  assertFinalInputFiles(finalInputs);
+  assertFinalInputFiles(finalInputs, record.preparedSource);
   for (const row of seedControls) {
     assertPromotedReceipt(row);
     assert.deepEqual(row.promotion?.source, record.bridge.source);
@@ -593,7 +594,7 @@ export function writeNativeReleaseInputs(
       ...copyInputFile(file, destination),
     }));
     projectNativeSeedInputs(controls, record.preparedSource);
-    assertFinalInputFiles(retainedFinalInputs);
+    assertFinalInputFiles(retainedFinalInputs, record.preparedSource);
     writeJson(path.join(destination, 'native-version-source.json'), record);
     writeJson(path.join(destination, 'native-publication-inputs.json'), {
       source: record.preparedSource,
@@ -651,7 +652,7 @@ export function relocateNativeReleaseInputs(
     ...file,
     path: path.join(path.resolve(directory), relativeFile(file)),
   }));
-  assertFinalInputFiles(finalInputs);
+  assertFinalInputFiles(finalInputs, record.preparedSource);
   projectNativeSeedInputs(controls, record.preparedSource);
   for (const row of controls) {
     assertPromotedReceipt(row);

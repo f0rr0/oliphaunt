@@ -26,6 +26,23 @@ export interface RuntimeCargoSpec {
   sources: Record<string, string>;
   notices: Record<string, string>;
   toolchain: string;
+  engineSources?: string | null;
+}
+
+/** Stage only the declared conventional pins used by target-aware AOT readers. */
+export function copyDeclaredToolchain(
+  spec: Pick<RuntimeCargoSpec, 'toolchain' | 'engineSources'>,
+  destination: string,
+): void {
+  copyDeclaredSources(
+    {
+      'src/wasix/runtime/toolchain.toml': spec.toolchain,
+      ...(spec.engineSources
+        ? { 'src/wasix/runtime/engine/sources.json': spec.engineSources }
+        : {}),
+    },
+    destination,
+  );
 }
 
 export function copyDeclaredSources(files: Record<string, string>, destination: string): void {
@@ -104,7 +121,7 @@ export function packageRuntimeCargo(spec: RuntimeCargoSpec, output: string): voi
     const noticeSourceRoot = path.join(scratch, 'notices');
     copyDeclaredSources(spec.sources, templateDir);
     copyDeclaredSources(spec.notices, noticeSourceRoot);
-    copyDeclaredSources({ 'src/wasix/runtime/toolchain.toml': spec.toolchain }, noticeSourceRoot);
+    copyDeclaredToolchain(spec, noticeSourceRoot);
     const payloadRoot = path.join(scratch, 'payload');
     stageDeclaredPayload(spec, payloadRoot);
     if (portable) {

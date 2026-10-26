@@ -1654,6 +1654,74 @@ test('native archive acquisition preserves preexisting output directories', asyn
   }
 });
 
+test('WASIX phase acquisition retains each original producer and refuses missing upstream packets', async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'native-wasix-phases-'));
+  try {
+    for (const [phase, required] of Object.entries({
+      'windows-v8': ['native-build-evidence-wasix-modules'],
+      package: ['native-build-evidence-wasix-modules', 'native-build-evidence-wasix-windows-aot'],
+      host: ['native-build-evidence-wasix-tools', 'native-build-evidence-wasix-windows-aot'],
+    })) {
+      const retained: any[] = [];
+      const requests: any[] = [];
+      const options = {
+        readJson: async () => ({ ...eligible, status: 'in_progress', conclusion: null }),
+        readPages: async () => [
+          ...required.map((name) => ({ name, expired: false })),
+          { name: 'native-build-evidence-x86_64', expired: false },
+        ],
+        acquire: async (_root, expected) => {
+          requests.push(expected);
+          // Inject the acquisition boundary only; this fixture asserts no live build proof.
+          const origin = {
+            github: { ...expected.github, runAttempt: 1 },
+            finalFiles: { files: [] },
+          };
+          retained.push(origin);
+          return origin as any;
+        },
+      };
+      const result = await acquireNativeReleaseArchives(
+        {
+          source,
+          runId: 77,
+          directory: path.join(directory, phase),
+          consumerProducts: ['oliphaunt-wasix-rust'],
+          wasixConstructorPhase: phase,
+        },
+        options,
+      );
+      expect(requests.map(({ artifactName }) => artifactName).sort()).toEqual([...required].sort());
+      expect(
+        requests.every((request) => request.source === source && request.github.runId === 77),
+      ).toBe(true);
+      expect([...result.origins.values()]).toEqual(retained);
+      expect(
+        [...result.origins.values()].every((origin, index) => origin === retained[index]),
+      ).toBe(true);
+      requests.length = 0;
+      await expect(
+        acquireNativeReleaseArchives(
+          {
+            source,
+            runId: 77,
+            directory: path.join(directory, phase + '-missing'),
+            consumerProducts: ['oliphaunt-wasix-rust'],
+            wasixConstructorPhase: phase,
+          },
+          {
+            ...options,
+            readPages: async () => required.slice(1).map((name) => ({ name, expired: false })),
+          },
+        ),
+      ).rejects.toThrow(/no retained source producer|not completed and retained/);
+      expect(requests).toEqual([]);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('PR family construction uses finite completed producer transport and never admits release assurance', async () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'native-family-pr-'));
   try {

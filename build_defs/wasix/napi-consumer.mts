@@ -95,12 +95,10 @@ const direct = addon.NativeWasixDatabase.open(options);
 let backup: Uint8Array;
 try {
   assert.deepEqual(exchange(direct.execProtocolRaw(simpleQuery('SELECT 42::text'))), [['42']]);
-  // MSVC currently uses top-level recovery because its Wasmer backend lacks nested unwinding.
-  if (process.platform !== 'win32')
-    assert.deepEqual(
-      exchange(
-        direct.execProtocolRaw(
-          simpleQuery(`
+  assert.deepEqual(
+    exchange(
+      direct.execProtocolRaw(
+        simpleQuery(`
           CREATE TEMP TABLE carrier_exception_probe(value integer);
           DO $$ BEGIN
             BEGIN
@@ -118,11 +116,11 @@ try {
           SELECT array_agg(value ORDER BY value)::text FROM carrier_exception_probe;
           DROP TABLE carrier_exception_probe;
           `),
-        ),
       ),
-      [['{2,3}']],
-      'PL/pgSQL exceptions must preserve their handlers and roll back the failed subtransaction',
-    );
+    ),
+    [['{2,3}']],
+    'PL/pgSQL exceptions must preserve their handlers and roll back the failed subtransaction',
+  );
   const created = new Set<string>();
   const pending = new Map(lifecycles.map((row) => [row.sqlName, row]));
   while (pending.size) {

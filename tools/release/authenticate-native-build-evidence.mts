@@ -72,6 +72,8 @@ const reviewedProducerArtifacts: readonly (readonly [string, string])[] = [
   ['Portable packages (macos-arm64)', 'native-build-evidence-native-macos-arm64'],
   ['Portable packages (windows-x64)', 'native-build-evidence-native-windows-x64'],
   ['Linux WASIX and installed browser', 'native-build-evidence-wasix-tools'],
+  ['Linux WASIX constructor modules', 'native-build-evidence-wasix-modules'],
+  ['Windows WASIX V8 constructor', 'native-build-evidence-wasix-windows-aot'],
   ['Linux native postmaster lifecycle', 'native-build-evidence-postmaster-linux'],
   ['Native postmaster lifecycle (linux-arm64)', 'native-build-evidence-postmaster-linux-arm64'],
   ['Native postmaster lifecycle (macos-arm64)', 'native-build-evidence-postmaster-macos-arm64'],

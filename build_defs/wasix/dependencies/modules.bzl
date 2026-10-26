@@ -2,6 +2,7 @@
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//build_defs/extensions:contrib.bzl", "contrib_generated_sources")
+load("//build_defs/extensions:extensions.bzl", "extension_identity")
 load("//build_defs/extensions/postgis:generators.bzl", "postgis_flex")
 load("//build_defs/extensions/postgis:libraries.bzl", "postgis_source_headers")
 load("//build_defs/extensions/postgis:modules.bzl", "POSTGIS_LWGEOM_SOURCES", "POSTGIS_PG_SOURCES", "POSTGIS_PGCOMMON_SOURCES", "POSTGIS_RASTER_SOURCES", "POSTGIS_RTCORE_SOURCES", "POSTGIS_TOPOLOGY_SOURCES")
@@ -13,6 +14,7 @@ load(":postgis.bzl", "WASIX_DEPENDENCY_COMPATIBLE")
 
 def wasix_postgis_modules(name = "postgis"):
     prefix = "@postgis//:"
+    owner = extension_identity("postgis", family = "wasix")
     wasix_dependency_headers(
         name = name + "_config",
         kind = "postgis",
@@ -59,6 +61,7 @@ def wasix_postgis_modules(name = "postgis"):
                copts = WASIX_COPTS + ["-fPIC", "-fvisibility=hidden"], linkstatic = True, target_compatible_with = WASIX_DEPENDENCY_COMPATIBLE)
     wasix_module(
         name = name + "_dependency_module",
+        constructor_owner = owner,
         output_name = "liboliphaunt_postgis_deps.so",
         deps = [":" + name + "_lifecycle"] + [":" + library for library in ["gdal", "geos", "proj", "sqlite", "json_c", "libxml2", "iconv"]],
         cxx_runtime = True,
@@ -75,6 +78,7 @@ def wasix_postgis_modules(name = "postgis"):
     )
     wasix_module(
         name = name,
+        constructor_owner = owner,
         output_name = "postgis-3.so",
         deps = [":" + name + "_objects"],
         dynamic_deps = [":" + name + "_dependency_module"],
@@ -84,7 +88,7 @@ def wasix_postgis_modules(name = "postgis"):
         cc_library(name = name + "_" + member + "_objects", srcs = [prefix + source for source in sources + POSTGIS_PGCOMMON_SOURCES],
                    deps = [":" + name + "_config", ":" + name + "_headers", ":" + name + "_lwgeom", "@postgres_wasix//:server_headers"] + extra,
                    copts = WASIX_COPTS + ["-fPIC", "-fvisibility=hidden"], linkstatic = True, target_compatible_with = WASIX_DEPENDENCY_COMPATIBLE)
-        wasix_module(name = name + "_" + member, output_name = "postgis_" + member + "-3.so", deps = [":" + name + "_" + member + "_objects"],
+        wasix_module(name = name + "_" + member, output_name = "postgis_" + member + "-3.so", deps = [":" + name + "_" + member + "_objects"], constructor_owner = owner,
                      dynamic_deps = [":" + name + "_dependency_module"], target_compatible_with = WASIX_DEPENDENCY_COMPATIBLE)
     postgis_sql(name = name + "_sql_resources", configuration = ":" + name + "_config", headers = ":" + name + "_headers", target_compatible_with = WASIX_DEPENDENCY_COMPATIBLE)
     native.filegroup(name = name + "_extension_sql", srcs = [":" + name + "_sql_resources"], output_group = "extension_sql")

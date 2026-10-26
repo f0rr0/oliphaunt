@@ -5,6 +5,7 @@ load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_actio
 load("//build_defs/native/carriers:defs.bzl", "native_checksum_manifest")
 load("//build_defs/release:identity.bzl", "ReleaseIdentityInfo")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo", "shipping_suppliers")
 load(":cargo.bzl", "RUNTIME_CARGO_HELPERS")
 load(":npm.bzl", "RUNTIME_NPM_NOTICES")
 
@@ -42,6 +43,8 @@ def _tools_carriers_impl(ctx):
     npm = ctx.actions.declare_file(prefix + ctx.attr.npm_package.replace("@", "").replace("/", "-") + "-" + product.version + ".tgz")
     cargo = ctx.actions.declare_file(prefix + ctx.attr.cargo_package + "-" + product.version + ".crate")
     inputs = payload + [ctx.file.toolchain, ctx.file.postgres_source, ctx.file.postgres_series, ctx.file.icu_source] + ctx.files.patches
+    if artifact["target"] == "windows-x64-msvc":
+        inputs.append(ctx.file.engine_sources)
     spec = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
     ctx.actions.write(spec, json.encode({
         "version": product.version,
@@ -53,6 +56,7 @@ def _tools_carriers_impl(ctx):
         "sources": _source_map(ctx.attr.sources, inputs),
         "notices": _source_map(ctx.attr.notices, inputs),
         "toolchain": ctx.file.toolchain.path,
+        "engineSources": ctx.file.engine_sources.path if artifact["target"] == "windows-x64-msvc" else None,
         "postgresSource": ctx.file.postgres_source.path,
         "postgresSeries": ctx.file.postgres_series.path,
         "patches": {file.short_path: file.path for file in ctx.files.patches},
@@ -68,13 +72,14 @@ def _tools_carriers_impl(ctx):
     bun_file_action(ctx, ctx.file._packager, arguments = [args, leaves], inputs = depset(inputs + [spec]),
                     source_files = ctx.files._helpers, outputs = [github, npm, cargo], mnemonic = "WasixToolsFinalEnvelopes")
     return [DefaultInfo(files = depset([github, npm, cargo])),
+            ctx.attr.payload[ShippingSupplierInfo],
             OutputGroupInfo(github = depset([github]), npm = depset([npm]), cargo = depset([cargo]))]
 
 _tools_carriers = rule(
     implementation = _tools_carriers_impl,
     toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = {
-        "payload": attr.label(mandatory = True),
+        "payload": attr.label(mandatory = True, providers = [ShippingSupplierInfo]),
         "product": attr.label(default = "@oliphaunt_metadata//:product_postgres-tools-wasix", providers = [ReleaseIdentityInfo]),
         "runtime_product": attr.label(default = "@oliphaunt_metadata//:product_liboliphaunt-wasix", providers = [ReleaseIdentityInfo]),
         "artifact": attr.string(mandatory = True),
@@ -84,6 +89,7 @@ _tools_carriers = rule(
         "notices": attr.label_keyed_string_dict(default = dict(RUNTIME_NPM_NOTICES, **{"//src/wasix/postgres-tools:npm/native.mts": "src/wasix/postgres-tools/npm/native.mts"}), allow_files = True),
         "patches": attr.label_list(allow_files = [".patch"], mandatory = True),
         "toolchain": attr.label(default = "//src/wasix/runtime:toolchain.toml", allow_single_file = True),
+        "engine_sources": attr.label(default = "//src/wasix/runtime/engine:sources.json", allow_single_file = True),
         "postgres_source": attr.label(default = "//src/third-party/postgres:source.toml", allow_single_file = True),
         "postgres_series": attr.label(default = "//src/wasix/runtime:postgres/series", allow_single_file = True),
         "icu_source": attr.label(default = "//src/third-party/icu:source.toml", allow_single_file = True),
@@ -124,16 +130,17 @@ def wasix_tools_carriers(patches, qualification = []):
             carrier = cargo_rows[0] if ecosystem == "cargo" else npm_rows[0]
             shipping_package(name = group + "_shipping", owner = owner, artifacts = [":" + group], ecosystem = ecosystem,
                              package_name = row["asset"].replace("{version}", PRODUCTS["postgres-tools-wasix"]["version"]) if ecosystem == "github" else carrier["name"],
-                             configuration = row["target"] if ecosystem == "github" else (carrier["target"] or row["target"]), role = "github-release-asset" if ecosystem == "github" else carrier["role"], suppliers = "//build_defs/release:no_suppliers")
+                             configuration = row["target"] if ecosystem == "github" else (carrier["target"] or row["target"]), role = "github-release-asset" if ecosystem == "github" else carrier["role"], suppliers = ":carriers_" + name)
             packages.append(":" + group + "_shipping")
     native_checksum_manifest(name = "assembled_release_assets", product = "postgres-tools-wasix", archives = archives, artifact_rows = WASIX_ARTIFACTS, assemble = True)
     for group, asset in github_groups:
         native.filegroup(name = group, srcs = [":assembled_release_assets"], output_group = asset)
     native.filegroup(name = "checksums", srcs = [":assembled_release_assets"], output_group = "checksums")
     checksum = [row for row in WASIX_ARTIFACTS if row["product"] == "postgres-tools-wasix" and row["kind"] == "checksums"]
+    shipping_suppliers(name = "checksum_suppliers", inputs = [":carriers_" + row["target"].replace("-", "_") for row in rows])
     shipping_package(name = "checksums_shipping", owner = owner, artifacts = [":checksums"], ecosystem = "github",
                      package_name = checksum[0]["asset"].replace("{version}", PRODUCTS["postgres-tools-wasix"]["version"]),
-                     configuration = "portable", role = "github-release-asset", suppliers = "//build_defs/release:no_suppliers")
+                     configuration = "portable", role = "github-release-asset", suppliers = ":checksum_suppliers")
     packages.append(":checksums_shipping")
     native.filegroup(name = "release_assets", srcs = [":assembled_release_assets"])
     native.filegroup(name = "carriers", srcs = [":carriers_" + row["target"].replace("-", "_") for row in rows] + ["//src/wasix/postgres-tools/ts:npm"])

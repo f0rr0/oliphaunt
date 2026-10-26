@@ -51,6 +51,39 @@ interface CargoPackage {
   dependencies?: string[];
 }
 
+export interface AotProfile {
+  engine: 'llvm-opta' | 'v8';
+  wasmer_version: string;
+  wasmer_wasix_version: string;
+}
+
+/** Serializer identity follows its target's actual engine, not the producing host. */
+export function aotProfiles(
+  targets: Record<string, string>,
+  toolchain: { wasmer: string; 'wasmer-wasix': string },
+  engineSources: { crates: Record<string, { version: string }> },
+): Record<string, AotProfile> {
+  return Object.fromEntries(
+    Object.entries(targets).map(([id, triple]) => {
+      const windows = triple === 'x86_64-pc-windows-msvc';
+      const profile: AotProfile = {
+        engine: windows ? 'v8' : 'llvm-opta',
+        wasmer_version: windows ? engineSources.crates.wasmer?.version : toolchain.wasmer,
+        wasmer_wasix_version: windows
+          ? engineSources.crates['wasmer-wasix']?.version
+          : toolchain['wasmer-wasix'],
+      };
+      if (
+        ![profile.wasmer_version, profile.wasmer_wasix_version].every(
+          (version) => typeof version === 'string' && /^\d+\.\d+\.\d+$/u.test(version),
+        )
+      )
+        throw new Error(`AOT profile has incomplete canonical engine pins: ${id}`);
+      return [id, profile];
+    }),
+  );
+}
+
 export function llvmSysVersion(packages: CargoPackage[], wasmerVersion: string): string {
   const compiler = packages.find(
     (entry) => entry.name === 'wasmer-compiler-llvm' && entry.version === wasmerVersion,
@@ -116,8 +149,9 @@ if (import.meta.main) {
     }
   }
   const toolchain = Bun.TOML.parse(read('src/wasix/runtime/toolchain.toml')) as {
-    toolchain: { wasmer: string };
+    toolchain: { wasmer: string; 'wasmer-wasix': string };
   };
+  const engineSources = JSON.parse(read('src/wasix/runtime/engine/sources.json'));
   const lock = Bun.TOML.parse(read('Cargo.lock')) as { package: CargoPackage[] };
   const projection = llvmPins(
     DESKTOP_TARGETS,
@@ -131,6 +165,14 @@ if (import.meta.main) {
     path.join(values['output-dir'], 'targets.bzl'),
     `# Derived from the canonical DESKTOP_TARGETS reader.\nWASIX_AOT_TARGETS = ${JSON.stringify(
       Object.fromEntries(Object.entries(projection.hosts).map(([id, pin]) => [id, pin.triple])),
+      null,
+      2,
+    )}\nWASIX_AOT_PROFILES = ${JSON.stringify(
+      aotProfiles(
+        Object.fromEntries(Object.entries(projection.hosts).map(([id, pin]) => [id, pin.triple])),
+        toolchain.toolchain,
+        engineSources,
+      ),
       null,
       2,
     )}\n`,

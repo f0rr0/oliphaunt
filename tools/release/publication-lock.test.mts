@@ -1183,6 +1183,65 @@ describe('publication artifact discovery and freezing', () => {
     );
   });
 
+  test('Cargo package aliases normalize to actual publication identities across dependency tables', () => {
+    const root = temporaryDirectory();
+    const version = '1.2.3';
+    for (const name of [
+      'oliphaunt-wasmer',
+      'oliphaunt-wasmer-wasix',
+      'oliphaunt-wasmer-v8-windows-x64-msvc',
+      'held-helper',
+      'dev-helper',
+    ])
+      cargoFixture(root, name, version);
+    cargoFixture(root, 'oliphaunt-wasix', version, {
+      manifestSuffix: [
+        `wasmer = { package = "oliphaunt-wasmer", version = "=${version}", default-features = false }`,
+        'held_alias = { package = "held-helper", version = "=0.9.0" }',
+        "[target.'cfg(windows)'.dependencies]",
+        `wasmer-wasix = { package = "oliphaunt-wasmer-wasix", version = "=${version}" }`,
+        `wasmer = { package = "oliphaunt-wasmer", version = "=${version}" }`,
+        '[build-dependencies]',
+        `dll_alias = { package = "oliphaunt-wasmer-v8-windows-x64-msvc", version = "=${version}" }`,
+        '[dev-dependencies]',
+        `dev_alias = { package = "dev-helper", version = "=${version}" }`,
+        '',
+      ].join('\n'),
+    });
+    npmFixture(root, '@oliphaunt/npm-alias', version, {
+      dependencies: { '@oliphaunt/alias': 'npm:@oliphaunt/actual@1.2.3' },
+      optionalDependencies: {},
+    });
+    const records = discoverPublicationArtifacts([root]);
+    const sdk = records.find(({ name }) => name === 'oliphaunt-wasix');
+    expect(sdk.dependencies.map(({ name, scope }) => ({ name, scope }))).toEqual([
+      { name: 'dev-helper', scope: 'development' },
+      { name: 'held-helper', scope: 'runtime' },
+      { name: 'oliphaunt-wasmer-v8-windows-x64-msvc', scope: 'build' },
+      { name: 'oliphaunt-wasmer-wasix', scope: 'runtime' },
+      { name: 'oliphaunt-wasmer', scope: 'runtime' },
+      { name: 'oliphaunt-wasmer', scope: 'runtime' },
+      { name: 'serde', scope: 'runtime' },
+    ]);
+    const carriers = records.map((record) => ({
+      ...record,
+      id: `${record.ecosystem}:${record.name}`,
+    }));
+    expect(projectInternalDependencyIds(carriers, sdk.dependencies)).toEqual([
+      'cargo:oliphaunt-wasmer',
+      'cargo:oliphaunt-wasmer-v8-windows-x64-msvc',
+      'cargo:oliphaunt-wasmer-wasix',
+    ]);
+    expect(records.find(({ name }) => name === '@oliphaunt/npm-alias').dependencies).toEqual([
+      {
+        ecosystem: 'npm',
+        name: '@oliphaunt/alias',
+        requirement: 'npm:@oliphaunt/actual@1.2.3',
+        scope: 'runtime',
+      },
+    ]);
+  });
+
   test('rejects frozen npm tarballs that cannot use trusted publishing', () => {
     for (const [label, overrides, pattern] of [
       ['missing-repository', { repository: undefined }, /repository must be an object/u],

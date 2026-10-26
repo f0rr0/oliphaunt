@@ -100,3 +100,25 @@ export function parseNpmExtensionLicenseFiles(
   }
   return rows;
 }
+
+/** Parse the dependency list carried by an actual PostgreSQL control file. */
+export function extensionControlRequires(control: string, label: string): string[] {
+  const rows = control
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => /^requires(?:\s|=)/u.test(line));
+  if (rows.length > 1) throw new Error(`${label} repeats requires`);
+  const row = rows[0];
+  if (row === undefined) return [];
+  const match = row.match(/^requires\s*=\s*(?:'([^']*)'|([^'#]*?))\s*(?:#.*)?$/u);
+  if (!match) throw new Error(`${label} has malformed requires`);
+  const value = (match[1] ?? match[2] ?? '').trim();
+  if (!value) return [];
+  const names = value.split(',').map((name) => name.trim());
+  if (
+    names.some((name) => !/^[a-z0-9][a-z0-9_-]*$/u.test(name)) ||
+    new Set(names).size !== names.length
+  )
+    throw new Error(`${label} has malformed or duplicate dependency names`);
+  return names;
+}

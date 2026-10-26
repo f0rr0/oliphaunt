@@ -5,8 +5,8 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -104,7 +104,7 @@ function fixture(
       ),
     );
   const fingerprint = 'current source-qualified fixture';
-  const canonical = canonicalWasixAotMetadata();
+  const canonical = canonicalWasixAotMetadata(undefined, targetTriple);
   const manifest = (artifacts: any[]) =>
     Buffer.from(
       JSON.stringify({
@@ -589,6 +589,18 @@ test('unrelated workspace lock changes do not alter embedded source construction
 
 test('rejects mismatched source versions, incomplete physical crates and incompatible target or payload identities', () => {
   const mutations: [string, (spec: WasixNapiInputsSpec) => void][] = [
+    ...(
+      [
+        'portableArchive',
+        'coreAotArchive',
+        'contribPortable',
+        'contribAot',
+        'contribFrozen',
+      ] as const
+    ).map((field): [string, (spec: WasixNapiInputsSpec) => void] => [
+      `missing original ${field}`,
+      (spec) => rmSync(spec[field]),
+    ]),
     [
       'source SDK version',
       (spec) => {

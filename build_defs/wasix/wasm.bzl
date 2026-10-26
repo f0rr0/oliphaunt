@@ -1,6 +1,9 @@
 """Declared WASIX relocatable, side-module, sealed-link and optimization actions."""
 
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
+load("@wasix_constructor_inputs//:inputs.bzl", "MODULES", "PHASE")
+load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo")
+load(":constructor-inputs.bzl", "constructor_source_label", "imported_constructor_supplier", "missing_constructor", "wasix_module_constructor")
 
 WasmModuleInfo = provider(fields = {
     "module": "The optimized portable module.",
@@ -226,10 +229,11 @@ def _module_impl(ctx):
     return [
         DefaultInfo(files = depset([output])),
         WasmModuleInfo(module = output, archives = depset(archives, transitive = [dependency.archives for dependency in dynamic_modules])),
+        ShippingSupplierInfo(suppliers = [], files = depset()),
         OutputGroupInfo(unoptimized = depset([raw])),
     ]
 
-wasix_module = rule(
+_wasix_module = rule(
     implementation = _module_impl,
     attrs = {
         "output_name": attr.string(mandatory = True),
@@ -251,3 +255,48 @@ wasix_module = rule(
         "_optimizer_files": attr.label(default = "@wasix_toolchain//:binaryen_files", cfg = "exec"),
     },
 )
+
+def _imported_module_impl(ctx):
+    module = ctx.file.module
+    if module.basename != ctx.attr.output_name:
+        fail("imported WASIX module filename differs from its source declaration")
+    return [
+        DefaultInfo(files = depset([module])),
+        WasmModuleInfo(module = module, archives = depset()),
+        imported_constructor_supplier(module, json.decode(ctx.attr.record)),
+    ]
+
+_imported_module = rule(
+    implementation = _imported_module_impl,
+    attrs = {
+        "module": attr.label(allow_single_file = True, mandatory = True),
+        "output_name": attr.string(mandatory = True),
+        "record": attr.string(mandatory = True),
+    },
+)
+
+def wasix_module(name, constructor = True, constructor_owner = None, **kwargs):
+    """Import the exact original portable File in foreign/final constructor phases."""
+    if constructor_owner:
+        wasix_module_constructor(
+            name = name + "_constructor_shipping",
+            module = "//" + native.package_name() + ":" + name,
+            owner = constructor_owner,
+            tags = ["manual"],
+        )
+    if not constructor or PHASE == "source":
+        _wasix_module(name = name, **kwargs)
+        return
+    source = constructor_source_label(":" + name)
+    record = MODULES.get(source)
+    common = {key: kwargs[key] for key in ["visibility", "tags", "testonly", "target_compatible_with"] if key in kwargs}
+    if not record:
+        missing_constructor(name = name, source = source, kind = "portable", phase = PHASE, **common)
+        return
+    _imported_module(
+        name = name,
+        module = record["file"]["path"],
+        output_name = kwargs["output_name"],
+        record = json.encode(record),
+        **common
+    )

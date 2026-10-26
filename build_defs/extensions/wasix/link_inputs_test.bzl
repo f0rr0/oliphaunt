@@ -48,5 +48,5 @@ def wasix_extension_link_input_tests():
     _invalid_profile(name = "invalid_link_profile_subject", tags = ["manual"])
     _rejected_test(name = "invalid_link_profile_test", target_under_test = ":invalid_link_profile_subject", message = "unknown external extension link profile")
     cc_library(name = "unhandled_linkopts_inputs", linkopts = ["-lundeclared"], linkstatic = True, tags = ["manual"])
-    wasix_module(name = "unhandled_linkopts_subject", output_name = "rejected.so", deps = [":unhandled_linkopts_inputs"], tags = ["manual"])
+    wasix_module(name = "unhandled_linkopts_subject", output_name = "rejected.so", deps = [":unhandled_linkopts_inputs"], constructor = False, tags = ["manual"])
     _rejected_test(name = "unhandled_linkopts_test", target_under_test = ":unhandled_linkopts_subject", message = "WASIX static archive link needs explicit handling of CcInfo flags/additional inputs")

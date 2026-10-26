@@ -2,11 +2,14 @@
 import { chmod, copyFile, mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import type { AotProfile } from './tool-metadata.mts';
 
 export interface AotPayloadSpec {
   portable_manifest: string;
   toolchain: string;
   target_triple: string;
+  profile: AotProfile;
+  engine_sources: string | null;
   artifacts: { name: string; path: string; image: string; module: string }[];
 }
 

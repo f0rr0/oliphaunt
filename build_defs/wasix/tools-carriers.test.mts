@@ -95,7 +95,7 @@ async function fixture(target: Target = 'portable', version = '7.8.9', runtimeVe
     for (const row of releaseNoticeRows({ profile: 'wasix-tools' }))
       bytesByPath.set(row.member, await readFile(path.join(payload, row.member)));
   } else {
-    const canonical = canonicalWasixAotMetadata();
+    const canonical = canonicalWasixAotMetadata(undefined, AOT_TARGET_TRIPLES[target]);
     manifest = {
       'format-version': 1,
       'source-lane': canonical.sourceLane,
@@ -154,6 +154,7 @@ async function fixture(target: Target = 'portable', version = '7.8.9', runtimeVe
     sources,
     notices,
     toolchain: path.resolve('src/wasix/runtime/toolchain.toml'),
+    engineSources: path.resolve('src/wasix/runtime/engine/sources.json'),
     outputs: {
       github: path.join(
         root,

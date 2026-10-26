@@ -1,0 +1,135 @@
+{
+  "v8Commit": "b0a55a7dad7f536cce1f9aaddba89894c8533946",
+  "files": [
+    {
+      "path": "third_party/glibc/src/sysdeps/ieee754/dbl-64/branred.c",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/third_party/glibc/src/sysdeps/ieee754/dbl-64/branred.c",
+      "sha256": "8a21104b079e3d5bc42bc903fdaf9d93bf6dc8b0e0e3030c1b3c8261bf6577c3",
+      "bytes": 4040
+    },
+    {
+      "path": "third_party/glibc/src/sysdeps/ieee754/dbl-64/branred.h",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/third_party/glibc/src/sysdeps/ieee754/dbl-64/branred.h",
+      "sha256": "7750d1665e454b94877020e0393f8b29e20d7ba51451a54f60a8ae2796354b9e",
+      "bytes": 3771
+    },
+    {
+      "path": "third_party/glibc/src/sysdeps/ieee754/dbl-64/dla.h",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/third_party/glibc/src/sysdeps/ieee754/dbl-64/dla.h",
+      "sha256": "8d94c1212d955c5536ddb8f64ed4d2b01f8b04957f81ebf1d17422e9d74d5cb2",
+      "bytes": 2099
+    },
+    {
+      "path": "third_party/glibc/src/sysdeps/ieee754/dbl-64/endian.h",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/third_party/glibc/src/sysdeps/ieee754/dbl-64/endian.h",
+      "sha256": "10dbc22a1eeded97d81d957a1f1f111ae17e194783b9bf8872d71eb406078479",
+      "bytes": 690
+    },
+    {
+      "path": "third_party/glibc/src/sysdeps/ieee754/dbl-64/mydefs.h",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/third_party/glibc/src/sysdeps/ieee754/dbl-64/mydefs.h",
+      "sha256": "41a661cdcb78709a3f3ca149b7a66ddccec62fffd4131ca727a959207e9c8891",
+      "bytes": 1392
+    },
+    {
+      "path": "third_party/glibc/src/sysdeps/ieee754/dbl-64/s_sin.c",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/third_party/glibc/src/sysdeps/ieee754/dbl-64/s_sin.c",
+      "sha256": "b05c66b322da8bde56fab4ef45bdb44c8e6178494648c89f1eb64272b749d4b4",
+      "bytes": 9080
+    },
+    {
+      "path": "third_party/glibc/src/sysdeps/ieee754/dbl-64/sincostab.c",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/third_party/glibc/src/sysdeps/ieee754/dbl-64/sincostab.c",
+      "sha256": "b0d85d1187a70beb14bf5b274c53706551e9ff29181c9a4a01dd019c8ccde2b7",
+      "bytes": 42571
+    },
+    {
+      "path": "third_party/glibc/src/sysdeps/ieee754/dbl-64/trig.h",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/third_party/glibc/src/sysdeps/ieee754/dbl-64/trig.h",
+      "sha256": "5325957fce7dc430c624c4a6a36230ae5fbcce4ce4f63467a1ce2dd985c42029",
+      "bytes": 284
+    },
+    {
+      "path": "third_party/glibc/src/sysdeps/ieee754/dbl-64/usncs.h",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/third_party/glibc/src/sysdeps/ieee754/dbl-64/usncs.h",
+      "sha256": "c78fb520931e863618a60dc28206d5393f884ede9cbaffa3758b8dbc11553ee3",
+      "bytes": 2640
+    },
+    {
+      "path": "third_party/glibc/LICENSE",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/third_party/glibc/LICENSE",
+      "sha256": "b634ab5640e258563c536e658cad87080553df6f34f62269a21d554844e58bfe",
+      "bytes": 26526
+    },
+    {
+      "path": "third_party/glibc/README.v8",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/third_party/glibc/README.v8",
+      "sha256": "2876e977d794d5e8c5cb3a8416ac7ee9bcb9c9ec9f5eca814616ccfe49f176de",
+      "bytes": 328
+    },
+    {
+      "path": "src/base/ieee754.cc",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/src/base/ieee754.cc",
+      "sha256": "1bf999809d4c4c1d31ad5ff3578d32614796f159e08b9e7782560d017721a0c2",
+      "bytes": 103309
+    },
+    {
+      "path": "src/base/ieee754.h",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/src/base/ieee754.h",
+      "sha256": "d04cd7f71eae974bbb2fb64fd27241c7753678f042acd5ee89c2fa30ef37c4c3",
+      "bytes": 3729
+    },
+    {
+      "path": "src/numbers/ieee754.cc",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/src/numbers/ieee754.cc",
+      "sha256": "0582ca75d4d3e8c58b784734ef7ddf891e5154bf8e35c4d550ea2263265859fc",
+      "bytes": 1598
+    },
+    {
+      "path": "src/numbers/ieee754.h",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/src/numbers/ieee754.h",
+      "sha256": "fae7174a8e976262fbaac0bbd752dd901bbea254b027a6fb4e944495149cd908",
+      "bytes": 787
+    }
+  ],
+  "objects": [
+    {
+      "source": "third_party/glibc/src/sysdeps/ieee754/dbl-64/branred.c",
+      "member": "obj/libm/branred.obj",
+      "sha256": "5e686b324572364403f0e684c8a351a97d40ab9b7477881d4d25b080953a8252"
+    },
+    {
+      "source": "third_party/glibc/src/sysdeps/ieee754/dbl-64/s_sin.c",
+      "member": "obj/libm/s_sin.obj",
+      "sha256": "fdc6d94658d51f475e4b84ab36a6cc23ece54d9cd8651ce0080155de55ea135f"
+    },
+    {
+      "source": "third_party/glibc/src/sysdeps/ieee754/dbl-64/sincostab.c",
+      "member": "obj/libm/sincostab.obj",
+      "sha256": "d6770dc985f6dd6e8028133654315c46fbf61f6987796657552688e504be57a4"
+    }
+  ],
+  "unchangedSourceMappings": [
+    {
+      "source": "src/base/ieee754.cc",
+      "member": "obj/v8_libbase/ieee754.obj"
+    },
+    {
+      "source": "src/numbers/ieee754.cc",
+      "member": "obj/v8_base_without_compiler/ieee754.obj"
+    }
+  ],
+  "compilerArguments": [
+    "--target=x86_64-pc-windows-msvc",
+    "/nologo",
+    "/c",
+    "/TC",
+    "/MT",
+    "/O2",
+    "/clang:-O3",
+    "/GS",
+    "/fp:precise",
+    "/clang:-ffp-contract=off",
+    "/clang:-std=gnu11"
+  ]
+}

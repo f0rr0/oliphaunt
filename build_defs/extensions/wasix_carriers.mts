@@ -23,6 +23,7 @@ import {
   WASIX_EXTENSION_INSTALL_SCHEMA,
   WASIX_EXTENSION_INSTALL_SIDECAR_SCHEMA,
 } from '../../src/extensions/contracts/wasix-extension-install.mts';
+import { extensionControlRequires } from '../../src/native/sdks/ts/src/native/extension-contract.ts';
 import { assertWasixAotArtifactPayloads } from '../../src/wasix/runtime/tools/check-release-assets.mts';
 import {
   packageDeclaredWasixExtensionCargo,
@@ -50,6 +51,7 @@ import {
 } from '../../tools/release/extension-release-metadata.mts';
 import { resolveActualCarrier } from '../../tools/release/publication-catalog.mts';
 import { expandDeclaredTrees } from '../wasix/package.mts';
+import type { AotProfile } from '../wasix/tool-metadata.mts';
 
 interface Carrier {
   product: string;
@@ -337,13 +339,8 @@ export function declaredSqlFiles(spec: WasixSqlCarrierSpec, files: string[]) {
     version,
     'control default version differs from its pinned producer',
   );
-  const requires = /^requires\s*=\s*'([^']*)'\s*$/mu.exec(control)?.[1] ?? '';
   assert.deepEqual(
-    requires
-      .split(',')
-      .map((name) => name.trim())
-      .filter(Boolean)
-      .sort(),
+    extensionControlRequires(control, `${spec.sqlName}.control`).sort(),
     [...spec.descriptor.dependencies].sort(),
     'control dependencies differ from the install descriptor',
   );
@@ -507,7 +504,7 @@ export interface WasixCompiledCarrierSpec extends Omit<WasixSqlCarrierSpec, 'sql
   resources: { source: string; destination: string; tree?: boolean }[];
   link: string;
   toolchain: string;
-  aot: { name: string; target: string; module: string; image: string }[];
+  aot: { name: string; target: string; profile: AotProfile; module: string; image: string }[];
 }
 
 export function stageDeclaredWasixExtensionHost(spec: {
@@ -717,7 +714,6 @@ export async function stageCompiledWasixMember(
       wasixInstall,
       assets: [asset],
     };
-    const canonical = canonicalWasixAotMetadata();
     const targets = Object.entries(AOT_TARGET_TRIPLES);
     const bundle = spec.product === 'oliphaunt-extension-contrib-pg18';
     assert.equal(
@@ -726,9 +722,20 @@ export async function stageCompiledWasixMember(
       'compiled member requires every canonical AOT image',
     );
     for (const [targetId, triple] of targets) {
+      const canonical = canonicalWasixAotMetadata(undefined, triple);
       const images = spec.aot.filter((row) => row.target === triple);
       assert.equal(images.length, spec.modules.length, `incomplete AOT closure for ${targetId}`);
       assert.equal(new Set(images.map((row) => row.name)).size, images.length);
+      for (const image of images)
+        assert.deepEqual(
+          image.profile,
+          {
+            engine: canonical.engine,
+            wasmer_version: canonical.wasmerVersion,
+            wasmer_wasix_version: canonical.wasmerWasixVersion,
+          },
+          `AOT engine profile differs from its canonical target: ${targetId}`,
+        );
       const sourceDir = path.join(
         productRoot,
         'wasix-aot',

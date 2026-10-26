@@ -1,6 +1,6 @@
 #![cfg(feature = "extensions")]
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use oliphaunt_wasix::{
     AsyncOliphaunt, AsyncTransaction, DatabaseStorage, Error, Oliphaunt, TransactionResult,
 };
@@ -171,6 +171,88 @@ fn direct_api_recovers_after_postgres_error() -> Result<()> {
     assert!(error.to_string().contains("division by zero"));
     let result = database.query("SELECT 42::int4 AS value")?;
     assert_eq!(result.get_text(0, "value")?, Some("42"));
+    database.close()?;
+    Ok(())
+}
+
+#[test]
+fn nested_plpgsql_handlers_preserve_subtransactions_and_session() -> Result<()> {
+    fn assert_query(
+        database: &mut Oliphaunt,
+        label: &str,
+        sql: &str,
+        expected: &str,
+    ) -> Result<()> {
+        let response = database.exec_protocol_raw(oliphaunt_query::simple_query(sql)?)?;
+        let result = oliphaunt_query::parse_exec_response(&response)
+            .with_context(|| format!("nested exception probe {label}"))?;
+        assert_eq!(
+            result.ready_status(),
+            oliphaunt_query::ReadyStatus::Idle,
+            "{label} must leave PostgreSQL idle"
+        );
+        let Some(oliphaunt_query::StatementResult::Rows(rows)) = result.statements().last() else {
+            panic!("{label} must return the probe result");
+        };
+        assert_eq!(rows.rows().len(), 1, "{label}");
+        assert_eq!(rows.get_text(0, "value")?, Some(expected), "{label}");
+        Ok(())
+    }
+
+    let mut database = Oliphaunt::open()?;
+    database.execute("CREATE TEMP TABLE exception_probe(value integer)")?;
+    let cases = [
+        (
+            "division",
+            "DO $$ BEGIN BEGIN PERFORM 1 / 0; \
+             EXCEPTION WHEN division_by_zero THEN NULL; END; END $$; \
+             SELECT 'division-caught'::text AS value",
+            "division-caught",
+        ),
+        (
+            "missing-schema",
+            "DO $$ BEGIN BEGIN \
+             EXECUTE 'ALTER EXTENSION plpgsql DROP SCHEMA oliphaunt_missing_exception_probe'; \
+             EXCEPTION WHEN invalid_schema_name THEN NULL; END; END $$; \
+             SELECT 'missing-schema-caught'::text AS value",
+            "missing-schema-caught",
+        ),
+        (
+            "nested-rethrow",
+            "DO $$ BEGIN BEGIN BEGIN \
+             RAISE EXCEPTION SQLSTATE '22012' USING MESSAGE = 'nested rethrow probe'; \
+             EXCEPTION WHEN division_by_zero THEN RAISE; END; \
+             EXCEPTION WHEN division_by_zero THEN NULL; END; END $$; \
+             SELECT 'nested-rethrow-caught'::text AS value",
+            "nested-rethrow-caught",
+        ),
+        (
+            "subtransaction-rollback",
+            "TRUNCATE exception_probe; DO $$ BEGIN BEGIN \
+             INSERT INTO exception_probe VALUES (1); PERFORM 1 / 0; \
+             EXCEPTION WHEN division_by_zero THEN INSERT INTO exception_probe VALUES (2); \
+             END; END $$; SELECT value::text AS value FROM exception_probe ORDER BY value",
+            "2",
+        ),
+    ];
+    for (name, sql, expected) in cases {
+        assert_query(
+            &mut database,
+            name,
+            "SELECT 'before'::text AS value",
+            "before",
+        )?;
+        for attempt in 1..=2 {
+            let label = format!("{name}, attempt {attempt}");
+            assert_query(&mut database, &label, sql, expected)?;
+            assert_query(
+                &mut database,
+                &label,
+                "SELECT 'after'::text AS value",
+                "after",
+            )?;
+        }
+    }
     database.close()?;
     Ok(())
 }

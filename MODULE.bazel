@@ -149,9 +149,13 @@ stable_host_tools = use_extension("//build_defs/foundation:extensions.bzl", "rus
 stable_host_tools.configure(metadata = "@oliphaunt_toolchain_metadata//:toolchains.json")
 use_repo(stable_host_tools, "rust_host_tools")
 
+wasix_engine = use_extension("//build_defs/wasix/engine:extension.bzl", "engine_repositories")
+use_repo(wasix_engine, "wasix_engine_sources", "windows_wee8", "wasix_engine_acquisition", "wasix_engine_notices", "wasix_engine_relink_sources")
+
 native_cargo_metadata = use_repo_rule("//build_defs/languages:repositories.bzl", "cargo_metadata_repository")
 native_cargo_metadata(
     name = "native_cargo_metadata",
+    acquisition = "@wasix_engine_acquisition//:acquisition.json",
     roots = [],
 )
 
@@ -162,6 +166,7 @@ cargo_crates.from_cargo(
     name = "n",
     host_tools = "@rust_host_tools//:BUILD.bazel",
     cargo_lockfile = "@native_cargo_metadata//:Cargo.lock",
+    source_metadata = "@native_cargo_metadata//:cargo-sources.json",
     manifests = ["@native_cargo_metadata//:Cargo.toml"],
     skip_cargo_lockfile_overwrite = True,
     supported_platform_triples = [
@@ -176,6 +181,18 @@ cargo_crates.from_cargo(
     ],
 )
 use_repo(cargo_crates, cargo_crates = "n")
+
+cargo_crates.annotation(
+    crate = "bindgen",
+    version = "0.72.1",
+    repositories = ["n"],
+    extra_aliased_targets = {"v8_bindgen": "bindgen"},
+)
+cargo_crates.annotation(
+    crate = "oliphaunt-wasmer",
+    repositories = ["n", "a", "s", "m"],
+    override_target_build_script = "@oliphaunt//src/wasix/runtime/engine:api_build_script",
+)
 
 # Cargo's test-noop forwarding applies only to the standalone Rust unit root.
 cargo_crates.annotation(
@@ -271,12 +288,14 @@ icu(name = "icu_wasix", build_file = "//build_defs/wasix:icu.BUILD.bazel")
 mobile_cargo_metadata = use_repo_rule("//build_defs/languages:repositories.bzl", "cargo_metadata_repository")
 mobile_cargo_metadata(
     name = "mobile_bindgen_cargo_metadata",
+    acquisition = "@wasix_engine_acquisition//:acquisition.json",
     activations = {"src/native/mobile-bindings": ["bindgen"]},
 )
 cargo_crates.from_cargo(
     name = "m",
     host_tools = "@rust_host_tools//:BUILD.bazel",
     cargo_lockfile = "@mobile_bindgen_cargo_metadata//:Cargo.lock",
+    source_metadata = "@mobile_bindgen_cargo_metadata//:cargo-sources.json",
     manifests = ["@mobile_bindgen_cargo_metadata//:Cargo.toml"],
     skip_cargo_lockfile_overwrite = True,
     supported_platform_triples = [
@@ -295,12 +314,14 @@ use_repo(extension_sources, "postgis", "postgis_geos", "postgis_proj", "postgis_
 
 native_cargo_metadata(
     name = "aot_serializer_cargo_metadata",
+    acquisition = "@wasix_engine_acquisition//:acquisition.json",
     activations = {"src/wasix/runtime/tools/xtask": ["aot-serializer"]},
 )
 cargo_crates.from_cargo(
     name = "a",
     host_tools = "@rust_host_tools//:BUILD.bazel",
     cargo_lockfile = "@aot_serializer_cargo_metadata//:Cargo.lock",
+    source_metadata = "@aot_serializer_cargo_metadata//:cargo-sources.json",
     manifests = ["@aot_serializer_cargo_metadata//:Cargo.toml"],
     skip_cargo_lockfile_overwrite = True,
     supported_platform_triples = [
@@ -618,12 +639,14 @@ llvm_gnu_runtime(
 # Independent feature acquisition preserves the headless SDK's feature set.
 native_cargo_metadata(
     name = "wasix_seed_cargo_metadata",
+    acquisition = "@wasix_engine_acquisition//:acquisition.json",
     activations = {"src/database-resources/seeds/wasix": ["cluster-seed-runner"]},
 )
 cargo_crates.from_cargo(
     name = "s",
     host_tools = "@rust_host_tools//:BUILD.bazel",
     cargo_lockfile = "@wasix_seed_cargo_metadata//:Cargo.lock",
+    source_metadata = "@wasix_seed_cargo_metadata//:cargo-sources.json",
     manifests = ["@wasix_seed_cargo_metadata//:Cargo.toml"],
     skip_cargo_lockfile_overwrite = True,
     supported_platform_triples = [
@@ -635,22 +658,10 @@ cargo_crates.from_cargo(
 )
 use_repo(cargo_crates, wasix_seed_crates = "s")
 
-# Reuse the postmaster's linked-provider probe for native SDK and AOT contexts.
-cargo_crates.annotation(
-    crate = "wasmer-compiler",
-    version = "=7.2.1",
-    repositories = ["n", "a", "s"],
-    patches = ["//build_defs/wasix:wasmer-linked-unwinder.patch"],
-    patch_args = ["-p1"],
-    rustc_flags = ["--cfg=oliphaunt_linked_libunwind"],
-    link_deps = ["@oliphaunt//build_defs/wasix/postmaster:linked_unwinder"],
-    label_injections = {"//build_defs/wasix/postmaster:linked_unwinder": "@oliphaunt"},
-)
-
 # Keep Mach-O sections valid and serialized GOT relocation ordering repeatable.
 cargo_crates.annotation(
     crate = "wasmer-compiler-llvm",
-    version = "=7.2.1",
+    version = "=7.5.0",
     repositories = ["a", "s"],
     patches = ["//build_defs/wasix:wasmer-macho-trampoline.patch"],
     patch_args = ["-p1"],
@@ -867,3 +878,10 @@ extension_test_source(
     name = "pg_textsearch_upgrade_from",
     source_manifest = "//src/extensions/external/pg_textsearch/tests:upgrade/source.toml",
 )
+
+# These readers consume resolved source metadata, while the acquisition above
+# supplies Cargo's inputs. Keep their registration independent of that extension.
+constructor_inputs = use_repo_rule("//build_defs/wasix:constructor-inputs.bzl", "wasix_constructor_inputs_repository")
+constructor_inputs(name = "wasix_constructor_inputs", bun = "@bun_runtime//:bun")
+engine_carriers = use_repo_rule("//build_defs/wasix/engine:carriers-repository.bzl", "windows_engine_carriers_repository")
+engine_carriers(name = "wasix_engine_carriers")

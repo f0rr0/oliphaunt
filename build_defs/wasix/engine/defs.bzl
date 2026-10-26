@@ -23,7 +23,7 @@ _exports = rule(implementation = _exports_impl, toolchains = BUN_SOURCE_TOOLCHAI
 })
 
 def _embedded_impl(ctx):
-    output = ctx.actions.declare_file(ctx.label.name + "/embedded_bindings.rs")
+    output = ctx.actions.declare_file("prebuilt/embedded_bindings.rs")
     bun_file_action(ctx, entry_point = ctx.file._generator,
                     arguments = ["embedded", ctx.file.bindings.path, output.path, ctx.file._loader.path, ctx.file.dll.path],
                     inputs = [ctx.file.bindings, ctx.file._loader, ctx.file.dll], source_files = [ctx.file._generator],

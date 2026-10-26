@@ -5,9 +5,13 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 import { bundleCarrierAssets } from '../../../src/extensions/artifacts/packages/tools/bundle-carrier-assets.mts';
+import { extensionControlRequires } from '../../../src/native/sdks/ts/src/native/extension-contract.ts';
+import { canonicalWasixAotMetadata } from '../../../src/wasix/runtime/tools/wasix-aot-manifest.mts';
 import { AOT_TARGET_TRIPLES } from '../../../src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
+import { createDeterministicTar } from '../../../tools/packaging/cargo-source-package.mts';
 import {
   readPortableArchiveEntries,
+  readPortableTarZstdBufferEntries,
   releaseZstdCompressSync,
 } from '../../../tools/packaging/portable-archive.mts';
 import {
@@ -15,6 +19,7 @@ import {
   stageCompiledWasixMember,
   type WasixCompiledCarrierSpec,
 } from '../wasix_carriers.mts';
+import { prepareWasixConsumerInput } from './consumer_inputs.mts';
 
 test('compiled contrib members retain canonical basenames within distinct aggregate locators', async () => {
   const root = mkdtempSync(path.join(process.env.TEST_TMPDIR ?? os.tmpdir(), 'wasix-member-'));
@@ -90,15 +95,49 @@ test('compiled contrib members retain canonical basenames within distinct aggreg
         resources: [],
         link,
         toolchain: '',
-        aot: Object.values(AOT_TARGET_TRIPLES).map((target) => ({
-          name: `extension:${sqlName}`,
-          target,
-          module,
-          image,
-        })),
+        aot: Object.values(AOT_TARGET_TRIPLES).map((target) => {
+          const canonical = canonicalWasixAotMetadata(undefined, target);
+          return {
+            name: `extension:${sqlName}`,
+            target,
+            module,
+            image,
+            profile: {
+              engine: canonical.engine,
+              wasmer_version: canonical.wasmerVersion,
+              wasmer_wasix_version: canonical.wasmerWasixVersion,
+            },
+          };
+        }),
       };
       const memberRoot = path.join(productRoot, 'member-assets', sqlName);
       const row = await stageCompiledWasixMember(spec, [], productRoot, memberRoot);
+      for (const targetId of Object.keys(AOT_TARGET_TRIPLES)) {
+        const delivered = JSON.parse(
+          readFileSync(
+            path.join(productRoot, 'wasix-aot', targetId, sqlName, 'manifest.json'),
+            'utf8',
+          ),
+        );
+        assert.equal(delivered.engine, targetId === 'windows-x64-msvc' ? 'v8' : 'llvm-opta');
+      }
+      if (sqlName === 'btree_gin') {
+        const invalid = structuredClone(spec);
+        const windows = invalid.aot.find(
+          (image) => image.target === AOT_TARGET_TRIPLES['windows-x64-msvc'],
+        );
+        assert(windows);
+        windows.profile.engine = 'llvm-opta';
+        await assert.rejects(
+          stageCompiledWasixMember(
+            invalid,
+            [],
+            path.join(root, 'invalid-profile'),
+            path.join(root, 'invalid-member'),
+          ),
+          /AOT engine profile differs/u,
+        );
+      }
       assert.equal(row.archiveName, basename);
       assert.equal(row.asset.name, basename);
       assert.equal(row.archive, path.join(memberRoot, basename));
@@ -192,6 +231,242 @@ test('empty delivered upgrade SQL stays valid while missing, nonregular and unsa
         () => assertDeclaredWasixResource({ source, destination }),
         /unsafe member destination/u,
       );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('delivered control dependencies accept PostgreSQL forms and reject ambiguous declarations', () => {
+  for (const control of [
+    "requires = 'postgis, fuzzystrmatch'",
+    'requires = postgis, fuzzystrmatch # delivered dependency list',
+    "# requires = ignored\r\n  requires = 'postgis, fuzzystrmatch' # comment\r\n",
+  ])
+    assert.deepEqual(extensionControlRequires(control, 'fixture.control'), [
+      'postgis',
+      'fuzzystrmatch',
+    ]);
+  assert.deepEqual(extensionControlRequires('# no dependency', 'fixture.control'), []);
+  assert.deepEqual(extensionControlRequires("requires = ''", 'fixture.control'), []);
+  for (const control of [
+    "requires = 'postgis'\nrequires = fuzzystrmatch",
+    "requires = 'postgis",
+    "requires = 'postgis' trailing",
+    'requires = postgis,,fuzzystrmatch',
+    'requires = postgis, postgis',
+    'requires = ../postgis',
+  ])
+    assert.throws(
+      () => extensionControlRequires(control, 'fixture.control'),
+      /requires|dependency/u,
+    );
+});
+
+test('installed PostGIS input binds all four delivered controls and only its original dependency archive', () => {
+  const root = mkdtempSync(
+    path.join(process.env.TEST_TMPDIR ?? os.tmpdir(), 'wasix-postgis-input-'),
+  );
+  try {
+    const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+    let sequence = 0;
+    const archive = (files: Record<string, string>) => {
+      const directory = path.join(root, String(sequence++));
+      for (const [relative, bytes] of Object.entries(files)) {
+        const file = path.join(directory, relative);
+        mkdirSync(path.dirname(file), { recursive: true });
+        writeFileSync(file, bytes);
+      }
+      return releaseZstdCompressSync(
+        createDeterministicTar(directory, '.', {
+          fixedFileMode: 0o644,
+          fail: (message: string) => {
+            throw new Error(message);
+          },
+        }),
+      );
+    };
+    const prefix = 'share/postgresql/extension/';
+    const sqlMembers = ['postgis', 'postgis_raster', 'postgis_tiger_geocoder', 'postgis_topology'];
+    const controls = Object.fromEntries(
+      sqlMembers.map((name) => [
+        `${prefix}${name}.control`,
+        "default_version = '3.6.4'\n" +
+          (name === 'postgis'
+            ? ''
+            : name === 'postgis_tiger_geocoder'
+              ? 'requires = postgis, fuzzystrmatch\n'
+              : "requires = 'postgis'\n"),
+      ]),
+    );
+    const ownBytes = archive(controls);
+    const nativeModuleStems = ['postgis-3', 'postgis_raster-3', 'postgis_topology-3'];
+    const nativeModules = nativeModuleStems.map((name) => ({
+      name,
+      path: `lib/postgresql/${name}.so`,
+      sha256: 'a'.repeat(64),
+      moduleSha256: 'a'.repeat(64),
+      size: 7,
+    }));
+    const member = {
+      sqlName: 'postgis',
+      createsExtension: true,
+      nativeModuleStem: 'postgis-3',
+      sqlMembers,
+      nativeModuleStems,
+      dependencies: ['fuzzystrmatch', 'plpgsql'],
+      dataFiles: [],
+      extensionSqlFileNames: [],
+      extensionSqlFilePrefixes: [],
+      sharedPreloadLibraries: [],
+      assets: [
+        {
+          family: 'wasix',
+          kind: 'wasix-runtime',
+          target: 'wasix-portable',
+          sha256: hash(ownBytes),
+          bytes: ownBytes.length,
+        },
+      ],
+      wasixInstall: {
+        schema: 'oliphaunt-wasix-extension-install-v1',
+        name: 'PostGIS',
+        nativeModule: nativeModules[0].path,
+        nativeModules,
+        coreExportsRequired: [],
+        dependencies: ['fuzzystrmatch', 'plpgsql'],
+        loadOrder: nativeModules.map((module) => module.path),
+        installedFiles: [...Object.keys(controls), ...nativeModules.map((module) => module.path)],
+        unresolvedImports: [],
+        lifecycle: {
+          createExtension: true,
+          createSchema: null,
+          loadSql: [],
+          postCreateSql: [],
+          startupConfig: [],
+          preloadRequired: false,
+          restartRequired: false,
+          sharedMemoryRequired: false,
+        },
+      },
+    };
+    const frozen = {
+      schema: 'oliphaunt-extension-ci-artifacts-v1',
+      product: 'oliphaunt-extension-postgis',
+      version: '3.6.4',
+      compatibility: {
+        extensionRuntimeContract: 'src/extensions/contracts/contract.toml',
+        postgresMajor: '18',
+        nativeRuntimeProduct: 'liboliphaunt-native',
+        nativeRuntimeVersion: '0.3.2',
+        wasixRuntimeProduct: 'liboliphaunt-wasix',
+        wasixRuntimeVersion: '0.3.2',
+      },
+      ...member,
+    };
+    const dependencyFiles = {
+      [`${prefix}fuzzystrmatch.control`]: "default_version = '1.2'\n",
+      'lib/postgresql/fuzzystrmatch.so': 'original selected module',
+    };
+    const dependencyBytes = archive(dependencyFiles);
+    const dependency = {
+      bytes: dependencyBytes,
+      sha256: hash(dependencyBytes),
+      size: dependencyBytes.length,
+    };
+    const requested: string[] = [];
+    const input = {
+      frozen,
+      sqlName: 'postgis',
+      portable: readPortableTarZstdBufferEntries(ownBytes),
+      addonName: '@oliphaunt/wasix-napi-win32-x64-msvc',
+      packageJson: '/fixture/portable/package.json',
+      aotPackageJson: '/fixture/windows/package.json',
+      fixturePath: '/fixture/postgis.sql',
+      hostManifestPath: '/fixture/host.json',
+      readDependency: (name: string) => {
+        requested.push(name);
+        assert.equal(name, 'fuzzystrmatch');
+        return dependency;
+      },
+    };
+    for (const document of [
+      frozen,
+      { ...frozen, schema: 'oliphaunt-extension-ci-artifacts-v2', extensions: [member] },
+    ]) {
+      const prepared = prepareWasixConsumerInput({ ...input, frozen: document });
+      assert.deepEqual(prepared.sqlMembers, [
+        { sqlName: 'fuzzystrmatch', version: '1.2' },
+        ...sqlMembers.map((sqlName) => ({ sqlName, version: '3.6.4' })),
+      ]);
+      assert.deepEqual(prepared.dependencies, [
+        {
+          sqlName: 'fuzzystrmatch',
+          sha256: dependency.sha256,
+          size: dependency.size,
+          modules: ['lib/postgresql/fuzzystrmatch.so'],
+        },
+      ]);
+      assert.deepEqual(prepared.modules, [
+        'lib/postgresql/fuzzystrmatch.so',
+        ...nativeModules.map((module) => module.path),
+      ]);
+      assert.equal(prepared.runtimeVersion, '0.3.2');
+      assert.equal(prepared.defaultVersion, '3.6.4');
+      assert.deepEqual(prepared.extensionPackage, {
+        sqlName: 'postgis',
+        product: frozen.product,
+        version: frozen.version,
+        packageJson: input.packageJson,
+        archiveSha256: hash(ownBytes),
+        archiveSize: ownBytes.length,
+        aotPackageJson: input.aotPackageJson,
+      });
+    }
+    assert.deepEqual(requested, ['fuzzystrmatch', 'fuzzystrmatch']);
+    const missing = new Map(input.portable);
+    missing.delete(`${prefix}postgis_raster.control`);
+    assert.throws(
+      () => prepareWasixConsumerInput({ ...input, portable: missing }),
+      /frozen member closure/u,
+    );
+    assert.throws(
+      () => prepareWasixConsumerInput({ ...input, readDependency: () => null }),
+      /original dependency/u,
+    );
+    for (const invalid of [
+      { ...dependency, sha256: 'f'.repeat(64) },
+      { ...dependency, size: dependency.size + 1 },
+    ])
+      assert.throws(
+        () => prepareWasixConsumerInput({ ...input, readDependency: () => invalid }),
+        assert.AssertionError,
+      );
+    const cycleBytes = archive({
+      ...controls,
+      [`${prefix}postgis.control`]: "default_version = '3.6.4'\nrequires = postgis_topology\n",
+    });
+    assert.throws(
+      () =>
+        prepareWasixConsumerInput({
+          ...input,
+          portable: readPortableTarZstdBufferEntries(cycleBytes),
+        }),
+      /dependency cycle/u,
+    );
+    const companionBytes = archive({
+      ...dependencyFiles,
+      [`${prefix}fuzzy_helper.control`]:
+        "default_version = '1.0'\nrequires = postgis_tiger_geocoder\n",
+    });
+    const companion = prepareWasixConsumerInput({
+      ...input,
+      readDependency: () => ({
+        bytes: companionBytes,
+        sha256: hash(companionBytes),
+        size: companionBytes.length,
+      }),
+    });
+    assert(companion.sqlMembers.some((member) => member.sqlName === 'fuzzy_helper'));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

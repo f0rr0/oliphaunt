@@ -762,6 +762,7 @@ const archiveKinds = new Set([
   'wasix-postmaster-runtime',
   'wasix-tools',
   'wasix-tools-aot',
+  'windows-v8-relink',
   'icu-data',
   'swift-source',
   'runtime',

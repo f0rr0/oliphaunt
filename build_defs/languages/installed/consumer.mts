@@ -181,10 +181,14 @@ export function cargoPayloadInputs(
 ) {
   const currentSource = (source: CargoCandidate) => {
     const owner = sourceOwners[source.name];
+    return currentSources.includes(source) && owner?.version === source.version;
+  };
+  const adoptsCurrent = (source: CargoCandidate | undefined, input: CargoPayloadInput) => {
+    if (!source) return false;
+    const owner = sourceOwners[source.name];
     return (
-      currentSources.includes(source) &&
-      owner?.version === source.version &&
-      selectedProducts.includes(owner.product)
+      (owner.product === input.product && source.version === input.version) ||
+      (selectedProducts.includes(owner.product) && selectedProducts.includes(input.product))
     );
   };
   const known = new Set([
@@ -234,7 +238,7 @@ export function cargoPayloadInputs(
             const selectedInput = selectedInputs.get(name);
             assert(selectedInput);
             assert(
-              source || pool.completed.includes(selectedInput),
+              pool.completed.includes(selectedInput) || adoptsCurrent(source, selectedInput),
               'Held source cannot consume current payload bytes: ' + name,
             );
             continue;
@@ -246,10 +250,7 @@ export function cargoPayloadInputs(
           );
           assert(current.length <= 1, 'Ambiguous current payload: ' + name);
           const input =
-            held[0] ??
-            (source && current[0] && selectedProducts.includes(current[0].product)
-              ? current[0]
-              : undefined);
+            held[0] ?? (current[0] && adoptsCurrent(source, current[0]) ? current[0] : undefined);
           assert(input, 'Missing actual exact payload archive: ' + name + '@' + version);
           const candidate = pool.read(input);
           selected.set(name, candidate);

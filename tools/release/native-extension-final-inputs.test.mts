@@ -276,3 +276,49 @@ test('current payload aliases retain exact source/File tuples and reject invalid
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('private constructor aliases retain whole original Files without inventing public carrier identities', () => {
+  const { directory, file } = fixture();
+  try {
+    const source = { commit: 'a'.repeat(40), tree: 'b'.repeat(40) };
+    const row = {
+      product: 'liboliphaunt-wasix',
+      version: '0.3.3',
+      artifact: 'constructor:postgres-wasix-wasm',
+      configuration: 'wasm32',
+      source,
+      file: file('postgres.wasix.wasm'),
+    };
+    const result = projectNativeCurrentArtifacts([row], source);
+    const saved = result.artifacts[`${row.product}/${row.version}/${row.artifact}`];
+    expect(saved.file.producer).toEqual(row.file.producer);
+    expect(result.files[0].source).toBe(row.file.path);
+    expect(saved.artifact).toBe('constructor:postgres-wasix-wasm');
+    const intarray = {
+      ...row,
+      artifact: 'constructor:intarray-wasix-module',
+      file: file('_int.so'),
+    };
+    const intarrayResult = projectNativeCurrentArtifacts([intarray], source);
+    expect(intarrayResult.files[0].source).toBe(intarray.file.path);
+    expect(Object.values(intarrayResult.artifacts)[0].file.path).toEndWith('/_int.so');
+    for (const name of ['.int.so', '-int.so'])
+      expect(() =>
+        projectNativeCurrentArtifacts([{ ...intarray, file: file(name) }], source),
+      ).toThrow();
+    for (const mutate of [
+      (value) => (value.artifact = 'constructor:../postgres-wasix-wasm'),
+      (value) => (value.file.member = 'postgres.wasix.wasm'),
+      (value) => (value.ecosystem = 'internal'),
+      (value) => (value.role = 'constructor-input'),
+      (value) => (value.file.sha256 = '0'.repeat(64)),
+      (value) => (value.source.tree = 'c'.repeat(40)),
+    ]) {
+      const changed = structuredClone(row);
+      mutate(changed);
+      expect(() => projectNativeCurrentArtifacts([changed], source)).toThrow();
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

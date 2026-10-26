@@ -495,13 +495,13 @@ test('union traversal preserves all shared DAG labels/packages and Native per-ro
   );
 });
 
-test('actual executable workflow inventory covers every 33 request context and authentic handoffs', () => {
+test('actual executable workflow inventory covers every 35 request context and authentic handoffs', () => {
   const workflow = Bun.YAML.parse(
     readFileSync(new URL('../../.github/workflows/bazel.yml', import.meta.url), 'utf8'),
   );
   const actual = configuredCiWorkflowInventory(workflow);
-  assert.equal(actual.requests.length, 33);
-  assert.equal(new Set(actual.requests.map((row) => row.id)).size, 33);
+  assert.equal(actual.requests.length, 35);
+  assert.equal(new Set(actual.requests.map((row) => row.id)).size, 35);
   assert.equal(
     actual.requests.find((row) => row.id === 'release-families/checksums')!.fullOnly,
     true,
@@ -514,7 +514,15 @@ test('actual executable workflow inventory covers every 33 request context and a
     actual.requests.find((row) => row.id === 'release-families/checksums')!.requires.length,
     13,
   );
-  assert.equal(actual.requests.filter((row) => row.requires.length).length, 10);
+  assert.equal(actual.requests.filter((row) => row.requires.length).length, 12);
+  assert.deepEqual(
+    actual.requests.find((row) => row.id === 'wasix-windows-aot/v8-carriers')!.requires,
+    ['wasix-modules/portable-llvm'],
+  );
+  assert.deepEqual(actual.requests.find((row) => row.id === 'wasix/tools-sdk-browser')!.requires, [
+    'wasix-modules/portable-llvm',
+    'wasix-windows-aot/v8-carriers',
+  ]);
   assert(!actual.requests.some((row) => /^portable\/[^/]+\/napi$/u.test(row.id)));
   for (const platform of ['linux-arm64', 'macos-arm64', 'windows-x64']) {
     const napi = actual.requests.find((row) => row.id === `wasix-host/${platform}/napi`);
@@ -540,9 +548,23 @@ test('actual executable workflow inventory covers every 33 request context and a
     },
     changes: [modified('napi.rs')],
   });
-  assert.deepEqual(napiPlan.selected_requests, [napiId, 'wasix/tools-sdk-browser']);
-  assert.deepEqual(napiPlan.selected_jobs, ['wasix', 'wasix-host/linux-arm64']);
-  assert.deepEqual(napiPlan.capture_requests, ['wasix/tools-sdk-browser']);
+  assert.deepEqual(napiPlan.selected_requests, [
+    napiId,
+    'wasix-modules/portable-llvm',
+    'wasix-windows-aot/v8-carriers',
+    'wasix/tools-sdk-browser',
+  ]);
+  assert.deepEqual(napiPlan.selected_jobs, [
+    'wasix',
+    'wasix-host/linux-arm64',
+    'wasix-modules',
+    'wasix-windows-aot',
+  ]);
+  assert.deepEqual(napiPlan.capture_requests, [
+    'wasix-modules/portable-llvm',
+    'wasix-windows-aot/v8-carriers',
+    'wasix/tools-sdk-browser',
+  ]);
   assert(actual.requests.some((row) => row.id === 'linux/x86_64/android-packages'));
   assert(!actual.requests.some((row) => row.id === 'linux/aarch64/android-packages'));
 });
@@ -1270,7 +1292,7 @@ test('CLI full fallback and source verification preserve complete Required and r
     const fullFile = path.join(outputBase, 'full.json');
     const full = run('plan', '--full', '--output', fullFile);
     assert.equal(full.status, 0, full.stderr);
-    assert.equal(JSON.parse(readFileSync(fullFile, 'utf8')).selected_requests.length, 33);
+    assert.equal(JSON.parse(readFileSync(fullFile, 'utf8')).selected_requests.length, 35);
     assert.notEqual(
       run(
         'verify',

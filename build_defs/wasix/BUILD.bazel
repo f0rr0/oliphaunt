@@ -16,6 +16,13 @@ exports_files(glob(["*.bzl", "*.bazel", "*.mts", "*.patch"]))
 exports_files(["config_probe.c"], visibility = ["@postgres_wasix//:__pkg__"])
 
 bun_test(
+    name = "constructor_inputs_test",
+    entry_point = "constructor-inputs.test.mts",
+    data = ["constructor-inputs.mts"],
+    size = "small",
+)
+
+bun_test(
     name = "napi_inputs_test",
     entry_point = "napi-inputs.test.mts",
     data = ["napi-inputs.mts", "napi.mts", "held-wasix-relocatable-includes.patch", "//src/wasix/node-addon:Cargo.toml", "//src/wasix/node-addon:package.json", "//:src/extensions/generated/extensions.catalog.json", "//:tools/packaging/testdata/release-fixture-utils.mts"] + NAPI_HELPERS + NAPI_NOTICES.keys() + [

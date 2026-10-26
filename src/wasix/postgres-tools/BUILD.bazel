@@ -37,7 +37,6 @@ wasix_tools_carriers(
     qualification = select({
         "//build_defs/native:linux_x86_64": [
             "//src/wasix/sdks/ts:browser_sql_consumer",
-            "//build_defs/wasix:macos_aot_repeatability_test",
             "//src/wasix/sdks/rust:postgres_regression_test",
             "//src/database-resources:wasix_resource_test",
             "//src/wasix/postgres-tools/ts:installed_consumer_test",

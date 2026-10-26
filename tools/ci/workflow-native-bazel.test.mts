@@ -51,6 +51,9 @@ function predecessors(id: string, active = new Set<string>()): Set<string> {
 test('native AOT hosts consume source-bound side-module and tools inputs and stay required', () => {
   assert.ok(predecessors('required').has('wasix-host'));
   assert.ok(predecessors('wasix-host').has('wasix'));
+  assert.ok(predecessors('wasix').has('wasix-modules'));
+  assert.ok(predecessors('wasix').has('wasix-windows-aot'));
+  assert.ok(predecessors('wasix-windows-aot').has('wasix-modules'));
   const host = jobs['wasix-host'].steps.find((step: any) =>
     step.run?.includes('EXPECTED_SOURCE_COMMIT'),
   );
@@ -144,6 +147,7 @@ test('NAPI shipping shares the Linux WASIX producer and imported native host lan
     authentication.run.includes('--consumer-products-json "$input_root/consumer-products.json"'),
   );
   assert.ok(authentication.run.includes('--stage-release-archives --run-id "$GITHUB_RUN_ID"'));
+  assert.ok(authentication.run.includes('--wasix-constructor-phase host'));
   assert.ok(authentication.run.includes('with-source.sh HEAD'));
   assert.ok(authentication.if.includes('needs.release-inputs.outputs.ci_selected_jobs'));
   assert.ok(authentication.if.includes("format('wasix-host/{0}', matrix.platform)"));
@@ -177,9 +181,13 @@ test('native package consumers follow their producers and remain required for ad
     ['react-native', 'failure'],
     ['release-families', 'failure'],
     ['wasix-host', 'failure'],
+    ['wasix-modules', 'failure'],
+    ['wasix-windows-aot', 'failure'],
     ['react-native', 'skipped'],
     ['release-families', 'skipped'],
     ['wasix-host', 'skipped'],
+    ['wasix-modules', 'skipped'],
+    ['wasix-windows-aot', 'skipped'],
   ]) {
     const results = Object.fromEntries(
       needs('required').map((id) => [id, { result: id === subject ? outcome : 'success' }]),
@@ -434,7 +442,8 @@ esac
       spawnSync('bash', ['-eu', '-c', steps.map((step: any) => step.run).join('\n')], {
         cwd: directory,
         env: {
-          ...env,
+          ...requestEnvironment(steps[0], env, ''),
+          CI_REQUEST_JOB: 'wasix',
           QUALIFICATION_JOB_NAME: jobs.wasix.name,
           WASIX_CALLS: calls,
           WASIX_CHROME: chrome,
@@ -453,6 +462,10 @@ esac
     const args = readFileSync(env.QUALIFIER_ARGS, 'utf8').split('\0');
     const argument = (flag: string) => args[args.indexOf(flag) + 1];
     assert.equal(argument('--shipping-export'), '//:wasix_shipping_export');
+    assert.deepEqual(JSON.parse(readFileSync(argument('--ci-requires-json'), 'utf8')), [
+      'wasix-modules/portable-llvm',
+      'wasix-windows-aot/v8-carriers',
+    ]);
     assert.deepEqual(JSON.parse(readFileSync(argument('--complete-products-json'), 'utf8')), [
       'postgres-tools-wasix',
     ]);
@@ -469,6 +482,7 @@ esac
     for (const flag of [
       '--platforms=//build_defs/native:linux_x86_64_glibc_2_28',
       '--host_platform=//build_defs/native:linux_x86_64_glibc_2_28',
+      '--repo_env=OLIPHAUNT_WASIX_CONSTRUCTOR_PHASE=package',
       '--test_env=OLIPHAUNT_WASM_AOT_VERIFY=full',
       `--test_env=OLIPHAUNT_BROWSER_CHROME=${chrome}`,
       '--test_env=OLIPHAUNT_BROWSER_CHROME_RECEIPT=' +
@@ -482,6 +496,148 @@ esac
     );
     assert.equal(execute('7').status, 7);
   });
+});
+
+test('WASIX constructor qualifiers retain source inputs, exact exports, handoff receipts and producer failures', () => {
+  for (const id of ['wasix-modules', 'wasix-windows-aot']) {
+    const job = jobs[id];
+    const step = job.steps.find((value: any) => value.run?.includes('qualify-native-shipping.mts'));
+    const windows = id === 'wasix-windows-aot';
+    assert.equal(job['runs-on'], windows ? 'windows-2025-vs2026' : 'ubuntu-24.04');
+    assert.equal(
+      job.steps.filter((value: any) => value.run?.includes('qualify-native-shipping.mts')).length,
+      1,
+    );
+    if (windows)
+      assert(
+        job.steps.findIndex((value: any) => value.uses === './.github/actions/setup-msvc') <
+          job.steps.indexOf(step),
+      );
+    const upload = job.steps.find(
+      (value: any) => value.with?.name === `native-build-evidence-${id}`,
+    );
+    assert(upload.if.includes("ci_mode == 'full'"));
+    assert(upload.if.includes(step.env.CI_REQUEST_ID));
+    assert.equal(upload.with['if-no-files-found'], 'error');
+    qualifierFixture((directory, env) => {
+      const script = path.join(directory, 'tools/dev/bun.sh');
+      writeFileSync(
+        script,
+        readFileSync(script, 'utf8') +
+          '\nprintf "%s\\n" "$OLIPHAUNT_NATIVE_PUBLICATION_INPUTS" > "$QUALIFIER_SOURCE"\nexit "${QUALIFIER_STATUS:-0}"\n',
+      );
+      const snapshot = path.join(directory, 'original-constructor-inputs.json');
+      const execute = (handoff: boolean, status = '0') => {
+        const request = requestEnvironment(step, env, '');
+        return spawnSync('bash', ['-eu', '-c', step.run], {
+          cwd: directory,
+          env: {
+            ...request,
+            CI_REQUEST_JOB: id,
+            CI_MODE: 'source',
+            CI_CAPTURE_REQUESTS: JSON.stringify(handoff ? [request.CI_REQUEST_ID] : []),
+            QUALIFICATION_JOB_NAME: job.name,
+            QUALIFIER_STATUS: status,
+            OLIPHAUNT_NATIVE_PUBLICATION_INPUTS: snapshot,
+          },
+        });
+      };
+      for (const handoff of [false, true]) {
+        const result = execute(handoff);
+        assert.equal(result.status, 0, result.stderr.toString());
+        const args = readFileSync(env.QUALIFIER_ARGS, 'utf8').split('\0');
+        const argument = (flag: string) => args[args.indexOf(flag) + 1];
+        assert.equal(
+          argument('--shipping-export'),
+          `//:${id.replaceAll('-', '_')}_shipping_export`,
+        );
+        assert.equal(argument('--ci-request-id'), step.env.CI_REQUEST_ID);
+        assert.equal(argument('--ci-job'), id);
+        assert.equal(args.includes('--ci-handoff'), handoff);
+        assert.deepEqual(
+          JSON.parse(readFileSync(argument('--ci-requires-json'), 'utf8')),
+          windows ? ['wasix-modules/portable-llvm'] : [],
+        );
+        const profile = windows
+          ? '//build_defs/host:native_windows_x64'
+          : '//build_defs/native:linux_x86_64_glibc_2_28';
+        const configuration = JSON.parse(readFileSync(argument('--configuration-json'), 'utf8'));
+        assert(configuration.includes(`--platforms=${profile}`));
+        assert(configuration.includes(`--host_platform=${profile}`));
+        assert.equal(configuration.includes('--config=wasix-aot'), !windows);
+        assert.equal(
+          configuration.includes('--repo_env=OLIPHAUNT_WASIX_CONSTRUCTOR_PHASE=windows-v8'),
+          windows,
+        );
+        assert.equal(JSON.parse(readFileSync(argument('--github-json'), 'utf8')).job, job.name);
+        assert.equal(readFileSync(env.QUALIFIER_SOURCE, 'utf8').trim(), snapshot);
+        if (windows)
+          assert.deepEqual(JSON.parse(readFileSync(argument('--startup-json'), 'utf8')), [
+            `--output_base=${env.RUNNER_TEMP}/b`,
+          ]);
+      }
+      const receipt = path.join(
+        env.RUNNER_TEMP,
+        'ci-requests',
+        step.env.CI_REQUEST_ID,
+        'ci-request.json',
+      );
+      rmSync(receipt);
+      assert.equal(execute(true, '7').status, 7);
+      assert(!existsSync(receipt), 'failed constructor cannot copy a completed request receipt');
+    });
+  }
+});
+
+test('WASIX constructor consumers acquire exact upstream phases through the authenticated source wrapper', () => {
+  for (const [id, name, phase] of [
+    ['wasix-windows-aot', 'Authenticate original Linux WASIX modules', 'windows-v8'],
+    ['wasix', 'Authenticate original Linux and Windows WASIX constructor inputs', 'package'],
+    ['wasix-host', 'Authenticate current WASIX constructor inputs', 'host'],
+  ]) {
+    const job = jobs[id];
+    const step = job.steps.find((value: any) => value.name === name);
+    assert(step, `missing original constructor acquisition for ${id}`);
+    assert.equal(step.env.GH_TOKEN, '$' + '{{ github.token }}');
+    assert(
+      job.steps.indexOf(step) <
+        job.steps.findIndex((value: any) => value.run?.includes('qualify-native-shipping.mts')),
+    );
+    qualifierFixture((directory, env) => {
+      const wrapperArgs = path.join(directory, 'source-wrapper-args');
+      writeFileSync(
+        path.join(directory, 'tools/release/with-source.sh'),
+        '#!/usr/bin/env bash\nprintf "%s\\0" "$@" > "$SOURCE_WRAPPER_ARGS"\nshift\nexec "$@"\n',
+      );
+      const script = path.join(directory, 'tools/dev/bun.sh');
+      writeFileSync(script, readFileSync(script, 'utf8') + '\nexit "${QUALIFIER_STATUS:-0}"\n');
+      const execute = (status = '0') =>
+        spawnSync('bash', ['-eu', '-c', step.run], {
+          cwd: directory,
+          env: {
+            ...env,
+            GITHUB_REF: 'refs/pull/295/merge',
+            SOURCE_WRAPPER_ARGS: wrapperArgs,
+            QUALIFIER_STATUS: status,
+          },
+        });
+      const result = execute();
+      assert.equal(result.status, 0, result.stderr.toString());
+      const wrapper = readFileSync(wrapperArgs, 'utf8').split('\0');
+      assert.deepEqual(wrapper.slice(0, 3), ['HEAD', 'bash', 'tools/dev/bun.sh']);
+      const args = readFileSync(env.QUALIFIER_ARGS, 'utf8').split('\0');
+      const argument = (flag: string) => args[args.indexOf(flag) + 1];
+      assert.equal(args[0], 'tools/release/native-release-preparation.mts');
+      assert(args.includes('--stage-release-archives'));
+      assert.equal(argument('--run-id'), env.GITHUB_RUN_ID);
+      assert.equal(argument('--ref'), 'refs/pull/295/merge');
+      assert.equal(argument('--wasix-constructor-phase'), phase);
+      assert.deepEqual(JSON.parse(readFileSync(argument('--consumer-products-json'), 'utf8')), [
+        'oliphaunt-wasix-rust',
+      ]);
+      assert.equal(execute('7').status, 7, 'failed authentication cannot proceed to construction');
+    });
+  }
 });
 
 test('private Rust packaging source tests execute once on Linux x64', () => {
@@ -1133,7 +1289,7 @@ test('Source CI verifies ordinary receipts while full qualification retains Requ
       env: { PATH: process.env.PATH, NEEDS_JSON: JSON.stringify(results) },
     }).status;
   assert.equal(runGuard(), 0, 'a verified empty ordinary selection needs no producer jobs');
-  for (const id of ['portable', 'wasix-host']) {
+  for (const id of ['portable', 'wasix-modules', 'wasix-windows-aot', 'wasix-host']) {
     for (const status of ['failure', 'cancelled']) {
       results[id].result = status;
       assert.notEqual(runGuard(), 0, `Source CI must reject a ${status} selected ${id} job`);
@@ -1506,6 +1662,8 @@ test('full module preflight follows source planning and retains strict failure p
 
 test('selected consumers reject failed producers while independent source families permit skipped jobs', () => {
   const producers: Record<string, string[]> = {
+    'wasix-windows-aot': ['wasix-modules'],
+    wasix: ['wasix-modules', 'wasix-windows-aot'],
     'postmaster-host': ['postmaster'],
     'wasix-host': ['wasix'],
     'react-native': ['portable'],

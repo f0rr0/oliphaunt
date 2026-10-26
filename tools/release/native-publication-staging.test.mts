@@ -13,7 +13,10 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import { tarHeader } from '../packaging/archive-directory.mts';
-import { captureNativePublicationOutputs } from './native-publication-staging.mts';
+import {
+  captureNativePublicationOutputs,
+  isNativeFinalTransportRoot,
+} from './native-publication-staging.mts';
 import { ROOT } from './release-graph.mts';
 
 function fixture(run) {
@@ -75,6 +78,36 @@ test('stages exact declared tree bytes, empty directories and modes under target
     expect(capture().stage()).toEqual(staged);
     rmSync(directory, { recursive: true });
     expect(readFileSync(path.join(staged[0], 'package.jar'), 'utf8')).toBe('JAR');
+  });
+});
+
+test('constructor transport selects only a source-owned internal generated File declaration', () => {
+  fixture(({ capture, cohort, directory }) => {
+    const root = cohort.roots[0];
+    Object.assign(root.package, {
+      ecosystem: 'internal',
+      role: 'constructor-input',
+      name: 'postgres-wasix-wasm',
+      outputs: [
+        { path: `${root.package.outputs[0].path}/package.jar`, owner: '//fixture:producer' },
+      ],
+    });
+    expect(isNativeFinalTransportRoot(root)).toBe(true);
+    expect(readFileSync(capture().stage()[0], 'utf8')).toBe('JAR');
+    for (const mutate of [
+      (value) => (value.package.role = 'construction'),
+      (value) => (value.package.name = '../postgres-wasix-wasm'),
+      (value) => (value.label = '@other//fixture:shipping'),
+      (value) => (value.package.outputs[0].path = 'source/postgres.wasm'),
+      (value) =>
+        value.package.outputs.push({ path: `${directory}/other`, owner: '//fixture:producer' }),
+    ]) {
+      const changed = structuredClone(root);
+      mutate(changed);
+      expect(isNativeFinalTransportRoot(changed)).toBe(false);
+    }
+    root.package.outputs[0].path = 'bazel-out/fixture/bin/package';
+    expect(capture).toThrow('constructor input must be one original regular File');
   });
 });
 

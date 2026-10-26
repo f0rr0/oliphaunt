@@ -7,8 +7,10 @@ import test from 'node:test';
 import { renderToml } from '../../build_defs/languages/cargo-metadata.mts';
 import { loadProducts } from './release-graph.mts';
 import {
+  cargoLocalVersions,
   cargoManifestPaths,
   cargoPathDependencyBindings,
+  cargoSameOwnerDependencyBindings,
   desiredCargoPathDependencyVersion,
   priorCargoPathDependencyVersions,
   releaseDerivedPathInventory,
@@ -174,6 +176,100 @@ test('release sync preserves wildcard Cargo path dependencies', () => {
   assert.equal(desiredCargoPathDependencyVersion('^0.2.0', '0.2.1', true), '0.2.1');
 });
 
+test('selected release owners close their registry carrier aliases while omitted and other owners retain historical requirements', () => {
+  const owners = new Map([
+    ['owned-sdk', 'sdk'],
+    ['owned-core', 'sdk'],
+    ['owned-engine', 'sdk'],
+    ['owned-codec', 'sdk'],
+    ['foreign-sdk', 'other'],
+  ]);
+  const products = { sdk: { version: '0.3.3' }, other: { version: '9.0.0' } };
+  const source = `[package]
+name = 'owned-sdk'
+version = '0.3.3'
+[dependencies]
+owned-core = '=0.3.2'
+historical = { package = 'foreign-sdk', version = '=0.3.2' }
+private = { package = 'owned-engine', version = '=0.3.2', registry = 'private' }
+local = { package = 'owned-engine', version = '=0.3.2', path = '../engine' }
+[target.'cfg(windows)'.dependencies]
+engine = { package = 'owned-engine', version = '=0.3.2', features = ['v8'], default-features = false }
+[build-dependencies.codec]
+package = 'owned-codec'
+version = '=0.3.2'
+[dev-dependencies]
+fixture = { package = 'owned-core', version = '=0.3.2' }
+`;
+  const update = (text, selected) =>
+    syncExampleCargoManifestText(text, {
+      policy: { crateDir: 'sdk' },
+      bindings: cargoSameOwnerDependencyBindings(Bun.TOML.parse(text), owners, products, selected),
+    });
+  const actual = update(source, new Set(['sdk']));
+  const expected = Bun.TOML.parse(source);
+  expected.dependencies['owned-core'] = '=0.3.3';
+  expected.target['cfg(windows)'].dependencies.engine.version = '=0.3.3';
+  expected['build-dependencies'].codec.version = '=0.3.3';
+  expected['dev-dependencies'].fixture.version = '=0.3.3';
+  assert.deepEqual(Bun.TOML.parse(actual.text), expected);
+  assert.equal(actual.details.length, 4);
+  assert.deepEqual(update(actual.text, new Set(['sdk'])), { text: actual.text, details: [] });
+  assert.deepEqual(update(source, new Set(['other'])), { text: source, details: [] });
+  const heldConsumer = {
+    package: { name: 'foreign-sdk' },
+    dependencies: { 'owned-core': '=0.3.2' },
+  };
+  assert.deepEqual(
+    cargoSameOwnerDependencyBindings(heldConsumer, owners, products, new Set(['sdk'])),
+    [],
+  );
+  assert.deepEqual(
+    cargoSameOwnerDependencyBindings(heldConsumer, owners, products, new Set(['sdk', 'other'])),
+    [],
+  );
+});
+
+test('workspace registry aliases advance with their sole public owner and private tools inherit', () => {
+  const manifest = Bun.TOML.parse(
+    `[workspace.dependencies]\nengine = { package = 'owned-engine', version = '=0.3.2', default-features = false }\n`,
+  );
+  const owners = new Map([
+    ['owned-sdk', 'sdk'],
+    ['owned-engine', 'sdk'],
+    ['other-sdk', 'other'],
+  ]);
+  const products = { sdk: { version: '0.3.3' }, other: { version: '2.0.0' } };
+  const consumer = (name) => ({
+    manifest: {
+      package: { name },
+      target: {
+        'cfg(windows)': { dependencies: { engine: { workspace: true, features: ['v8'] } } },
+      },
+    },
+  });
+  const manifests = new Map([
+    ['sdk/Cargo.toml', consumer('owned-sdk')],
+    ['tools/serializer/Cargo.toml', consumer('private-serializer')],
+  ]);
+  const bindings = () =>
+    cargoSameOwnerDependencyBindings(manifest, owners, products, new Set(['sdk']), { manifests });
+  assert.deepEqual(bindings(), [
+    {
+      kind: 'dependency',
+      name: 'engine',
+      entryParts: ['workspace', 'dependencies', 'engine'],
+      expected: '=0.3.3',
+    },
+  ]);
+  assert.deepEqual(
+    cargoSameOwnerDependencyBindings(manifest, owners, products, new Set(), { manifests }),
+    [],
+  );
+  manifests.set('other/Cargo.toml', consumer('other-sdk'));
+  assert.throws(bindings, /shares an independently versioned consumer/u);
+});
+
 test('compatibility sync preserves exact installed Cargo requirements and their operator spacing', () => {
   for (const requirement of ['=0.1.1', '= 0.1.1']) {
     for (const source of [
@@ -275,6 +371,170 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('generated source and payload crates follow their SDK owner only when that owner changes', (t) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-generated-release-lock-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const facade = 'owned-engine-windows-x64-msvc';
+  const generated = [
+    'owned-api',
+    'owned-runtime',
+    'owned-types',
+    'owned-journal',
+    facade,
+    ...[1, 2].map((part) => `${facade}-part-${String(part).padStart(3, '0')}`),
+  ];
+  for (const bumpSdk of [false, true]) {
+    const sdkVersion = bumpSdk ? '0.3.4' : '0.3.3';
+    const carriers = ['owned-sdk', ...generated.slice(0, 5)].map((name) => ({
+      id: `cargo:${name}`,
+      ecosystem: 'cargo',
+      name,
+      product: 'owned-sdk',
+      version: sdkVersion,
+      role: name === facade ? 'platform-leaf' : 'facade',
+    }));
+    const lock = {
+      version: 4,
+      package: [
+        { name: 'owned-sdk', version: '0.3.3' },
+        ...generated.map((name) => ({ name, version: '0.3.3' })),
+        { name: 'other', version: '1.0.0' },
+        {
+          name: 'owned-api',
+          version: '0.3.3',
+          source: 'registry+https://github.com/rust-lang/crates.io-index',
+          checksum: 'held-source',
+        },
+      ],
+    };
+    const versions = cargoLocalVersions(
+      new Map([
+        ['sdk/Cargo.toml', ['owned-sdk', sdkVersion]],
+        ['other/Cargo.toml', ['other', '1.0.1']],
+      ]),
+      carriers,
+      lock,
+    );
+    for (const name of generated) assert.equal(versions.get(name), sdkVersion);
+    const lockfile = path.join(directory, `${bumpSdk}.lock`);
+    writeFileSync(
+      lockfile,
+      `version = 4\n${lock.package
+        .map(
+          (entry) =>
+            `\n[[package]]\n${Object.entries(entry)
+              .map(([key, value]) => `${key} = ${JSON.stringify(value)}`)
+              .join('\n')}\n`,
+        )
+        .join('')}`,
+    );
+    const changes = [];
+    syncLockfile(lockfile, versions, changes, { write: true, observeUpdate: undefined });
+    const updated = Bun.TOML.parse(readFileSync(lockfile, 'utf8'));
+    for (const row of updated.package)
+      assert.equal(row.version, row.source ? '0.3.3' : row.name === 'other' ? '1.0.1' : sdkVersion);
+    assert.equal(updated.package.find((row) => row.source).checksum, 'held-source');
+    assert.equal(changes.length, 1);
+    if (!bumpSdk) assert.equal(changes[0].detail, 'other 1.0.0 -> 1.0.1');
+    const repeated = [];
+    syncLockfile(lockfile, versions, repeated, { write: true, observeUpdate: undefined });
+    assert.deepEqual(repeated, []);
+    assert.equal(
+      cargoLocalVersions(new Map([['sdk/Cargo.toml', ['owned-sdk', '9.9.9']]]), carriers, lock).get(
+        'owned-sdk',
+      ),
+      '9.9.9',
+    );
+  }
+  assert.throws(
+    () =>
+      cargoLocalVersions(
+        new Map([
+          ['one/Cargo.toml', ['same', '1.0.0']],
+          ['two/Cargo.toml', ['same', '2.0.0']],
+        ]),
+        [],
+        { package: [] },
+      ),
+    /conflicting versions/,
+  );
+  assert.deepEqual(
+    [
+      ...cargoLocalVersions(
+        new Map(),
+        [{ id: 'cargo:held', ecosystem: 'cargo', name: 'held', version: '9.9.9' }],
+        {
+          package: [
+            {
+              name: 'held',
+              version: '1.0.0',
+              source: 'registry+https://github.com/rust-lang/crates.io-index',
+            },
+          ],
+        },
+      ),
+    ],
+    [],
+  );
+});
+
+test('release sync updates exact local dependency references while preserving registry identities, comments and line endings', (t) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-release-dependency-lock-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const lockfile = path.join(directory, 'Cargo.lock');
+  const initial = `version = 4
+
+[[package]]
+name = "owned"
+version = "1.0.0"
+
+[[package]]
+name = "owned"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "held-one"
+
+[[package]]
+name = "owned"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "held-other"
+
+[[package]]
+name = "consumer"
+version = "3.0.0"
+dependencies = [
+ "owned 1.0.0", # current source, literal "owned 1.0.0", ]
+ "owned 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)", # held same version
+ "owned 1.5.0", # independently resolved registry version
+]
+
+[[package]]
+name = "sourced-consumer"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "held-consumer"
+dependencies = ["owned 1.0.0", "owned 1.5.0"]
+`.replaceAll('\n', '\r\n');
+  writeFileSync(lockfile, initial);
+  const versions = new Map([['owned', '2.0.0']]);
+  const preview = [];
+  syncLockfile(lockfile, versions, preview, { write: false, observeUpdate: undefined });
+  assert.equal(readFileSync(lockfile, 'utf8'), initial);
+  assert.equal(preview.length, 1);
+  syncLockfile(lockfile, versions, [], { write: true, observeUpdate: undefined });
+  assert.equal(
+    readFileSync(lockfile, 'utf8'),
+    initial
+      .replace('name = "owned"\r\nversion = "1.0.0"', 'name = "owned"\r\nversion = "2.0.0"')
+      .replace('"owned 1.0.0", #', '"owned 2.0.0", #')
+      .replace('dependencies = ["owned 1.0.0",', 'dependencies = ["owned 2.0.0",'),
+  );
+  const unchanged = [];
+  syncLockfile(lockfile, versions, unchanged, { write: true, observeUpdate: undefined });
+  assert.deepEqual(unchanged, []);
 });
 
 test('release sync closes registry example pins and runtime metadata across Cargo scopes', () => {

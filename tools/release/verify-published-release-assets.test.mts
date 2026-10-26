@@ -4,9 +4,17 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { extensionMetadata, extensionSourceIdentity } from './release-artifact-targets.mts';
+import {
+  allArtifactTargets,
+  extensionMetadata,
+  extensionSourceIdentity,
+} from './release-artifact-targets.mts';
 import { isolatedGitHubTestEnvironment } from './testdata/isolated-github-test-environment.mts';
-import { expectedAssets, verifyReleaseAssets } from './verify_github_release_attestations.mts';
+import {
+  assetBackedProducts,
+  expectedAssets,
+  verifyReleaseAssets,
+} from './verify_github_release_attestations.mts';
 
 const VERSION = '0.0.1';
 const CONTRIB = 'oliphaunt-extension-contrib-pg18';
@@ -38,6 +46,29 @@ if (process.argv[2] === '--verify-fixture') {
   const assets = fixture.staged ? await expectedAssets(fixture.product, VERSION) : undefined;
   await verifyReleaseAssets(fixture.product, VERSION, assets);
 } else {
+  test('declared GitHub rows supply asset eligibility and names for source-owned products', async () => {
+    const backed = await assetBackedProducts();
+    const rows = allArtifactTargets({ surface: 'github-release' });
+    for (const { product } of rows) expect(backed.has(product)).toBe(true);
+    for (const product of [
+      'database-resources',
+      'oliphaunt-swift',
+      'oliphaunt-wasix-rust',
+      'postgres-tools-native',
+      'postgres-tools-wasix',
+    ])
+      expect(await expectedAssets(product, VERSION)).toEqual(
+        rows
+          .filter((row) => row.product === product)
+          .map(({ asset }) => asset.replaceAll('{version}', VERSION))
+          .sort(),
+      );
+    expect(await expectedAssets('oliphaunt-wasix-rust', VERSION)).toEqual([
+      `oliphaunt-wasix-rust-${VERSION}-release-assets.sha256`,
+      `oliphaunt-wasix-rust-${VERSION}-windows-v8-relink.tar.zst`,
+    ]);
+  });
+
   function fixture(product) {
     const family = product === 'liboliphaunt-wasix' ? 'wasix' : 'native';
     const external = product === 'oliphaunt-extension-pgtap';
@@ -219,6 +250,25 @@ if (process.argv[2] === '--verify-fixture') {
       expect(result.status).toBe(0);
     });
   }
+
+  test('the WASIX SDK verifies its declared relink asset and rejects a missing kit', async () => {
+    const product = 'oliphaunt-wasix-rust';
+    const names = await expectedAssets(product, VERSION);
+    const row = {
+      product,
+      assets: names.map((name, index) => ({ name, id: index + 1, size: 1 })),
+      bytes: {},
+    };
+    const result = await verify(row);
+    expect(result.status).toBe(0);
+    expect(result.output).toContain('GitHub release assets verified');
+    const missing = await verify({
+      ...row,
+      assets: row.assets.filter(({ name }) => !name.endsWith('.tar.zst')),
+    });
+    expect(missing.status).not.toBe(0);
+    expect(missing.output).toContain('asset set mismatch');
+  });
 
   test('candidate checks still require the staged manifest', async () => {
     const result = await verify({ ...fixture('liboliphaunt-wasix'), staged: true });

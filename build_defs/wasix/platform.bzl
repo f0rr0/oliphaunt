@@ -1,5 +1,7 @@
 """Configure WASIX payload producers independently of their host consumers."""
 
+load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo")
+
 def _payload_profile_impl(_settings, _attr):
     # Cargo payload construction keeps the pinned Rust defaults, outside addon link policy.
     return {"@rules_rust//rust/settings:lto": "unspecified", "@rules_rust//rust/settings:codegen_units": -1,
@@ -19,7 +21,11 @@ WASIX_PORTABLE_TRANSITION = transition(
 )
 
 def _artifact_impl(ctx):
-    return [ctx.attr.artifact[0][DefaultInfo]]
+    artifact = ctx.attr.artifact[0]
+    result = [artifact[DefaultInfo]]
+    if ShippingSupplierInfo in artifact:
+        result.append(artifact[ShippingSupplierInfo])
+    return result
 
 wasix_artifact = rule(
     implementation = _artifact_impl,

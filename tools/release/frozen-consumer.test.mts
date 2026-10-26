@@ -88,7 +88,13 @@ test('every current release product and declared registry carrier has a frozen c
   };
   const plan = frozenConsumerPlan(lock, { configurationDigest: 'b'.repeat(64) });
   for (const carrier of catalog.carriers)
-    expect(plan.cases.some((entry) => entry.carrierId === carrier.id)).toBe(true);
+    expect(
+      plan.cases.some(
+        (entry) =>
+          entry.carrierId === carrier.id ||
+          (carrier.ecosystem === 'cargo' && entry.product === carrier.product),
+      ),
+    ).toBe(true);
 });
 
 test('SDK-only consumers install the independently versioned vector package', () => {
@@ -115,6 +121,106 @@ test('SDK-only consumers install the independently versioned vector package', ()
       },
     ]);
   }
+});
+
+test('Cargo consumers exercise implementation carriers through their owning entrypoint', () => {
+  const sdk = 'oliphaunt-wasix-rust';
+  const cargo = (name, dependencies = [], product = sdk, target = null) => ({
+    id: `cargo:${name}`,
+    ecosystem: 'cargo',
+    name,
+    version: '1.2.3',
+    product,
+    target,
+    dependencies: dependencies.map((dependency) => `cargo:${dependency}`),
+  });
+  const carriers = [
+    cargo('oliphaunt-wasix', ['oliphaunt-wasmer-wasix', 'oliphaunt-query']),
+    cargo('oliphaunt-wasmer-wasix', [
+      'oliphaunt-wasmer',
+      'oliphaunt-wasmer-wasix-types',
+      'oliphaunt-wasmer-journal',
+    ]),
+    cargo('oliphaunt-wasmer-wasix-types', ['oliphaunt-wasmer']),
+    cargo('oliphaunt-wasmer-journal', ['oliphaunt-wasmer-wasix-types']),
+    cargo('oliphaunt-wasmer', ['oliphaunt-wasmer-v8-windows-x64-msvc']),
+    cargo(
+      'oliphaunt-wasmer-v8-windows-x64-msvc',
+      [
+        'oliphaunt-wasmer-v8-windows-x64-msvc-part-001',
+        'oliphaunt-wasmer-v8-windows-x64-msvc-part-002',
+      ],
+      sdk,
+      'windows-x64-msvc',
+    ),
+    ...['001', '002'].map((part) =>
+      cargo(`oliphaunt-wasmer-v8-windows-x64-msvc-part-${part}`, [], sdk, 'windows-x64-msvc'),
+    ),
+    cargo('independent-helper', [], 'helper-owner'),
+    cargo('oliphaunt-query', [], 'oliphaunt-query'),
+  ];
+  const lock = {
+    lockDigest: 'a'.repeat(64),
+    products: [sdk, 'oliphaunt-query', 'helper-owner'].map((id) => ({
+      id,
+      version: '1.2.3',
+      publishTargets: ['crates-io'],
+    })),
+    carriers,
+  };
+  const plan = frozenConsumerPlan(lock, { configurationDigest: 'b'.repeat(64) });
+  expect([...new Set(plan.cases.map(({ carrierId }) => carrierId))].sort()).toEqual([
+    'cargo:independent-helper',
+    'cargo:oliphaunt-query',
+    'cargo:oliphaunt-wasix',
+  ]);
+  const sdkCases = plan.cases.filter(({ carrierId }) => carrierId === 'cargo:oliphaunt-wasix');
+  expect(sdkCases).toHaveLength(4);
+  expect(sdkCases.every(({ executionLevel }) => executionLevel === 'execute')).toBe(true);
+  // Lock ordering cannot change the entrypoints or silently discard an independent owner.
+  expect(
+    frozenConsumerPlan(
+      { ...lock, carriers: [...carriers].reverse() },
+      { configurationDigest: 'b'.repeat(64) },
+    ),
+  ).toEqual(plan);
+});
+
+test('Cargo owners without an SDK manifest retain each carrier host contract', () => {
+  const carriers = [
+    {
+      id: 'cargo:parent',
+      name: 'parent',
+      ecosystem: 'cargo',
+      product: 'sdk',
+      target: 'linux-x64-gnu',
+      version: '1.0.0',
+      dependencies: ['cargo:helper'],
+    },
+    {
+      id: 'cargo:helper',
+      name: 'helper',
+      ecosystem: 'cargo',
+      product: 'sdk',
+      target: null,
+      version: '1.0.0',
+      dependencies: [],
+    },
+  ];
+  const plan = frozenConsumerPlan(
+    {
+      lockDigest: 'a'.repeat(64),
+      carriers,
+      products: [{ id: 'sdk', version: '1.0.0', publishTargets: ['crates-io'] }],
+    },
+    { configurationDigest: 'b'.repeat(64) },
+  );
+  expect(
+    plan.cases.filter(({ carrierId }) => carrierId === 'cargo:parent').map(({ target }) => target),
+  ).toEqual(['linux-x64-gnu']);
+  expect(
+    plan.cases.filter(({ carrierId }) => carrierId === 'cargo:helper').map(({ target }) => target),
+  ).toEqual(['linux-arm64-gnu', 'linux-x64-gnu', 'macos-arm64', 'windows-x64-msvc']);
 });
 
 test('extension-only releases reuse one carrier case per host to prove both default SDK installs', () => {

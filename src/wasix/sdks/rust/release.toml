@@ -1,9 +1,16 @@
 id = "oliphaunt-wasix-rust"
 owner = "@oliphaunt/wasix-rust"
 kind = "sdk"
-publish_targets = ["crates-io"]
-registry_packages = ["crates:oliphaunt-wasix"]
-release_artifacts = ["cargo-crate"]
+publish_targets = ["crates-io", "github-release"]
+registry_packages = [
+  "crates:oliphaunt-wasix",
+  "crates:oliphaunt-wasmer",
+  "crates:oliphaunt-wasmer-wasix",
+  "crates:oliphaunt-wasmer-wasix-types",
+  "crates:oliphaunt-wasmer-journal",
+  "crates:oliphaunt-wasmer-v8-windows-x64-msvc",
+]
+release_artifacts = ["cargo-crate", "windows-v8-relink"]
 exact_extension_runtime = "liboliphaunt-wasix"
 
 [compatibility_versions.runtime]

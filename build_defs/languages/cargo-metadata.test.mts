@@ -402,3 +402,177 @@ test('optional source adapters keep one shared Rust dependency identity througho
   manifests['sdk/Cargo.toml'].dependencies.broker.version = '=9.0.0';
   expect(project).toThrow('Cargo path/version mismatch');
 });
+
+function acquisitionFixture() {
+  const original = fixture();
+  const { workspace, manifests, lock } = original;
+  const version = '0.9.0';
+  const patches: Record<string, { path: string; version: string }> = {};
+  for (const name of ['owned-api', 'owned-runtime', 'owned-types', 'owned-journal'])
+    patches[name] = { path: `forks/${name}`, version };
+  for (const name of ['payload', 'part-a', 'part-b']) {
+    const directory = `delivery/${name}`;
+    workspace.workspace.members.push(directory);
+    patches[name] = { path: directory, version };
+    manifests[`${directory}/Cargo.toml`] = {
+      package: { name, version, edition: '2024', 'rust-version': '1.93' },
+      dependencies:
+        name === 'payload'
+          ? {
+              'part-a': { path: '../part-a', version: `=${version}` },
+              'part-b': { path: '../part-b', version: `=${version}` },
+            }
+          : {},
+    };
+    lock.package.push({
+      name,
+      version,
+      dependencies: name === 'payload' ? ['part-a', 'part-b'] : [],
+    });
+  }
+  manifests['sdk/Cargo.toml'].dependencies.engine = {
+    package: 'owned-api',
+    version: `=${version}`,
+  };
+  lock.package.find((entry) => entry.name === 'sdk').dependencies = [
+    'core 0.2.0',
+    'libc',
+    `owned-api ${version}`,
+  ];
+  lock.package.push(
+    {
+      name: 'owned-api',
+      version,
+      dependencies: [`owned-runtime ${version}`, `payload ${version}`],
+    },
+    { name: 'owned-runtime', version, dependencies: ['owned-types', `owned-journal ${version}`] },
+    { name: 'owned-types', version },
+    {
+      name: 'owned-journal',
+      version,
+      dependencies: ['core 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)'],
+    },
+    {
+      name: 'core',
+      version: '0.2.0',
+      source: 'registry+https://github.com/rust-lang/crates.io-index',
+      checksum: 'held-core-sha256',
+    },
+  );
+  const project = (roots = ['sdk']) =>
+    projectCargoWorkspace(
+      workspace,
+      lock,
+      roots,
+      (relative) => manifests[relative],
+      (relative) => relative.endsWith('/src/lib.rs') || relative === 'sdk/build.rs',
+      {},
+      '',
+      patches,
+    );
+  return { ...original, patches, project };
+}
+
+test('explicit acquisition keeps nonworkspace source versions while projecting only real workspace members', () => {
+  const { project } = acquisitionFixture();
+  const projected = project();
+  const root = Bun.TOML.parse(projected.files['Cargo.toml']);
+  expect(root.workspace.members).toEqual([
+    'core',
+    'delivery/part-a',
+    'delivery/part-b',
+    'delivery/payload',
+    'sdk',
+  ]);
+  expect(Object.keys(root.patch['crates-io']).sort()).toEqual([
+    'owned-api',
+    'owned-journal',
+    'owned-runtime',
+    'owned-types',
+    'part-a',
+    'part-b',
+    'payload',
+  ]);
+  expect(root.patch['crates-io']['owned-api']).toEqual({ path: 'forks/owned-api' });
+  const packages = Bun.TOML.parse(projected.files['Cargo.lock']).package;
+  expect(
+    packages.filter((entry) => entry.name.startsWith('owned-')).map((entry) => entry.version),
+  ).toEqual(['0.9.0', '0.9.0', '0.9.0', '0.9.0']);
+  expect(packages.find((entry) => entry.name === 'owned-api').dependencies).toEqual([
+    'owned-runtime 0.9.0',
+    'payload 0.0.0',
+  ]);
+  expect(packages.find((entry) => entry.name === 'owned-runtime').dependencies).toEqual([
+    'owned-types',
+    'owned-journal 0.9.0',
+  ]);
+  expect(packages.find((entry) => entry.name === 'sdk').dependencies).toEqual([
+    'core 0.0.0',
+    'libc',
+    'owned-api 0.9.0',
+  ]);
+  expect(packages.filter((entry) => entry.name === 'core')).toEqual([
+    { name: 'core', version: '0.0.0', dependencies: ['serde'] },
+    {
+      name: 'core',
+      version: '0.2.0',
+      source: 'registry+https://github.com/rust-lang/crates.io-index',
+      checksum: 'held-core-sha256',
+    },
+  ]);
+  expect(packages.find((entry) => entry.name === 'owned-journal').dependencies).toEqual([
+    'core 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)',
+  ]);
+  expect(
+    Bun.TOML.parse(projected.files['delivery/payload/Cargo.toml']).dependencies['part-a'],
+  ).toEqual({ path: '../part-a', version: '=0.0.0' });
+  expect(Bun.TOML.parse(projected.files['sdk/Cargo.toml']).dependencies.engine).toEqual({
+    package: 'owned-api',
+    version: '=0.9.0',
+  });
+  expect(projected.facts['delivery/payload'].version).toBe('0.9.0');
+});
+
+test('optional acquisition roots do not import unrelated source forks, delivery members or patch entries', () => {
+  const { project } = acquisitionFixture();
+  const projected = project(['core']);
+  expect(Bun.TOML.parse(projected.files['Cargo.toml']).patch).toBeUndefined();
+  expect(Object.keys(projected.facts)).toEqual(['core']);
+  expect(Bun.TOML.parse(projected.files['Cargo.lock']).package.map((entry) => entry.name)).toEqual([
+    'core',
+    'serde',
+    'serde_derive',
+  ]);
+});
+
+test('unknown local sources, stale acquisition versions and mismatched member paths cannot be silently zeroed', () => {
+  const unknown = acquisitionFixture();
+  delete unknown.patches['owned-types'];
+  expect(unknown.project).toThrow('Unrepresented nonworkspace Cargo source: owned-types 0.9.0');
+  const staleFork = acquisitionFixture();
+  staleFork.patches['owned-api'].version = '0.9.1';
+  expect(staleFork.project).toThrow('Unrepresented nonworkspace Cargo source: owned-api 0.9.0');
+  const staleMember = acquisitionFixture();
+  staleMember.patches.payload.version = '0.9.1';
+  expect(staleMember.project).toThrow('differs from workspace member: payload');
+  const swapped = acquisitionFixture();
+  swapped.patches['owned-api'].path = 'delivery/payload';
+  expect(swapped.project).toThrow('Unrepresented nonworkspace Cargo source: owned-api 0.9.0');
+  for (const unsafe of [
+    '../outside',
+    '/outside',
+    'nested/../outside',
+    'C:/outside',
+    'nested\\outside',
+    './outside',
+    'nested//outside',
+  ]) {
+    const fixture = acquisitionFixture();
+    fixture.patches['owned-api'].path = unsafe;
+    expect(fixture.project).toThrow('Invalid Cargo acquisition patch: owned-api');
+  }
+  const local = acquisitionFixture();
+  local.lock.package.find((entry) => entry.name === 'core').dependencies.push('unexpected-local');
+  local.lock.package.push({ name: 'unexpected-local', version: '1.0.0' });
+  expect(local.project).toThrow('Unrepresented nonworkspace Cargo source: unexpected-local 1.0.0');
+});

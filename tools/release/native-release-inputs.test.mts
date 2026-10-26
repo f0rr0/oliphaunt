@@ -1180,6 +1180,89 @@ for (const fault of [
     }
   });
 
+test('constructor Files survive Windows-to-Linux transport without changing original Linux provenance or source', () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'native-constructor-inputs-'));
+  try {
+    const source = { commit: 'a'.repeat(40), tree: 'b'.repeat(40) };
+    const physical = path.join(directory, 'postgres.wasix.wasm');
+    writeFileSync(physical, 'original source-owned Linux constructor bytes');
+    const identity = fileIdentity(physical);
+    const row = {
+      product: 'liboliphaunt-wasix',
+      version: '0.3.3',
+      artifact: 'constructor:postgres-wasix-wasm',
+      configuration: 'wasm32',
+      source,
+      file: {
+        path: physical,
+        size: identity.size,
+        sha256: identity.sha256,
+        producer: {
+          evidenceDigest: `sha256:${'c'.repeat(64)}`,
+          invocationId: 'original-linux-constructor',
+          root: '//src/wasix/runtime:postgres_wasm_shipping',
+          configuration: 'd'.repeat(64),
+          output: 'bazel-out/linux-opt/bin/postgres.wasix.wasm',
+        },
+      },
+    };
+    const initial = path.join(directory, 'initial.json');
+    writeFileSync(
+      initial,
+      JSON.stringify({
+        source,
+        seedControls: [],
+        supplierPublications: [],
+        nativeCurrentArtifacts: [row],
+      }),
+    );
+    const windowsPacket = transportPublicNativePublicationInputs(
+      initial,
+      path.join(directory, 'windows'),
+      source,
+    );
+    const serialized = JSON.parse(readFileSync(windowsPacket, 'utf8'));
+    serialized.nativeCurrentArtifacts[0].file.path = `C:\\retained\\files\\${row.file.sha256}\\postgres.wasix.wasm`;
+    writeFileSync(windowsPacket, JSON.stringify(serialized));
+    const imported = JSON.parse(
+      readFileSync(
+        importPublicNativePublicationInputs(path.dirname(windowsPacket), source),
+        'utf8',
+      ),
+    );
+    expect(imported.nativeCurrentArtifacts[0]).toEqual({
+      ...row,
+      file: {
+        ...row.file,
+        path: path.join(
+          path.dirname(windowsPacket),
+          'files',
+          row.file.sha256,
+          'postgres.wasix.wasm',
+        ),
+      },
+    });
+    const linuxPacket = transportPublicNativePublicationInputs(
+      path.join(path.dirname(windowsPacket), 'native-publication-inputs-current.json'),
+      path.join(directory, 'linux'),
+      source,
+    );
+    const final = JSON.parse(
+      readFileSync(importPublicNativePublicationInputs(path.dirname(linuxPacket), source), 'utf8'),
+    );
+    expect(final.nativeCurrentArtifacts[0].file.producer).toEqual(row.file.producer);
+    expect(final.nativeCurrentArtifacts[0].source).toEqual(source);
+    expect(fileIdentity(final.nativeCurrentArtifacts[0].file.path).sha256).toBe(identity.sha256);
+    serialized.nativeCurrentArtifacts[0].source.tree = 'e'.repeat(40);
+    writeFileSync(windowsPacket, JSON.stringify(serialized));
+    expect(() => importPublicNativePublicationInputs(path.dirname(windowsPacket), source)).toThrow(
+      'current native artifact source differs',
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('current Cargo identity survives arbitrary producer filenames and snapshot transport into installed staging', async () => {
   const f = await fixture();
   try {
@@ -1467,6 +1550,21 @@ test('the constructor coordinator keeps RN and WASIX bootstrap roles separate an
   expect(nativeConstructorProducerArtifacts(['liboliphaunt-wasix-postmaster'])).toEqual([
     'native-build-evidence-postmaster-linux',
   ]);
+  for (const [phase, artifacts] of Object.entries({
+    'windows-v8': ['native-build-evidence-wasix-modules'],
+    package: ['native-build-evidence-wasix-modules', 'native-build-evidence-wasix-windows-aot'],
+    host: ['native-build-evidence-wasix-tools', 'native-build-evidence-wasix-windows-aot'],
+  })) {
+    expect(nativeConstructorProducerArtifacts(['oliphaunt-wasix-rust'], phase).sort()).toEqual(
+      artifacts.sort(),
+    );
+    expect(() => nativeConstructorProducerArtifacts(['oliphaunt-react-native'], phase)).toThrow(
+      'declared source consumer and phase',
+    );
+  }
+  expect(() => nativeConstructorProducerArtifacts(['oliphaunt-wasix-rust'], 'untrusted')).toThrow(
+    'declared source consumer and phase',
+  );
   for (const consumers of [
     ['oliphaunt-react-native', 'oliphaunt-swift'],
     ['oliphaunt-react-native', 'oliphaunt-wasix-napi'],

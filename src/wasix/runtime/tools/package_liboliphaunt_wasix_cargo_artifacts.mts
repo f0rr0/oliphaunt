@@ -251,7 +251,7 @@ function validateCanonicalAotManifest(manifest, manifestPath, expectedTarget, so
     assertCanonicalWasixAotManifest(manifest, {
       context: rel(manifestPath),
       expectedTarget,
-      canonical: canonicalWasixAotMetadata(sourceRoot),
+      canonical: canonicalWasixAotMetadata(sourceRoot, expectedTarget),
     });
   } catch (error) {
     fail(error.message);

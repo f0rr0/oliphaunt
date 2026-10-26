@@ -119,7 +119,7 @@ fn write_generated_aot(out: &Path, target: &str, artifact_dir: &Path) {
         .parent()
         .expect("generated AOT output has parent")
         .join("manifest.json");
-    let retained_paths = write_core_aot_manifest(&manifest, &generated_manifest);
+    let (retained_paths, engine) = write_core_aot_manifest(&manifest, &generated_manifest);
     for relative in &retained_paths {
         assert!(
             artifact_dir.join(relative).is_file(),
@@ -156,7 +156,7 @@ fn write_generated_aot(out: &Path, target: &str, artifact_dir: &Path) {
 
     let text = format!(
         "pub const TARGET_TRIPLE: &str = {:?};\n\
-         pub const ENGINE: &str = \"llvm-opta\";\n\
+         pub const ENGINE: &str = {engine:?};\n\
          pub const HAS_EMBEDDED_AOT: bool = true;\n\
          pub const MANIFEST_JSON: &str = include_str!({});\n\
          #[rustfmt::skip]\n\
@@ -182,11 +182,11 @@ fn write_generated_aot(out: &Path, target: &str, artifact_dir: &Path) {
 
 fn write_source_only_aot(out: &Path, target: &str) {
     let manifest = format!(
-        "{{\"format-version\":1,\"target-triple\":{target:?},\"engine\":\"llvm-opta\",\"wasmer-version\":\"7.2.1\",\"wasmer-wasix-version\":\"0.702.1\",\"artifacts\":[]}}"
+        "{{\"format-version\":1,\"target-triple\":{target:?},\"engine\":\"v8\",\"wasmer-version\":\"7.5.0\",\"wasmer-wasix-version\":\"0.705.0\",\"artifacts\":[]}}"
     );
     let text = format!(
         "pub const TARGET_TRIPLE: &str = {target:?};\n\
-         pub const ENGINE: &str = \"llvm-opta\";\n\
+         pub const ENGINE: &str = \"v8\";\n\
          pub const HAS_EMBEDDED_AOT: bool = false;\n\
          pub const MANIFEST_JSON: &str = r#\"{manifest}\"#;\n\
          pub fn artifact_bytes(_name: &str) -> Option<&'static [u8]> {{ None }}\n"
@@ -273,10 +273,15 @@ fn artifact_belongs_to_crate(name: &str) -> bool {
     }
 }
 
-fn write_core_aot_manifest(source: &Path, destination: &Path) -> Vec<String> {
+fn write_core_aot_manifest(source: &Path, destination: &Path) -> (Vec<String>, String) {
     let text = fs::read_to_string(source).expect("read generated WASIX AOT manifest");
     let mut manifest: serde_json::Value =
         serde_json::from_str(&text).expect("parse generated WASIX AOT manifest");
+    let engine = manifest
+        .get("engine")
+        .and_then(|value| value.as_str())
+        .expect("generated WASIX AOT manifest has engine")
+        .to_owned();
     let artifacts = manifest
         .get_mut("artifacts")
         .and_then(|value| value.as_array_mut())
@@ -304,7 +309,7 @@ fn write_core_aot_manifest(source: &Path, destination: &Path) -> Vec<String> {
     let rendered =
         serde_json::to_string_pretty(&manifest).expect("serialize core WASIX AOT manifest");
     fs::write(destination, format!("{rendered}\n")).expect("write core WASIX AOT manifest");
-    paths
+    (paths, engine)
 }
 
 fn emit_artifact_manifest(out_dir: &Path, target: &str, artifact_dir: &Path, files: &[PathBuf]) {

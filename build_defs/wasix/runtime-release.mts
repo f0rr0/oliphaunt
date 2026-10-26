@@ -31,7 +31,12 @@ import {
 import { stageReleaseNotices } from '../../tools/packaging/release-notices.mts';
 import { ROOT } from '../../tools/release/release-artifact-targets.mts';
 import { writeNativeChecksums } from '../native/carriers/checksums.mts';
-import { copyDeclaredSources, stageDeclaredPayload, validatePackedRuntimeCargo } from './cargo.mts';
+import {
+  copyDeclaredSources,
+  copyDeclaredToolchain,
+  stageDeclaredPayload,
+  validatePackedRuntimeCargo,
+} from './cargo.mts';
 import { type RuntimePayloadSpec, sourceFacts } from './package.mts';
 
 interface RuntimeArtifact {
@@ -51,6 +56,7 @@ export interface RuntimeReleaseSpec
   notices: Record<string, string>;
   generated: Record<string, string>;
   toolchain: string;
+  engineSources?: string | null;
   output: string;
 }
 
@@ -78,7 +84,7 @@ export async function packageRuntimeReleaseAsset(spec: RuntimeReleaseSpec): Prom
     stageDeclaredPayload(spec, payload);
     const sourceRoot = path.join(scratch, 'sources');
     copyDeclaredSources(spec.notices, sourceRoot);
-    copyDeclaredSources({ 'src/wasix/runtime/toolchain.toml': spec.toolchain }, sourceRoot);
+    copyDeclaredToolchain(spec, sourceRoot);
     const stage = path.join(scratch, 'archive');
     const { source_fingerprint: fingerprint } = await sourceFacts(spec);
     if (portable) {

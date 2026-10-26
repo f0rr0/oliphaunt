@@ -7,6 +7,7 @@ load("//build_defs/extensions:contrib_carriers.bzl", "native_contrib_carrier_met
 load("//build_defs/native/carriers:defs.bzl", "native_checksum_manifest")
 load("//build_defs/release:identity.bzl", "ReleaseIdentityInfo")
 load("//build_defs/release:shipping.bzl", "ShippingInfo", "shipping_export", "shipping_package")
+load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo", "shipping_suppliers")
 load(":cargo.bzl", "RUNTIME_CARGO_HELPERS")
 load(":npm.bzl", "RUNTIME_NPM_HELPERS", "RUNTIME_NPM_NOTICES")
 load(":platform.bzl", "WASIX_PORTABLE_TRANSITION")
@@ -14,7 +15,6 @@ load(":wasm.bzl", "WasmExportPolicyInfo")
 
 _PRODUCT = "liboliphaunt-wasix"
 _OWNER = "@oliphaunt_metadata//:product_" + _PRODUCT
-_SUPPLIERS = "//src/wasix/runtime:runtime_public_suppliers"
 
 RUNTIME_RELEASE_HELPERS = {label: True for label in RUNTIME_CARGO_HELPERS + RUNTIME_NPM_HELPERS + [
     "//build_defs/wasix:cargo.mts",
@@ -43,6 +43,8 @@ def _release_asset_impl(ctx):
     artifact = json.decode(ctx.attr.artifact)
     output = ctx.actions.declare_file(ctx.label.name + "/" + artifact["asset"].replace("{version}", owner.version))
     inputs = payload + [ctx.file.toolchain, ctx.file.postgres_source, ctx.file.postgres_series, ctx.file.icu_source] + ctx.files.patches
+    if artifact["target"] == "windows-x64-msvc":
+        inputs.append(ctx.file.engine_sources)
     generated = _sources(ctx.attr.generated, inputs)
     if artifact["target"] == "portable":
         exports = ctx.attr.export_policy[0][WasmExportPolicyInfo].exports
@@ -56,6 +58,7 @@ def _release_asset_impl(ctx):
         "notices": _sources(ctx.attr.notices, inputs),
         "generated": generated,
         "toolchain": ctx.file.toolchain.path,
+        "engineSources": ctx.file.engine_sources.path if artifact["target"] == "windows-x64-msvc" else None,
         "postgresSource": ctx.file.postgres_source.path,
         "postgresSeries": ctx.file.postgres_series.path,
         "patches": {file.short_path: file.path for file in ctx.files.patches},
@@ -71,20 +74,21 @@ def _release_asset_impl(ctx):
     bun_file_action(ctx, ctx.file._runner, arguments = [args, leaves], inputs = depset(inputs + [spec]),
                     source_files = ctx.files._helpers + [ctx.file.toolchain] + ctx.files.notices,
                     outputs = [output], mnemonic = "WasixRuntimeReleaseArchive")
-    return [DefaultInfo(files = depset([output]))]
+    return [DefaultInfo(files = depset([output])), ctx.attr.payload[ShippingSupplierInfo]]
 
 _release_asset = rule(
     implementation = _release_asset_impl,
     toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = {
         "owner": attr.label(default = _OWNER, providers = [ReleaseIdentityInfo]),
-        "payload": attr.label(mandatory = True),
+        "payload": attr.label(mandatory = True, providers = [ShippingSupplierInfo]),
         "export_policy": attr.label(default = "//src/wasix/runtime:export_policy", providers = [WasmExportPolicyInfo], cfg = WASIX_PORTABLE_TRANSITION),
         "artifact": attr.string(mandatory = True),
         "generated": attr.label_keyed_string_dict(allow_files = True),
         "notices": attr.label_keyed_string_dict(default = RUNTIME_NPM_NOTICES, allow_files = True),
         "patches": attr.label_list(allow_files = [".patch"], mandatory = True),
         "toolchain": attr.label(default = "//src/wasix/runtime:toolchain.toml", allow_single_file = True),
+        "engine_sources": attr.label(default = "//src/wasix/runtime/engine:sources.json", allow_single_file = True),
         "postgres_source": attr.label(default = "//src/third-party/postgres:source.toml", allow_single_file = True),
         "postgres_series": attr.label(default = "//src/wasix/runtime:postgres/series", allow_single_file = True),
         "icu_source": attr.label(default = "//src/third-party/icu:source.toml", allow_single_file = True),
@@ -153,6 +157,7 @@ def wasix_runtime_release_assets(patches, generated, qualification):
         archives.append(":release_archive_" + name)
     native_checksum_manifest(name = "release_assets", product = _PRODUCT, archives = archives,
                              artifact_rows = WASIX_ARTIFACTS, assemble = True)
+    shipping_suppliers(name = "release_checksum_suppliers", inputs = archives)
     packages = [":npm_shipping_package", "//src/wasix/runtime/crates/assets:shipping_package"] + [
         "//src/wasix/runtime/crates/aot/" + triple + ":shipping_package" for triple in WASIX_AOT_TARGETS.values()
     ]
@@ -162,7 +167,7 @@ def wasix_runtime_release_assets(patches, generated, qualification):
         native.filegroup(name = name, srcs = [":release_assets"], output_group = "checksums" if row["kind"] == "checksums" else asset)
         shipping_package(name = name + "_shipping", owner = _OWNER, artifacts = [":" + name],
                          ecosystem = "github", package_name = asset, configuration = row.get("target") or "portable",
-                         role = "github-release-asset", suppliers = _SUPPLIERS)
+                         role = "github-release-asset", suppliers = ":release_checksum_suppliers" if row["kind"] == "checksums" else ":release_archive_" + row["target"].replace("-", "_"))
         packages.append(":" + name + "_shipping")
     _final_packages_test(name = "final_package_test", args = bun_test_entrypoint_args("final_package_test"), portable = ":portable_payload", packages = packages,
                          size = "medium", tags = ["manual"],

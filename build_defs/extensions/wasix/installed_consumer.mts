@@ -11,29 +11,26 @@ import {
   startupPacket,
 } from '../../../src/wasix/sdks/ts/tools/pgwire-client.mts';
 
-const [
+const [inputPath] = process.argv.slice(2);
+assert.equal(process.argv.length, 3);
+const input = JSON.parse(readFileSync(inputPath, 'utf8'));
+const {
   addonName,
   product,
   sqlName,
-  specPath,
-  frozenPath,
+  version,
+  runtimeVersion,
+  lifecycle,
+  defaultVersion,
   fixturePath,
   hostManifestPath,
-  dependenciesPath,
-] = process.argv.slice(2);
-assert.equal(process.argv.length, 10);
-const hostManifest = JSON.parse(readFileSync(hostManifestPath, 'utf8'));
+  dependencies,
+  extensionPackage,
+} = input;
 assert(
-  addonName && product && sqlName && specPath && frozenPath && fixturePath && hostManifestPath,
+  addonName && product && sqlName && version && runtimeVersion && fixturePath && hostManifestPath,
 );
-const spec = JSON.parse(readFileSync(specPath, 'utf8'));
-const frozen = JSON.parse(readFileSync(frozenPath, 'utf8'));
-assert.equal(spec.product, product);
-assert.equal(spec.sqlName, sqlName);
-assert.equal(frozen.product, product);
-assert.equal(frozen.sqlName, sqlName);
-const lifecycle = frozen.wasixInstall.lifecycle;
-const defaultVersion = spec.source['extension-control']['default-version'];
+const hostManifest = JSON.parse(readFileSync(hostManifestPath, 'utf8'));
 const quoteIdentifier = (value: string) => `"${value.replaceAll('"', '""')}"`;
 const quoteLiteral = (value: string) => `'${value.replaceAll("'", "''")}'`;
 const fixture = readFileSync(fixturePath, 'utf8');
@@ -61,15 +58,13 @@ for (const assignment of lifecycle.startupConfig) {
 // The pinned host keeps directory-database runtime overlays in temporary workspaces.
 const workspaces = path.join(process.cwd(), 'runtime-workspaces');
 mkdirSync(workspaces);
-process.env.TMPDIR = workspaces;
+for (const variable of ['TMPDIR', 'TMP', 'TEMP']) process.env[variable] = workspaces;
 const require = createRequire(path.join(process.cwd(), 'consumer-package.json'));
 const addon = require(require.resolve(`${addonName}/oliphaunt_wasix_napi.node`));
 const addonManifest = require(require.resolve(`${addonName}/package.json`));
 assert.equal(addon.addonAbiVersion(), addonManifest.oliphaunt.addonAbiVersion);
 assert.equal(addon.nodeApiVersion(), addonManifest.oliphaunt.nodeApiVersion);
-assert.equal(addon.runtimeVersion(), spec.compatibility.wasix_runtime_version);
-const dependencies: { sqlName: string; sha256: string; size: number; modules: string[] }[] =
-  JSON.parse(readFileSync(dependenciesPath, 'utf8'));
+assert.equal(addon.runtimeVersion(), runtimeVersion);
 for (const dependency of dependencies)
   assert.equal(
     addon.extensionIdentity(dependency.sqlName),
@@ -83,23 +78,11 @@ assert.equal(
   hostManifest.runtime.sha256,
   'executing addon embeds a different declared host archive',
 );
-const packageName = `@oliphaunt/${product.slice('oliphaunt-'.length)}-wasix`;
-const packageJson = require.resolve(`${packageName}/package.json`);
-const manifest = require(packageJson);
-assert.equal(manifest.version, spec.version);
-assert.equal(frozen.version, spec.version);
+const manifest = require(extensionPackage.packageJson);
+assert.equal(manifest.version, version);
 const carrier = manifest.oliphaunt.carriers[sqlName];
-const extensionPackage = {
-  sqlName,
-  product,
-  version: manifest.version,
-  packageJson,
-  archiveSha256: carrier.sha256,
-  archiveSize: carrier.size,
-  ...(frozen.wasixInstall.nativeModules.length > 0
-    ? { aotPackageJson: require.resolve(`${packageName}-linux-x64-gnu/package.json`) }
-    : {}),
-};
+assert.equal(carrier.sha256, extensionPackage.archiveSha256);
+assert.equal(carrier.size, extensionPackage.archiveSize);
 const options = {
   profile: 'standard',
   storage: { kind: 'memory' },
@@ -109,9 +92,10 @@ const options = {
   extensions: [sqlName],
   extensionPackages: [extensionPackage],
 };
-function queryErrors(database: any, statement: string) {
+function queryResponse(database: any, statement: string) {
   const response = Buffer.from(database.execProtocolRaw(simpleQuery(statement)));
   const errors: string[] = [];
+  const rows: (string | null)[][] = [];
   let ready = false;
   for (let offset = 0; offset < response.length; ) {
     assert(offset + 5 <= response.length, 'truncated PostgreSQL response header');
@@ -119,19 +103,42 @@ function queryErrors(database: any, statement: string) {
     assert(length >= 4 && offset + length + 1 <= response.length);
     const tag = String.fromCharCode(response[offset]);
     if (tag === 'E') errors.push(response.subarray(offset + 5, offset + length + 1).toString());
+    if (tag === 'D') {
+      const end = offset + length + 1;
+      assert(length >= 6, 'truncated PostgreSQL row field count');
+      const fields = response.readUInt16BE(offset + 5);
+      const row: (string | null)[] = [];
+      let position = offset + 7;
+      for (let field = 0; field < fields; field++) {
+        assert(position + 4 <= end, 'truncated PostgreSQL row field size');
+        const size = response.readInt32BE(position);
+        position += 4;
+        assert(size >= -1 && position + Math.max(0, size) <= end);
+        row.push(size === -1 ? null : response.subarray(position, position + size).toString());
+        position += Math.max(0, size);
+      }
+      assert.equal(position, end, 'PostgreSQL row contains trailing bytes');
+      rows.push(row);
+    }
     if (tag === 'Z') ready = true;
     offset += length + 1;
   }
   assert(ready, 'PostgreSQL response has no ReadyForQuery');
-  return errors;
+  return { errors, rows };
+}
+function queryErrors(database: any, statement: string) {
+  return queryResponse(database, statement).errors;
 }
 function sql(database: any, statement: string) {
   assert.deepEqual(queryErrors(database, statement), [], `${sqlName}: ${statement}`);
 }
 
 type Execute = (statement: string) => void | Promise<void>;
+let expectedExtensions: [string, string][];
 const stagedSql = `DO $$ BEGIN IF EXISTS (SELECT FROM pg_extension WHERE extname = ${quoteLiteral(sqlName)}) THEN RAISE EXCEPTION 'staging installed extension'; END IF; END $$`;
-const versionSql = `DO $$ BEGIN IF (SELECT extversion FROM pg_extension WHERE extname = ${quoteLiteral(sqlName)}) IS DISTINCT FROM ${quoteLiteral(defaultVersion)} THEN RAISE EXCEPTION 'installed extension version differs from pinned source'; END IF; END $$`;
+const versionSql = lifecycle.createExtension
+  ? `DO $$ BEGIN IF (SELECT extversion FROM pg_extension WHERE extname = ${quoteLiteral(sqlName)}) IS DISTINCT FROM ${quoteLiteral(defaultVersion)} THEN RAISE EXCEPTION 'installed extension version differs from pinned source'; END IF; END $$`
+  : '';
 const stronger =
   sqlName === 'pg_hashids'
     ? [
@@ -163,6 +170,14 @@ const stronger =
 async function runStatements(execute: Execute, rows: string[]) {
   for (const statement of rows) await execute(statement);
 }
+async function verifyMembers(execute: Execute) {
+  const expected = quoteLiteral(JSON.stringify(expectedExtensions));
+  await execute(`DO $$ BEGIN IF
+    (SELECT jsonb_agg(jsonb_build_array(extname, extversion) ORDER BY extname) FROM pg_extension)
+    IS DISTINCT FROM ${expected}::jsonb
+    THEN RAISE EXCEPTION 'installed SQL members/versions differ from the initial database and delivered controls'; END IF; END $$`);
+}
+
 async function activate(execute: Execute) {
   await execute(stagedSql);
   await runStatements(execute, lifecycle.loadSql);
@@ -177,28 +192,21 @@ async function activate(execute: Execute) {
   await runStatements(execute, lifecycle.postCreateSql);
   if (lifecycle.createExtension) await execute(versionSql);
   await runStatements(execute, [...smoke, ...stronger]);
+  await verifyMembers(execute);
 }
 async function verify(execute: Execute) {
   if (lifecycle.createExtension) await execute(versionSql);
   await runStatements(execute, [...verification, ...stronger]);
+  await verifyMembers(execute);
 }
 function assertSelectedModules() {
   const prefix = 'lib/postgresql/';
   const expected = new Set<string>(
-    frozen.wasixInstall.nativeModules.map((module: { path: string }) => {
-      assert(module.path.startsWith(prefix));
-      return module.path.slice(prefix.length);
+    input.modules.map((module: string) => {
+      assert(module.startsWith(prefix));
+      return module.slice(prefix.length);
     }),
   );
-  for (const module of spec.descriptor['native-support-modules'] ?? []) {
-    assert(module['runtime-path'].startsWith(prefix));
-    expected.add(module['runtime-path'].slice(prefix.length));
-  }
-  for (const dependency of dependencies)
-    for (const module of dependency.modules) {
-      assert(module.startsWith(prefix));
-      expected.add(module.slice(prefix.length));
-    }
   const roots = readdirSync(workspaces, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => path.join(workspaces, entry.name, 'tmp/oliphaunt'))
@@ -223,6 +231,25 @@ const memory = addon.NativeWasixDatabase.open(options);
 try {
   assert(queryErrors(memory, 'SELECT 1 / 0').length > 0, 'SQL errors were not recognized');
   sql(memory, 'SELECT 1');
+  const baseline = queryResponse(
+    memory,
+    'SELECT extname, extversion FROM pg_extension ORDER BY extname',
+  );
+  assert.deepEqual(baseline.errors, []);
+  assert.deepEqual(baseline.rows, [['plpgsql', '1.0']], 'standard database baseline differs');
+  const expected = new Map<string, string>(
+    baseline.rows.map((row) => {
+      assert(row.length === 2 && row.every((value) => typeof value === 'string'));
+      return row as [string, string];
+    }),
+  );
+  for (const { sqlName, version } of input.sqlMembers) {
+    if (expected.has(sqlName)) assert.equal(expected.get(sqlName), version);
+    expected.set(sqlName, version);
+  }
+  expectedExtensions = [...expected].sort(([left], [right]) =>
+    left < right ? -1 : left > right ? 1 : 0,
+  );
   await activate((statement) => sql(memory, statement));
 } finally {
   memory.close();
@@ -291,5 +318,5 @@ try {
   await server.close();
 }
 console.log(
-  `Installed ${sqlName} on declared WASIX host ${spec.compatibility.wasix_runtime_version}: staging, canonical activation, fixture SQL, reopen, physical backup/restore and server: PASS`,
+  `Installed ${sqlName} on declared WASIX host ${runtimeVersion}: staging, canonical activation, fixture SQL, reopen, physical backup/restore and server: PASS`,
 );

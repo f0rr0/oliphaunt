@@ -75,7 +75,7 @@ async function fixture(targetId: string, mutation: string = '') {
   await pack(wasixExtensionPackageName(product), version, {
     'payload/files/extensions/uuid-ossp/extension.tar.zst': archive,
   });
-  const canonical = canonicalWasixAotMetadata();
+  const canonical = canonicalWasixAotMetadata(undefined, target);
   const manifest = (artifacts: unknown[]) => ({
     'format-version': 1,
     'source-lane': canonical.sourceLane,

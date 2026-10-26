@@ -46,6 +46,7 @@ def native_extension_carrier_helpers():
         "//src/wasix/runtime:tools/wasix-aot-manifest.mts",
         "//src/wasix/runtime:tools/wasix-cargo-artifact-contract.mts",
         "//src/wasix/runtime:tools/wasix-cargo-toolchain-policy.mts",
+        "//src/wasix/runtime/engine:sources.json",
         "//src/wasix/runtime:tools/wasix-runtime-npm-contract.mts",
         "//:tools/packaging/archive-directory.mts",
         "//:tools/packaging/cargo-manifest.mts",

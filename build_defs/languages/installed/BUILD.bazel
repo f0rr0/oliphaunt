@@ -10,7 +10,7 @@ exports_files(["context.mts", "consumer.mts", "capture.mts", "repositories.bzl",
 bun_test(
     name = "context_test",
     entry_point = "context.test.mts",
-    data = ["context.mts", "fixture/Cargo.lock", "fixture/registry-index.json"],
+    data = ["context.mts", "fixture/Cargo.lock", "fixture/registry-index.json", "//:rust-toolchain.toml"] + glob(["wasix/**/Cargo.lock", "wasix/**/registry-index.json"]),
 )
 
 bun_test(

@@ -274,7 +274,14 @@ function dependencyRows(ecosystem, tables) {
           : raw !== null && !Array.isArray(raw) && typeof raw === 'object'
             ? String(raw.version ?? '*')
             : '*';
-      rows.push({ ecosystem, name, requirement, scope });
+      const packageName =
+        ecosystem === 'cargo' &&
+        raw !== null &&
+        typeof raw === 'object' &&
+        typeof raw.package === 'string'
+          ? raw.package
+          : name;
+      rows.push({ ecosystem, name: packageName, requirement, scope });
     }
   }
   return rows.sort((left, right) =>

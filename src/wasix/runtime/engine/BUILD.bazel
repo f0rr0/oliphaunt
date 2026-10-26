@@ -1,0 +1,126 @@
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@cargo_crates//:defs.bzl", "crate_deps")
+load("@oliphaunt_metadata//:metadata.bzl", "PRODUCTS", "PUBLICATION_CARRIERS")
+load("@wasix_engine_carriers//:available.bzl", "AVAILABLE")
+load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+load("//build_defs/foundation:bun.bzl", "bun_test")
+load("//build_defs/quality:sources.bzl", "rust_quality_files", "source_quality_files")
+load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+load("//build_defs/wasix/engine:construction.bzl", "windows_engine_construction")
+load("//build_defs/wasix/engine:packages.bzl", "ENGINE_PACKAGE_HELPERS")
+load("//build_defs/wasix/engine:relink.bzl", "windows_engine_relink")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["sources.json", "notices.json", "notices.mts", "package.mts", "relink.json", "relink.mts", "patches/wasmer-v8.patch", "patches/wasmer-wasix-v8.patch"])
+
+_SOURCES = ["wasmer", "wasmer-wasix", "wasmer-wasix-types", "wasmer-journal"]
+_CARRIER_ROLES = {row["name"]: row["role"] for row in PUBLICATION_CARRIERS if row["ecosystem"] == "cargo" and row["product"] == "oliphaunt-wasix-rust"}
+windows_engine_construction(available = AVAILABLE, sources = _SOURCES)
+windows_engine_relink(available = AVAILABLE)
+
+rust_binary(
+    name = "relink_loader",
+    srcs = ["relink-loader.rs"],
+    edition = "2024",
+    target_compatible_with = ["@platforms//os:windows", "@platforms//cpu:x86_64"],
+)
+
+[
+    filegroup(name = group, srcs = [":packages"], output_group = group)
+    for group in ["facade_rs", "part001_rs", "part001_payload", "part002_rs", "part002_payload"]
+]
+[
+    rust_library(
+        name = "part" + part,
+        crate_name = "oliphaunt_wasmer_v8_windows_x64_msvc_part_" + part,
+        edition = "2024",
+        version = PRODUCTS["oliphaunt-wasix-rust"]["version"],
+        srcs = [":part" + part + "_rs"],
+        crate_root = ":part" + part + "_rs",
+        compile_data = [":part" + part + "_payload"],
+    )
+    for part in ["001", "002"]
+]
+rust_library(
+    name = "facade",
+    crate_name = "oliphaunt_wasmer_v8_windows_x64_msvc",
+    edition = "2024",
+    version = PRODUCTS["oliphaunt-wasix-rust"]["version"],
+    srcs = [":facade_rs"],
+    crate_root = ":facade_rs",
+    deps = [":part001", ":part002"] + crate_deps(["flate2"], package_name = "engine/oliphaunt-wasmer-v8-windows-x64-msvc"),
+)
+
+copy_file(name = "api_build_source", src = "//build_defs/wasix/engine:build.rs.tpl", out = "build.rs", allow_symlink = False)
+cargo_build_script(
+    name = "api_build_script",
+    srcs = [":api_build_source"],
+    crate_root = ":api_build_source",
+    pkg_name = "oliphaunt-wasmer",
+    edition = "2024",
+    version = PRODUCTS["oliphaunt-wasix-rust"]["version"],
+    crate_features = ["v8"],
+    deps = [":facade"],
+    data = [":embedded_bindings"],
+    use_default_shell_env = False,
+)
+
+bun_test(
+    name = "package_test",
+    entry_point = "package.test.mts",
+    data = ["package.mts"] + ENGINE_PACKAGE_HELPERS,
+    size = "small",
+)
+bun_test(
+    name = "notices_test",
+    entry_point = "notices.test.mts",
+    data = ["notices.mts", "notices.json", "sources.json"],
+    size = "small",
+)
+
+source_quality_files()
+rust_quality_files()
+
+bun_test(
+    name = "relink_test",
+    entry_point = "relink.test.mts",
+    data = ["relink.mts", "relink.json", "sources.json", "package.mts", "//build_defs/wasix/engine:generate.mts", "//build_defs/wasix/engine:embedded-engine.rs", "//build_defs/wasix/engine:build.rs.tpl"] + ENGINE_PACKAGE_HELPERS,
+    size = "small",
+)
+
+[
+    filegroup(name = name.replace("-", "_") + "_crate", srcs = [":packages"], output_group = name.replace("-", "_"))
+    for name in _SOURCES
+]
+filegroup(name = "delivery_crates", srcs = [":packages"], output_group = "facade")
+[
+    shipping_package(
+        name = name.replace("-", "_") + "_shipping",
+        owner = "@oliphaunt_metadata//:product_oliphaunt-wasix-rust",
+        artifacts = [":" + name.replace("-", "_") + "_crate"],
+        ecosystem = "cargo",
+        package_name = "oliphaunt-" + name,
+        configuration = "portable",
+        role = _CARRIER_ROLES["oliphaunt-" + name],
+        suppliers = "//build_defs/release:no_suppliers",
+    )
+    for name in _SOURCES
+]
+shipping_package(
+    name = "delivery_shipping",
+    owner = "@oliphaunt_metadata//:product_oliphaunt-wasix-rust",
+    artifacts = [":delivery_crates"],
+    ecosystem = "cargo",
+    package_name = "oliphaunt-wasmer-v8-windows-x64-msvc",
+    configuration = "windows-x64-msvc",
+    role = "platform-leaf",
+    suppliers = "//build_defs/release:no_suppliers",
+)
+shipping_export(
+    name = "shipping_export",
+    packages = [":" + name.replace("-", "_") + "_shipping" for name in _SOURCES] + [":delivery_shipping"] + ([] if AVAILABLE else [":relink_shipping", ":relink_checksums_shipping"]),
+    qualification = ["//src/wasix/runtime/tools/v8-serializer:clippy_test", "//src/wasix/runtime/tools/v8-serializer:options_test"] + ([] if AVAILABLE else [":relink_smoke_test"]),
+    testonly = True,
+)

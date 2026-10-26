@@ -9,12 +9,12 @@ load("//build_defs/extensions:contrib_carriers.bzl", "native_contrib_carrier_leg
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["compiled_carriers.test.mts", "installed_consumer.mts", "contrib_carriers.mts", "contrib_carriers.bzl", "contrib_installed.test.mts"])
+exports_files(["compiled_carriers.test.mts", "installed_consumer.mts", "imported_installed.mts", "consumer_inputs.mts", "contrib_carriers.mts", "contrib_carriers.bzl", "contrib_installed.test.mts"])
 
 bun_test(
     name = "resource_inputs_test",
     entry_point = "resource_inputs.test.mts",
-    data = ["//build_defs/extensions:wasix_carriers.mts", "//:src/extensions/artifacts/packages/tools/bundle-carrier-assets.mts"] + wasix_sql_carrier_helpers() + native_contrib_carrier_legal(),
+    data = ["consumer_inputs.mts", "//build_defs/extensions:wasix_carriers.mts", "//:src/extensions/artifacts/packages/tools/bundle-carrier-assets.mts"] + wasix_sql_carrier_helpers() + native_contrib_carrier_legal(),
     size = "small",
 )
 

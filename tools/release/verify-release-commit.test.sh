@@ -15,7 +15,7 @@ assert_history() {
   bash "$root/tools/release/with-release-history.sh" "$repo" "$head" \
     bash "$root/tools/dev/bun.sh" "$fixture" assert "$repo" "$family" "$1" "$head" "${release:-}"
 }
-for family in bootstrap basic cargo cargo-path wildcard wasix example compatibility public-support; do
+for family in bootstrap basic cargo cargo-path engine-sdk wildcard wasix example compatibility public-support; do
   repo="$scratch/$family"
   git init -q "$repo"
   git -C "$repo" config user.name 'Release Test'
@@ -31,6 +31,7 @@ for family in bootstrap basic cargo cargo-path wildcard wasix example compatibil
     basic) scenarios=(clean later-fix downgrade tainted kotlin-readme swift-readme deletion rename hidden-version-config hidden-derived-config derived-version-only unrelated-derived-dependency) ;;
     cargo) scenarios=(exact unrelated-pin unrelated-package unrelated-lock wrong-workspace-version unrelated-workspace-version workspace-metadata) ;;
     cargo-path) scenarios=(private-path unselected-public-path wrong-private-path private-path-features selected-compatible-path held-compatible-path wrong-compatible-path) ;;
+    engine-sdk) scenarios=(engine-exact engine-held engine-cross-owner engine-registry engine-private-registry engine-shared-workspace engine-wrong-local-ref engine-registry-ref engine-unrelated-local-ref) ;;
     wildcard) scenarios=(workspace-wildcard local-version wrong-version changed-path removed-path changed-features) ;;
     wasix) scenarios=(workspace-links) ;;
     example) scenarios=(exact wrong-registry-version wrong-runtime-version unrelated-registry-version missing-native-transition) ;;
@@ -44,6 +45,10 @@ for family in bootstrap basic cargo cargo-path wildcard wasix example compatibil
     if [[ "$family" == public-support || "$scenario" == authored-adoption ]]; then
       bash "$root/tools/dev/bun.sh" "$fixture" write "$repo" "$family" authored
       commit 'fix!: retarget the public native host before release generation'
+    fi
+    if [[ "$family" == engine-sdk && ( "$scenario" == engine-held || "$scenario" == engine-shared-workspace ) ]]; then
+      bash "$root/tools/dev/bun.sh" "$fixture" write "$repo" "$family" "$scenario-authored"
+      commit 'fix: retain an authored engine dependency contract before release generation'
     fi
     bash "$root/tools/dev/bun.sh" "$fixture" write "$repo" "$family" "$scenario"
     case "$scenario" in

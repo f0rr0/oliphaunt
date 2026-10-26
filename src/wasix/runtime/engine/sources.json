@@ -36,6 +36,7 @@
     "bytes": 151695100,
     "library": {
       "path": "lib/v8.lib",
+      "bytes": 1871746786,
       "sha256": "04061d2035659457dcedb2e695ab3ef50de97d3ab71579b4fe824523c47f582a"
     },
     "v8": {

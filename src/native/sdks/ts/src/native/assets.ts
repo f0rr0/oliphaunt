@@ -26,6 +26,7 @@ import {
   resolveExplicitRuntimeDirectory,
 } from './common.js';
 import {
+  extensionControlRequires,
   type NpmExtensionLicenseFileContract,
   parseNpmExtensionLicenseFiles,
 } from './extension-contract.js';
@@ -1286,12 +1287,7 @@ async function requireExactExtensionRuntimeInventory(config: {
         if (fileName === `${sqlName}.control`) {
           controls.add(sqlName);
           const control = await readFile(join(config.runtimeDirectory, file), 'utf8');
-          const requires =
-            /^\s*requires\s*=\s*'([^']*)'/mu
-              .exec(control)?.[1]
-              ?.split(',')
-              .map((value) => value.trim())
-              .filter(Boolean) ?? [];
+          const requires = extensionControlRequires(control, `${config.source} ${sqlName}.control`);
           for (const dependency of requires) {
             if (
               dependency !== 'plpgsql' &&

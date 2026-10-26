@@ -1,6 +1,7 @@
 """Release-feature Node-API construction from its actual locked Cargo inputs."""
 
 load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS", "EXTENSION_FINAL_INPUTS", "NATIVE_CURRENT_ARTIFACTS", "PRODUCTS", "PUBLICATION_CARRIERS", "WASIX_ARTIFACTS")
+load("@wasix_constructor_inputs//:inputs.bzl", "PHASE")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
 load("//build_defs/languages:rust.bzl", "cargo_features", "rust_cdylib_output")
 load("@rules_rust//rust:defs.bzl", "rust_common")
@@ -10,10 +11,15 @@ load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo", "current_rust_
 load(":cargo.bzl", "RUNTIME_CARGO_HELPERS")
 load(":npm.bzl", "RUNTIME_NPM_NOTICES")
 load(":platform.bzl", "WASIX_PAYLOAD_PROFILE")
+load("//build_defs/extensions:final_leaf.bzl", "ExtensionFinalLeafInfo")
+load("//build_defs/extensions:owner_carriers.bzl", "native_final_leaf_files", "native_final_leaf_input")
+load("//build_defs/extensions:native_carriers.bzl", "native_extension_carrier_helpers")
 
 WasixNapiInputsInfo = provider(fields = ["tree", "target", "triple", "sql_names", "sdk_version"])
 WasixNapiReleaseInfo = provider(fields = ["binary", "inputs"])
 WasixNapiCarrierInfo = provider(fields = ["npm", "github", "provenance", "target", "construction_contract", "inputs"])
+
+WASIX_NAPI_IMPORT_FINAL_INPUTS = NATIVE_CURRENT_ARTIFACTS != None and PHASE != "package"
 
 NAPI_NOTICES = RUNTIME_NPM_NOTICES | {
     "//src/third-party/openssl:LICENSE.txt": "src/third-party/openssl/LICENSE.txt",
@@ -114,7 +120,7 @@ def wasix_napi_inputs(name, cargo_facts):
             if len(rows) != 1:
                 fail("WASIX addon needs one canonical current carrier: " + package)
             record = {"package": package, "configuration": target if role == "coreAotArchive" else (rows[0]["target"] or "portable")}
-            if NATIVE_CURRENT_ARTIFACTS != None:
+            if WASIX_NAPI_IMPORT_FINAL_INPUTS:
                 original = NATIVE_CURRENT_ARTIFACTS.get("liboliphaunt-wasix/" + runtime_version + "/cargo:" + package)
                 if original:
                     source = original["file"]["path"]
@@ -130,7 +136,7 @@ def wasix_napi_inputs(name, cargo_facts):
                 declarations[role] = json.encode(record)
         archives[target], records[target] = selected, declarations
     frozen = name + "_contrib_frozen"
-    if NATIVE_CURRENT_ARTIFACTS == None:
+    if not WASIX_NAPI_IMPORT_FINAL_INPUTS:
         native.filegroup(name = frozen, srcs = ["//build_defs/extensions/wasix:contrib"], output_group = "frozen")
         frozen = ":" + frozen
     else:
@@ -248,6 +254,9 @@ def wasix_napi_carriers(producer, qualification = []):
         packages.append(":" + name)
     shipping_export(name = "release_shipping_export", packages = packages, qualification = qualification, testonly = True)
 
+def _runfile(ctx, file):
+    return file.short_path[3:] if file.short_path.startswith("../") else ctx.workspace_name + "/" + file.short_path
+
 def _installed_impl(ctx):
     producer = ctx.attr.producer[WasixNapiReleaseInfo]
     carrier = ctx.attr.carrier[WasixNapiCarrierInfo]
@@ -264,14 +273,26 @@ def _installed_impl(ctx):
             fail("installed default addon member requires an unmodeled server lifecycle: " + name)
         lifecycles.append({"sqlName": name, "dependencies": row["dependencies"], "create": lifecycle["create-extension"],
                            "schema": lifecycle.get("create-schema"), "loadSql": lifecycle["load-sql"], "postCreateSql": lifecycle["post-create-sql"]})
+    extension = None
+    extension_files = []
+    if ctx.attr.extension:
+        leaf = ctx.attr.extension[ExtensionFinalLeafInfo]
+        if leaf.family != "wasix" or not getattr(leaf, "original_files", None):
+            fail("host extension consumption requires authenticated original WASIX Files")
+        extension_files = native_final_leaf_files(leaf) + [ctx.file._extension_fixture]
+        extension = {"leaf": native_final_leaf_input(leaf), "fixture": ctx.file._extension_fixture.path,
+                     "locations": {file.path: _runfile(ctx, file) for file in extension_files}}
     metadata = ctx.actions.declare_file(ctx.label.name + ".lifecycles.json")
-    ctx.actions.write(metadata, json.encode({"targetTriple": producer.inputs.triple, "sdkVersion": producer.inputs.sdk_version, "lifecycles": lifecycles}))
+    ctx.actions.write(metadata, json.encode({"targetTriple": producer.inputs.triple, "sdkVersion": producer.inputs.sdk_version,
+                                           "lifecycles": lifecycles, "extension": extension}))
     node = ctx.toolchains["@rules_nodejs//nodejs:toolchain_type"].nodeinfo.node
     if not node:
         fail("installed WASIX addon requires its pinned Node toolchain")
-    files = [carrier.npm, metadata, node, ctx.file._consumer, ctx.file.product_manifest] + ctx.files._helpers
-    return bun_test_entrypoint(ctx, ctx.file._runner, [carrier.npm, metadata, node, ctx.file._consumer, ctx.file.product_manifest], files,
-                               source_files = [ctx.file._runner, ctx.file._consumer] + ctx.files._helpers)
+    files = [carrier.npm, carrier.inputs, metadata, node, ctx.file._consumer, ctx.file._extension_consumer, ctx.file.product_manifest] + extension_files + ctx.files._helpers
+    return bun_test_entrypoint(ctx, ctx.file._runner, [carrier.npm, metadata, node, ctx.file._consumer, ctx.file.product_manifest,
+                                                    carrier.inputs, ctx.file._extension_consumer], files,
+                               source_files = [ctx.file._runner, ctx.file._consumer, ctx.file._extension_consumer] + ctx.files._helpers,
+                               runfiles_argument = True)
 
 _installed_test = rule(implementation = _installed_impl, test = True,
     toolchains = BUN_SOURCE_TOOLCHAINS + ["@rules_nodejs//nodejs:toolchain_type"],
@@ -281,7 +302,10 @@ _installed_test = rule(implementation = _installed_impl, test = True,
         "product_manifest": attr.label(default = "//src/wasix/node-addon:package.json", allow_single_file = True),
         "_runner": attr.label(default = "//build_defs/wasix:napi-installed.test.mts", allow_single_file = True),
         "_consumer": attr.label(default = "//build_defs/wasix:napi-consumer.mts", allow_single_file = True),
-        "_helpers": attr.label_list(default = NAPI_HELPERS + ["//src/wasix/sdks/ts:tools/pgwire-client.mts"], allow_files = True),
+        "extension": attr.label(providers = [ExtensionFinalLeafInfo]),
+        "_extension_fixture": attr.label(default = "//src/test-fixtures/extensions:postgis.sql", allow_single_file = True),
+        "_extension_consumer": attr.label(default = "//build_defs/extensions/wasix:installed_consumer.mts", allow_single_file = True),
+        "_helpers": attr.label_list(default = {label: True for label in NAPI_HELPERS + native_extension_carrier_helpers() + ["//build_defs/extensions/wasix:imported_installed.mts", "//build_defs/extensions/wasix:consumer_inputs.mts", "//tools/release:native-extension-release-files.mts", "//src/wasix/sdks/ts:tools/pgwire-client.mts"]}.keys(), allow_files = True),
     }))
 
 def wasix_napi_installed_test(name, **kwargs):

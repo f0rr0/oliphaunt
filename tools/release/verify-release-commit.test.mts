@@ -397,6 +397,80 @@ function prepareLocalCargo(base) {
   );
   if (adopted) changelog(sdkPath, '0.3.3');
 }
+
+function prepareEngineSdk(base) {
+  const sdk = 'src/wasix/sdks/rust';
+  const server = 'src/wasix/pgwire-server';
+  const authored = scenario.endsWith('-authored');
+  const version = base || authored ? '0.3.2' : '0.3.3';
+  const names = [
+    'oliphaunt-wasmer',
+    'oliphaunt-wasmer-wasix',
+    'oliphaunt-wasmer-wasix-types',
+    'oliphaunt-wasmer-journal',
+    'oliphaunt-wasmer-v8-windows-x64-msvc',
+    'oliphaunt-wasmer-v8-windows-x64-msvc-part-001',
+    'oliphaunt-wasmer-v8-windows-x64-msvc-part-002',
+  ];
+  json('release-please-config.json', {
+    packages: {
+      [sdk]: { 'release-type': 'rust', component: 'oliphaunt-wasix-rust' },
+      [server]: { 'release-type': 'rust', component: 'oliphaunt-pgwire-server' },
+    },
+  });
+  json('.release-please-manifest.json', { [sdk]: version, [server]: '0.2.1' });
+  write(
+    'Cargo.toml',
+    `[workspace]\nmembers=["${sdk}","${server}"]\n[workspace.dependencies]\nwasmer={package="oliphaunt-wasmer",version="=${version}",default-features=false}\n`,
+  );
+  const held = scenario === 'engine-held-authored' ? '0.3.1' : version;
+  write(
+    `${sdk}/Cargo.toml`,
+    cargo('oliphaunt-wasix', version) +
+      `[dependencies]\nserde="${!base && scenario === 'engine-registry' ? '1.0.1' : '1.0.0'}"\n` +
+      `[target.'cfg(windows)'.dependencies]\nwasmer={workspace=true,features=["v8","headless"]}\n` +
+      names
+        .slice(1, 4)
+        .map((name) => `${name}={version="=${held}",default-features=false}\n`)
+        .join('') +
+      `[build-dependencies]\nprivate={package="oliphaunt-wasmer",version="=${!base && scenario === 'engine-private-registry' ? version : '0.3.2'}",registry="private"}\n`,
+  );
+  write(
+    `${server}/Cargo.toml`,
+    cargo('oliphaunt-pgwire-server', '0.2.1') +
+      '[dependencies]\n' +
+      (scenario.startsWith('engine-shared-workspace')
+        ? 'wasmer.workspace=true\n'
+        : `engine={package="oliphaunt-wasmer",version="=${!base && scenario === 'engine-cross-owner' ? version : '0.3.2'}"}\n`),
+  );
+  if (base) {
+    write(`${sdk}/CHANGELOG.md`, '# Changelog\n');
+    write(`${server}/CHANGELOG.md`, '# Changelog\n');
+  } else changelog(sdk, version);
+  const localReference = !base && scenario === 'engine-wrong-local-ref' ? '0.3.4' : version;
+  const registryReference = !base && scenario === 'engine-registry-ref' ? version : '0.3.2';
+  const unrelatedReference = !base && scenario === 'engine-unrelated-local-ref' ? '2.0.0' : '1.0.0';
+  write('src/wasix/runtime/tools/v8-serializer/Cargo.toml', cargo('unchanged-local', '1.0.0'));
+  write('src/native/node-addon/Cargo.toml', cargo('unchanged-local', '2.0.0'));
+  write(
+    'Cargo.lock',
+    'version=4\n' +
+      ['oliphaunt-wasix', ...names]
+        .map(
+          (name) =>
+            `\n[[package]]\nname="${name}"\nversion="${version}"\n` +
+            (name === 'oliphaunt-wasix'
+              ? `dependencies=["oliphaunt-wasmer ${localReference}","oliphaunt-wasmer ${registryReference} (registry+https://github.com/rust-lang/crates.io-index)","unchanged-local ${unrelatedReference}"]\n`
+              : ''),
+        )
+        .join('') +
+      '\n[[package]]\nname="oliphaunt-wasmer"\nversion="0.3.2"\nsource="registry+https://github.com/rust-lang/crates.io-index"\nchecksum="held-registry-bytes"\n' +
+      ['1.0.0', '2.0.0']
+        .map((version) => `\n[[package]]\nname="unchanged-local"\nversion="${version}"\n`)
+        .join(''),
+  );
+}
+
 if (phase === 'write') {
   if (scenario === 'later-fix') write('fix.txt', 'post-release fix\n');
   else {
@@ -405,6 +479,7 @@ if (phase === 'write') {
       basic: prepareBasic,
       cargo: prepareCargo,
       'cargo-path': prepareLocalCargo,
+      'engine-sdk': prepareEngineSdk,
       wildcard: prepareWildcard,
       wasix: prepareWasix,
       example: prepareExample,
@@ -415,7 +490,7 @@ if (phase === 'write') {
     prepare(scenario === 'base');
   }
 } else if (phase === 'assert') {
-  const products =
+  let products =
     family === 'cargo-path'
       ? [
           'liboliphaunt-native-bindings',
@@ -448,6 +523,7 @@ if (phase === 'write') {
                 : scenario === 'hidden-version-config'
                   ? ['beta']
                   : [broker];
+  if (family === 'engine-sdk') products = ['oliphaunt-wasix-rust'];
   const supplierMap = () =>
     new Map(Object.keys(loadProducts()).map((id) => [id, new Set<string>()]));
   const compiled = supplierMap();
@@ -470,6 +546,14 @@ if (phase === 'write') {
   } else {
     const rejected =
       {
+        'engine-held': /non-version semantic change/u,
+        'engine-cross-owner': /non-version semantic change/u,
+        'engine-registry': /non-version semantic change/u,
+        'engine-private-registry': /non-version semantic change/u,
+        'engine-shared-workspace': /shares an independently versioned consumer/u,
+        'engine-wrong-local-ref': /non-version semantic change/u,
+        'engine-registry-ref': /non-version semantic change/u,
+        'engine-unrelated-local-ref': /non-version semantic change/u,
         'unselected-public-path': /non-version semantic change/u,
         'held-compatible-path': /non-version semantic change/u,
         'wrong-compatible-path': /non-version semantic change/u,

@@ -13,6 +13,11 @@ import {
   exampleCargoReleaseVersionBindings,
 } from './example-cargo-versions.mts';
 import {
+  declaredCarrierMap,
+  loadPublicationCatalog,
+  resolveActualCarrier,
+} from './publication-catalog.mts';
+import {
   compareText,
   currentProductVersion,
   exactExtensionReleaseProducts,
@@ -446,16 +451,34 @@ function localCargoPackagesByManifest(manifests) {
   return packages;
 }
 
-function localCargoPackageVersions() {
+export function cargoLocalVersions(manifests, carriers, lock) {
   const versions = new Map();
-  for (const [manifest, [name, version]] of localCargoPackagesByManifest()) {
+  for (const [manifest, [name, version]] of manifests) {
     const existing = versions.get(name);
     if (existing !== undefined && existing !== version) {
-      fail(`local Cargo package ${name} has conflicting versions including ${rel(manifest)}`);
+      throw new Error(`local Cargo package ${name} has conflicting versions including ${manifest}`);
     }
     versions.set(name, version);
   }
+  const catalog = { carriers };
+  const declared = declaredCarrierMap(catalog);
+  for (const entry of lock.package) {
+    if (entry.source || versions.has(entry.name)) continue;
+    const parent = entry.name.match(/^(.*)-part-[0-9]{3}$/u)?.[1];
+    if (!declared.has(`cargo:${entry.name}`) && (!parent || !declared.has(`cargo:${parent}`)))
+      continue;
+    const carrier = resolveActualCarrier(catalog, 'cargo', entry.name, PREFIX);
+    versions.set(entry.name, carrier.version);
+  }
   return versions;
+}
+
+function localCargoPackageVersions() {
+  return cargoLocalVersions(
+    localCargoPackagesByManifest(),
+    loadPublicationCatalog(PREFIX).carriers,
+    Bun.TOML.parse(readText(CARGO_LOCKFILE)),
+  );
 }
 
 export function iterDependencyTables(manifest) {
@@ -576,6 +599,60 @@ export function cargoPathDependencyBindings(
   return desired;
 }
 
+/** Carrier aliases within one selected release owner follow that owner's version. */
+export function cargoSameOwnerDependencyBindings(
+  manifest,
+  owners,
+  products,
+  selected,
+  { manifests } = {},
+) {
+  const manifestOwner = owners.get(manifest.package?.name);
+  const bindings = [];
+  for (const [parts, table] of iterDependencyTables(manifest)) {
+    for (const [name, value] of Object.entries(table)) {
+      const dependency = typeof value === 'string' ? { version: value } : value;
+      if (
+        !dependency ||
+        typeof dependency.version !== 'string' ||
+        ['path', 'workspace', 'git', 'registry', 'registry-index'].some((key) =>
+          Object.hasOwn(dependency, key),
+        )
+      )
+        continue;
+      const owner = owners.get(dependency.package ?? name);
+      if (!owner || !selected.has(owner)) continue;
+      if (manifestOwner !== owner) {
+        if (parts[0] !== 'workspace' || !manifests) continue;
+        const consumers = cargoPathDependencyConsumers(
+          'Cargo.toml',
+          manifest,
+          manifests,
+          owners,
+          { name },
+          products,
+        );
+        if (!consumers.includes(owner)) continue;
+        if (consumers.some((consumer) => consumer !== owner))
+          throw new Error(
+            `workspace Cargo requirement ${name} shares an independently versioned consumer; declare its requirement in that consumer`,
+          );
+      }
+      bindings.push({
+        kind: 'dependency',
+        name,
+        entryParts: [...parts, name],
+        expected: desiredCargoPathDependencyVersion(
+          dependency.version,
+          products[owner].version,
+          true,
+        ),
+      });
+    }
+  }
+  return bindings;
+}
+
 function syncCargoPathDependencyPins(changes, { write, observeUpdate, transitions, buildBound }) {
   const manifests = new Map(
     cargoManifestPaths().map((file) => {
@@ -655,6 +732,9 @@ function syncCargoPathDependencyPins(changes, { write, observeUpdate, transition
       }
       return adopts || Boolean(owner && buildBound.get(owner.product)?.has(producer));
     });
+    bindings.push(
+      ...cargoSameOwnerDependencyBindings(parsed, owners, products, selected, { manifests }),
+    );
     const result = syncExampleCargoManifestText(source, {
       policy: { crateDir: path.dirname(manifestPath) },
       bindings,
@@ -915,6 +995,24 @@ export function syncLockfile(lockfile, versions, changes, { write, observeUpdate
   if (!Array.isArray(data.package)) {
     fail(`${rel(lockfile)} is missing [[package]] entries`);
   }
+  const candidates = new Map<string, any[]>();
+  for (const entry of data.package)
+    candidates.set(entry.name, [...(candidates.get(entry.name) ?? []), entry]);
+  const dependencies = new Map<string, string>();
+  for (const entry of data.package)
+    for (const dependency of entry.dependencies ?? []) {
+      const identity = /^([^ ]+) ([^ ]+)(?: \(([^)]+)\))?$/u.exec(dependency);
+      if (!identity || identity[3] || !versions.has(identity[1])) continue;
+      const [, name, version] = identity;
+      let matches = (candidates.get(name) ?? []).filter((entry) => entry.version === version);
+      // Cargo qualifies registry identities when their name/version equals a
+      // path package; the otherwise identical unqualified reference is local.
+      if (matches.length > 1) matches = matches.filter((entry) => !entry.source);
+      if (matches.length !== 1)
+        throw new Error(`Missing or ambiguous Cargo lock dependency: ${dependency}`);
+      if (!matches[0].source && versions.get(name) !== version)
+        dependencies.set(dependency, `${name} ${versions.get(name)}`);
+    }
   const lines = readText(lockfile).split(/(?<=\n)/u);
   const fileChanges = [];
   for (const [start, end] of packageBlockRanges(lines)) {
@@ -948,6 +1046,18 @@ export function syncLockfile(lockfile, versions, changes, { write, observeUpdate
       lines[versionIndex] = replaceVersionLine(lines[versionIndex], expectedVersion);
       fileChanges.push(`${name} ${currentVersion} -> ${expectedVersion}`);
     }
+  }
+  let inDependencies = false;
+  const tokens = /"(?:[^"\\]|\\.)*"|#[^\r\n]*/gu;
+  for (const [index, line] of lines.entries()) {
+    if (/^\s*dependencies\s*=\s*\[/u.test(line)) inDependencies = true;
+    if (!inDependencies) continue;
+    lines[index] = line.replace(tokens, (token) => {
+      if (token.startsWith('#')) return token;
+      const dependency = JSON.parse(token);
+      return dependencies.has(dependency) ? JSON.stringify(dependencies.get(dependency)) : token;
+    });
+    if (line.replace(tokens, '').includes(']')) inDependencies = false;
   }
   if (fileChanges.length > 0) {
     writeTextIfChanged(lockfile, lines.join(''), changes, fileChanges.join('; '), {

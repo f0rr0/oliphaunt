@@ -9,8 +9,18 @@ import {
   readPortableArchiveEntries,
 } from '../../tools/packaging/portable-archive.mts';
 import { copyNativeInputFile } from '../../tools/release/native-file-identity.mts';
+import { runImportedWasixInstalled } from '../extensions/wasix/imported_installed.mts';
 
-const [archiveInput, lifecycle, node, consumer, productManifest] = process.argv.slice(2);
+const [
+  archiveInput,
+  lifecycle,
+  node,
+  consumer,
+  productManifest,
+  addonInputs,
+  extensionConsumer,
+  runfiles,
+] = process.argv.slice(2);
 const root = mkdtempSync(
   path.join(process.env.TEST_TMPDIR ?? os.tmpdir(), 'oliphaunt-installed-wasix-'),
 );
@@ -73,6 +83,18 @@ try {
   );
   assert.equal(result.exitCode, 0, `${result.stderr.toString()}\n${result.stdout.toString()}`);
   console.log(result.stdout.toString().trim());
+  if (contract.extension)
+    runImportedWasixInstalled({
+      contract: contract.extension,
+      runfiles,
+      addonInputs,
+      addonManifest: manifest,
+      addonProvenance: provenance,
+      root,
+      node,
+      consumer: extensionConsumer,
+      environment: env,
+    });
 } finally {
   rmSync(root, { recursive: true, force: true });
 }
