@@ -1,0 +1,16 @@
+load("//build_defs/foundation:bun.bzl", "bun_test")
+load("//build_defs/quality:sources.bzl", "rust_quality_files", "source_quality_files")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["defs.bzl", "generate.mts", "bridge.cc", "embedded-engine.rs", "build.rs.tpl", "build-script-regression.mts", "README.md"])
+
+bun_test(
+    name = "generate_test",
+    entry_point = "generate.test.mts",
+    data = ["generate.mts", "embedded-engine.rs"],
+    size = "small",
+)
+
+source_quality_files()
+rust_quality_files()
