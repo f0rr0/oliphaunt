@@ -1,0 +1,18 @@
+[
+  {
+    "name": "@oliphaunt/wasix-napi-win32-x64-msvc",
+    "version": "0.2.1",
+    "tarball": "https://registry.npmjs.org/@oliphaunt/wasix-napi-win32-x64-msvc/-/wasix-napi-win32-x64-msvc-0.2.1.tgz",
+    "integrity": "sha512-WUo9A/EeOsisMgplvAutc41BfVLwFcC+U7kHo9/3wT0pqEunSackH/yavcNsJ8efYl7g0hqZiKt67gH+AYfwHg==",
+    "sha256": "b8526183f0233aee129faeb595eb5b77d000ddcb0047d1a9aa31c8113664a23e",
+    "size": 21374968
+  },
+  {
+    "name": "@oliphaunt/wasix-napi-linux-x64-gnu",
+    "version": "0.2.1",
+    "tarball": "https://registry.npmjs.org/@oliphaunt/wasix-napi-linux-x64-gnu/-/wasix-napi-linux-x64-gnu-0.2.1.tgz",
+    "integrity": "sha512-EO3rHfriV/PtTW+CoG+RXjUF4Rbv06IVTnsjz8n/s3YKz9Yu7nKWptEKvqShbRONshuuOnhkecYzjl8C4okJTw==",
+    "sha256": "3ce147b5c5f2b3513d81a0e84b232dfb9c51427b49ec3749e44ab882b1bf128f",
+    "size": 21373117
+  }
+]

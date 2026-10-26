@@ -1,0 +1,65 @@
+name: Windows WASIX exception diagnostic
+
+on:
+  push:
+    branches: [f0rr0/windows-wasix-exception-probe-20261026]
+
+permissions:
+  contents: read
+  actions: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  published:
+    name: Published engine (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, windows-2025-vs2026]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-runtime
+      - name: Exercise original published bytes
+        run: node --experimental-strip-types .github/scripts/windows-wasix-exceptions/published-exceptions.mts "$RUNNER_TEMP/published-wasix-exceptions"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: ${{ !cancelled() }}
+        with:
+          name: published-wasix-exceptions-${{ matrix.runner }}
+          path: ${{ runner.temp }}/published-wasix-exceptions/result.json
+          if-no-files-found: error
+          retention-days: 30
+
+  retained-v8:
+    name: Retained V8 prototype (Windows)
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-runtime
+      - name: Download the original retained prototype
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          repository: f0rr0/oliphaunt
+          run-id: '37409777766'
+          artifact-ids: '11389566342'
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/retained-v8
+          merge-multiple: true
+      - name: Exercise the same SQL against the retained engine
+        run: node --experimental-strip-types .github/scripts/windows-wasix-exceptions/retained-v8-exceptions.mts "$RUNNER_TEMP/retained-v8" "$RUNNER_TEMP/retained-v8-exceptions"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: ${{ !cancelled() }}
+        with:
+          name: retained-v8-exceptions-windows
+          path: ${{ runner.temp }}/retained-v8-exceptions/result.json
+          if-no-files-found: error
+          retention-days: 30
