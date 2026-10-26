@@ -203,7 +203,8 @@ jobs:
     needs: release-inputs
     runs-on: ${{ matrix.runner }}
     # macOS includes the later cold Apple slices in the shared compiler base.
-    timeout-minutes: ${{ matrix.platform == 'macos-arm64' && 300 || 180 }}
+    # Cold Apple slices and final compilation have consumed nearly five hours.
+    timeout-minutes: ${{ matrix.platform == 'macos-arm64' && 360 || 180 }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.release-inputs.outputs.portable_matrix) }}
@@ -614,13 +615,21 @@ jobs:
 
       - name: Upload macOS Bazel diagnostics
         if: ${{ always() && matrix.platform == 'macos-arm64' }}
+        timeout-minutes: 5
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: native-bazel-macos-diagnostics
           path: |
             ${{ runner.temp }}/native-bazel-diagnostics
             ${{ runner.temp }}/native-build-capture/diagnostics
+            ${{ runner.temp }}/native-build-capture/build-events.jsonl
+            ${{ runner.temp }}/native-build-capture/aquery-build-events.jsonl
             ${{ runner.temp }}/ios-extension-build-capture/diagnostics
+            ${{ runner.temp }}/ios-extension-build-capture/build-events.jsonl
+            ${{ runner.temp }}/ios-extension-build-capture/aquery-build-events.jsonl
+            ${{ runner.temp }}/native-bazel/command.log
+            ${{ runner.temp }}/native-bazel/execroot/_main/bazel-out/**/testlogs/**/test.log
+            ${{ runner.temp }}/native-bazel/execroot/_main/bazel-out/**/testlogs/**/test.xml
             ${{ runner.temp }}/ci-requests/**/diagnostics
           if-no-files-found: ignore
           retention-days: 5

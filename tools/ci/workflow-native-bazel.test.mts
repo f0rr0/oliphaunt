@@ -1020,6 +1020,32 @@ exit "\${AUDIT_STATUS:-0}"
   });
 });
 
+test('macOS retains failed qualification reports before cache cleanup', () => {
+  const job = jobs.portable;
+  const diagnostics = job.steps.find((step: any) => step.name === 'Upload macOS Bazel diagnostics');
+  const cache = job.steps.find((step: any) => step.name === 'Save bounded standard Bazel caches');
+  assert.ok(diagnostics.if.includes('always()'));
+  assert.ok(diagnostics.if.includes("matrix.platform == 'macos-arm64'"));
+  for (const id of ['apple_qualification', 'native_qualification']) {
+    const qualifier = job.steps.find((step: any) => step.id === id);
+    const capture = qualifier.run.match(/--output-directory "\$RUNNER_TEMP\/([^"\n]+)"/u)?.[1];
+    assert.ok(capture, 'qualification must declare its capture directory');
+    for (const file of ['diagnostics', 'build-events.jsonl', 'aquery-build-events.jsonl'])
+      assert.ok(diagnostics.with.path.includes(`/${capture}/${file}`));
+    assert.ok(job.steps.indexOf(qualifier) < job.steps.indexOf(diagnostics));
+  }
+  assert.ok(diagnostics.with.path.includes('/native-bazel/command.log'));
+  for (const file of ['test.log', 'test.xml'])
+    assert.ok(
+      diagnostics.with.path.includes(
+        `/native-bazel/execroot/_main/bazel-out/**/testlogs/**/${file}`,
+      ),
+    );
+  assert.equal(diagnostics.with['if-no-files-found'], 'ignore');
+  assert.equal(diagnostics['timeout-minutes'], 5);
+  assert.ok(job.steps.indexOf(diagnostics) < job.steps.indexOf(cache));
+});
+
 test('React Native qualification retains diagnostics within its job budget', () => {
   const job = jobs['react-native'];
   const qualifier = job.steps.find((step: any) =>
