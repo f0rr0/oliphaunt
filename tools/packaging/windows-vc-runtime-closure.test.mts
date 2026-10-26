@@ -23,6 +23,7 @@ import {
   WINDOWS_VC_RUNTIME_DLLS,
   WINDOWS_VC_RUNTIME_PROFILES,
   WINDOWS_VC_RUNTIME_RECEIPT,
+  windowsVcRuntimeProfileNames,
 } from './windows-vc-runtime-closure.mts';
 
 function pe({ machine = 0x8664, imports = [], delayImports = [] } = {}) {
@@ -188,6 +189,16 @@ describe('Windows VC runtime dependency closure', () => {
   });
 
   test('the provider profile carries the exact supported-extension union', () => {
+    for (const names of [
+      [],
+      ['vcruntime140.dll', 'vcruntime140.dll'],
+      ['../vcruntime140.dll'],
+      ['VCRUNTIME140.dll'],
+    ])
+      assert.throws(
+        () => windowsVcRuntimeProfileNames(names),
+        /unique canonical allowed DLL filenames/u,
+      );
     const { root, redist } = fixture();
     try {
       const carrier = path.join(root, 'carrier');

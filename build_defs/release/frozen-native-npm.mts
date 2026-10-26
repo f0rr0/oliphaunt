@@ -2,13 +2,16 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { frozenNativeRuntimeInputs } from './frozen-native-runtime.mts';
+import { inspectPlatformBinaryEntries } from '../../tools/packaging/platform-binary-contract.mts';
 import {
   extractPortableArchiveTree,
   readPortableArchiveEntries,
 } from '../../tools/packaging/portable-archive.mts';
-import { inspectPlatformBinaryEntries } from '../../tools/packaging/platform-binary-contract.mts';
 import { verifyWindowsVcRuntimeClosure } from '../../tools/packaging/windows-vc-runtime-closure.mts';
+import {
+  frozenNativeRuntimeInputs,
+  frozenWindowsVcRuntimeProfile,
+} from './frozen-native-runtime.mts';
 
 const provenance = 'https://slsa.dev/provenance/v1';
 const publish = 'https://github.com/npm/attestation/tree/main/specs/publish/v0.1';
@@ -160,9 +163,14 @@ export function verifyFrozenNativeNpm(input, archive) {
     if (!entries.get(`package/${file}`)?.isFile || entries.get(`package/${file}`).size <= 0)
       throw new Error(`frozen native npm archive is missing regular runtime/legal member ${file}`);
   if (input.target === 'windows-x64-msvc') {
+    const capturedRuntimeProfile = frozenWindowsVcRuntimeProfile(entries, 'package/');
     inspectPlatformBinaryEntries(
       [...entries].map(([name, entry]) => ({ ...entry, name: name.replace(/^package\//u, '') })),
-      { target: input.target, rootLabel: input.filename, windowsVcRuntimeProfile: 'provider' },
+      {
+        target: input.target,
+        rootLabel: input.filename,
+        windowsVcRuntimeProfile: capturedRuntimeProfile,
+      },
     );
     const root = mkdtempSync(path.join(tmpdir(), 'frozen-native-npm-'));
     try {
@@ -170,7 +178,7 @@ export function verifyFrozenNativeNpm(input, archive) {
       verifyWindowsVcRuntimeClosure({
         root,
         searchRoots: [path.join(root, 'bin'), path.join(root, 'runtime/bin')],
-        profile: 'provider',
+        profile: capturedRuntimeProfile,
       });
     } finally {
       rmSync(root, { recursive: true, force: true });

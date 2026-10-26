@@ -23,9 +23,14 @@ import {
   assertMissingHostRuntime,
   extractNativePayload,
   hostRuntimeEnvironment,
+  missingHostModuleError,
   runHostBinary,
 } from '../native/host-runtime-test-helpers.mts';
-import { validateDesktopConstruction } from './construction.mts';
+import {
+  assertSharedDesktopLicense,
+  desktopMemberModuleRoots,
+  validateDesktopConstruction,
+} from './construction.mts';
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -88,6 +93,11 @@ const libraryName = windows
     : 'liboliphaunt.so';
 const library = join(libraryDirectory, libraryName);
 const consumer = join(root, 'consumer', 'bin', windows ? 'extension smoke.exe' : 'extension-smoke');
+const dependencySmoke = join(root, 'dependency-load.sql');
+const fullSmoke = join(root, 'catalog-smoke.sql');
+const serverSuccessRow = '?column? = "candidate-extension-smoke-ok"';
+const moduleRoots = new Set<string>();
+const memberModuleRoots = new Map<string, Set<string>>();
 const env = hostRuntimeEnvironment(runtime, root);
 if (windows) {
   env.PATH = `${join(carrier, 'bin')};${env.PATH}`;
@@ -140,15 +150,14 @@ const startupArgs = text(startup)
   .split('\n')
   .filter(Boolean)
   .flatMap((assignment) => ['-c', assignment]);
-const sql = (text(install) + text(smoke)).replace(/^-- oliphaunt-statement$/gmu, '');
-const embedded = (pgdata: string) =>
-  Bun.spawnSync([consumer, pgdata, runtime, '--sql-plan', install, smoke, startup], {
+const embedded = (pgdata: string, planSmoke = fullSmoke) =>
+  Bun.spawnSync([consumer, pgdata, runtime, '--sql-plan', install, planSmoke, startup], {
     env,
     cwd: root,
     stdout: 'pipe',
     stderr: 'pipe',
   });
-const server = (pgdata: string) =>
+const server = (pgdata: string, planSmoke = fullSmoke) =>
   Bun.spawnSync(
     [
       ...(windows ? [launcher] : []),
@@ -160,13 +169,24 @@ const server = (pgdata: string) =>
       ...startupArgs,
       'postgres',
     ],
-    { env, cwd: root, stdin: Buffer.from(sql), stdout: 'pipe', stderr: 'pipe' },
+    {
+      env,
+      cwd: root,
+      stdin: Buffer.from(
+        `BEGIN;\n\n${text(install)}${text(planSmoke)}\nCOMMIT;\n\n`.replace(
+          /^-- oliphaunt-statement$/gmu,
+          '',
+        ),
+      ),
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
   );
 
 try {
   if (values['published-runtime']) extractPortableArchiveTree(realpathSync(payload), carrier);
   else await extractNativePayload(payload, carrier);
-  const selectedFiles = new Set<string>();
+  const selectedFiles = new Map<string, { declared: boolean; mode: number }>();
   const memberDependencies = new Map<string, string>();
   for (const archive of archives) {
     const entries = readPortableArchiveEntries(archive, { format: 'tar.gz' });
@@ -175,23 +195,43 @@ try {
     const descriptorEntry = entries.get('extension.json');
     assert(descriptorEntry);
     const descriptor = JSON.parse(descriptorEntry.data().toString('utf8'));
+    const constructionLicenses = new Set<string>(descriptor.construction_licenses ?? []);
+    const ownedRoots = desktopMemberModuleRoots(entries, descriptor.module_file);
+    memberModuleRoots.set(descriptor.sql_name, new Set(ownedRoots));
+    for (const filename of ownedRoots) moduleRoots.add(filename);
     for (const name of descriptor.dependency_modules ?? []) {
       assert(!memberDependencies.has(name), 'candidate members repeat a dependency module');
       memberDependencies.set(name, descriptor.sql_name);
     }
     for (const [name, entry] of entries) {
       if (name === 'extension.json') continue;
-      assert(
-        entry.isFile && !selectedFiles.has(name),
-        'candidate members overlap or contain non-files',
-      );
-      selectedFiles.add(name);
+      assert(entry.isFile, 'candidate members contain non-files');
       const output = join(name.startsWith('lib/modules/') ? carrier : runtime, name);
+      const current = { declared: constructionLicenses.has(name), mode: entry.mode };
+      const original = selectedFiles.get(name);
+      if (original) {
+        assertSharedDesktopLicense(
+          name,
+          { ...original, data: readFileSync(output) },
+          { ...current, data: entry.data() },
+        );
+        continue;
+      }
+      selectedFiles.set(name, current);
       mkdirSync(dirname(output), { recursive: true });
       writeFileSync(output, entry.data(), { mode: entry.mode });
       chmodSync(output, entry.mode);
     }
   }
+  // Both plans exercise the candidate's declared PG roots, including companions.
+  // Plain support libraries are exercised through their owning PG modules.
+  const separator = '\n-- oliphaunt-statement\n';
+  const loads = [...moduleRoots].sort().map((name) => `LOAD '$libdir/${name}';`);
+  writeFileSync(
+    dependencySmoke,
+    `${[...loads, "SELECT 'candidate-extension-smoke-ok';"].join(separator)}\n`,
+  );
+  writeFileSync(fullSmoke, `${[...loads, text(smoke)].join(separator)}\n`);
   assert(statSync(library).isFile(), 'candidate runtime is missing its native library');
   mkdirSync(dirname(consumer), { recursive: true });
   copyFileSync(sourceConsumer, consumer);
@@ -238,14 +278,11 @@ try {
   const result = server(initialize(windows ? 'server with spaces' : 'server'));
   const response = result.stderr.toString() + result.stdout.toString();
   assert.equal(result.exitCode, 0, response);
-  assert(
-    response.includes('candidate-extension-smoke-ok') && !/ERROR:|FATAL:|not ok/u.test(response),
-    response,
-  );
+  assert(response.includes(serverSuccessRow) && !/ERROR:|FATAL:|not ok/u.test(response), response);
 
   if (windows) {
     assert(
-      result.stdout.toString().includes('candidate-extension-smoke-ok'),
+      result.stdout.toString().includes(serverSuccessRow),
       'restricted server must preserve SQL stdin/stdout',
     );
     const missing = 'missing server database';
@@ -267,18 +304,29 @@ try {
       const pgdata = initialize(`missing-dependency-${profile}-${name}`);
       renameSync(module, `${module}.disabled`);
       try {
-        const result = profile === 'modules' ? embedded(pgdata) : server(pgdata);
+        const result =
+          profile === 'modules'
+            ? embedded(pgdata, dependencySmoke)
+            : server(pgdata, dependencySmoke);
         const response = result.stderr.toString() + result.stdout.toString();
         // LoadLibrary reports the owning module when an imported DLL is absent;
         // POSIX loaders also identify the missing dependency itself.
         assert(
-          response.includes(name) || (windows && response.includes(owner)),
+          missingHostModuleError(response, name, process.platform, [
+            ...(memberModuleRoots.get(owner) ?? []),
+          ]),
           `${profile} ${name} (exit ${result.exitCode}): expected missing dependency or Windows owner identity\n${response}`,
         );
         if (profile === 'modules')
-          assert.notEqual(result.exitCode, 0, 'embedded consumer accepted a missing dependency');
-        else
+          assert.equal(result.exitCode, 1, 'embedded consumer did not report a missing dependency');
+        else {
+          assert([0, 1].includes(result.exitCode), 'server did not report a PostgreSQL rejection');
           assert(/ERROR:|FATAL:/u.test(response), 'server consumer accepted a missing dependency');
+          assert(
+            !response.includes(serverSuccessRow),
+            'server completed after a missing dependency',
+          );
+        }
       } finally {
         renameSync(`${module}.disabled`, module);
       }
@@ -297,23 +345,29 @@ try {
     const pgdata = initialize(`missing-${profile}`);
     renameSync(module, `${module}.disabled`);
     try {
-      const result = profile === 'modules' ? embedded(pgdata) : server(pgdata);
+      const result =
+        profile === 'modules' ? embedded(pgdata, dependencySmoke) : server(pgdata, dependencySmoke);
       const response = result.stderr.toString() + result.stdout.toString();
       assert(
-        response.includes(missingMember.sql_name),
+        missingHostModuleError(response, missingMember.module_file, process.platform, [
+          ...(memberModuleRoots.get(missingMember.sql_name) ?? []),
+        ]),
         `${profile} ${missingMember.sql_name} (exit ${result.exitCode}): expected missing module identity\n${response}`,
       );
       if (profile === 'modules')
-        assert.notEqual(
+        assert.equal(
           result.exitCode,
-          0,
-          'embedded consumer accepted a missing candidate module',
+          1,
+          'embedded consumer did not report a missing candidate module',
         );
-      else
+      else {
+        assert([0, 1].includes(result.exitCode), 'server did not report a PostgreSQL rejection');
         assert(
           /ERROR:|FATAL:/u.test(response),
           'server consumer accepted a missing candidate module',
         );
+        assert(!response.includes(serverSuccessRow), 'server completed after a missing module');
+      }
     } finally {
       renameSync(`${module}.disabled`, module);
     }

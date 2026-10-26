@@ -51,6 +51,7 @@ function cacheKey(name: string, output: string) {
 
 type FixtureEnvironment = NodeJS.ProcessEnv & {
   HOME: string;
+  GITHUB_ENV: string;
   GITHUB_OUTPUT: string;
   SHUTDOWN_ARGS: string;
   COMMAND_TRACE: string;
@@ -131,6 +132,7 @@ printf 'gc done\\n' >> "$COMMAND_TRACE"
     ),
     HOME: home,
     PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+    GITHUB_ENV: path.join(directory, 'github-env'),
     GITHUB_OUTPUT: output,
     RUNNER_OS: 'Linux',
     RUNNER_ARCH: 'X64',
@@ -286,12 +288,17 @@ test('hosted cache configuration preserves user rc and quotes portable native pa
       );
       const rc = readFileSync(path.join(env.HOME, '.bazelrc'), 'utf8');
       assert.ok(rc.startsWith('# existing hosted configuration\n'));
+      assert.match(rc, /^startup --preemptible$/mu);
       const cacheRoot =
         runnerOS === 'Windows'
           ? 'C:/hosted home/bazel-ci'
           : `${env.HOME}/.cache/oliphaunt/bazel-ci`;
       assert.ok(rc.includes(`build --disk_cache="${cacheRoot}/disk"\n`));
       assert.ok(rc.includes(`common --repository_cache="${cacheRoot}/repositories"\n`));
+      assert.equal(
+        readFileSync(env.GITHUB_ENV, 'utf8'),
+        `OLIPHAUNT_BAZEL_REPOSITORY_CACHE=${cacheRoot}/repositories\n`,
+      );
       assert.doesNotMatch(rc, /--experimental_disk_cache_gc_/u);
     });
   }

@@ -10,6 +10,7 @@ import {
 import {
   inspectPortableExecutable,
   WINDOWS_VC_RUNTIME_DLLS,
+  windowsVcRuntimeProfileNames,
 } from './windows-vc-runtime-closure.mts';
 
 const MACHO_LC_BUILD_VERSION = 0x32;
@@ -1193,7 +1194,7 @@ function finalizeInspection(
   }
   if (contract.windowsVcRuntime !== undefined) {
     const profile = windowsVcRuntimeProfile ?? 'direct';
-    if (!contract.windowsVcRuntime.profiles.includes(profile)) {
+    if (!Array.isArray(profile) && !contract.windowsVcRuntime.profiles.includes(profile)) {
       fail(
         'platform-binary contract',
         `unknown Windows VC runtime profile ${JSON.stringify(profile)}; expected ${contract.windowsVcRuntime.profiles.join(' or ')}`,
@@ -1227,7 +1228,8 @@ function finalizeInspection(
         }
       }
     }
-    const expected = profile === 'provider' ? WINDOWS_VC_RUNTIME_DLL_SET : required;
+    const expected =
+      profile === 'direct' ? required : new Set(windowsVcRuntimeProfileNames(profile));
     const missing = [...expected].filter((name) => !bundled.has(name));
     if (missing.length > 0) {
       fail(
@@ -1258,7 +1260,7 @@ export interface PlatformBinaryInspectionOptions {
   /** Numeric Mach-O platform IDs; command-line names are translated by the CLI. */
   requiredApplePlatforms?: readonly number[];
   requireWindowsRuntimeImportLibrary?: boolean;
-  windowsVcRuntimeProfile?: string;
+  windowsVcRuntimeProfile?: string | string[];
 }
 
 export function inspectPlatformBinaryEntries(

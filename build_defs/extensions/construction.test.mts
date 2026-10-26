@@ -5,12 +5,153 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
-import { validateDesktopConstruction } from './construction.mts';
+import {
+  assertSharedDesktopLicense,
+  desktopMemberModuleRoots,
+  validateDesktopConstruction,
+} from './construction.mts';
 
 const temporary = new Set<string>();
 afterEach(() => {
   for (const path of temporary) rmSync(path, { recursive: true, force: true });
   temporary.clear();
+});
+
+test('only identical resources declared as construction licenses by both members may overlap', () => {
+  const name = 'share/licenses/llvm-compiler-rt/LICENSE.TXT';
+  const original = { declared: true, mode: 0o644, data: Buffer.from('upstream license') };
+  expect(() => assertSharedDesktopLicense(name, original, { ...original })).not.toThrow();
+  for (const incoming of [
+    { ...original, data: Buffer.from('different license') },
+    { ...original, mode: 0o600 },
+    { ...original, declared: false },
+  ])
+    expect(() => assertSharedDesktopLicense(name, original, incoming)).toThrow(/overlap/);
+  expect(() =>
+    assertSharedDesktopLicense(name, { ...original, declared: false }, original),
+  ).toThrow(/overlap/);
+  for (const resource of [
+    'lib/modules/vector.so',
+    'share/postgresql/extension/vector.control',
+    'share/postgresql/extension/vector--1.0.sql',
+    'share/postgresql/extension/vector.data',
+  ])
+    expect(() => assertSharedDesktopLicense(resource, original, original)).toThrow(/overlap/);
+});
+
+const moduleEntries = (files: Record<string, string>) =>
+  new Map(Object.entries(files).map(([name, sql]) => [name, { data: () => Buffer.from(sql) }]));
+
+for (const suffix of ['.so', '.dylib', '.dll']) {
+  test(`current controls and install SQL declare primary, companion, and topology roots (${suffix})`, () => {
+    const entries = moduleEntries({
+      'share/postgresql/extension/postgis.control':
+        "default_version = '3.6.2'\nmodule_pathname = '$libdir/postgis-3'\n",
+      'share/postgresql/extension/postgis--3.6.2.sql':
+        "CREATE FUNCTION postgis_version() RETURNS text AS 'MODULE_PATHNAME', 'postgis_version' LANGUAGE C;\nCREATE FUNCTION postgis_other() RETURNS text as 'module_pathname', 'postgis_other' LANGUAGE C;\n",
+      'share/postgresql/extension/postgis_raster.control': `module_pathname = '$libdir/postgis_raster-3${suffix}'\n`,
+      'share/postgresql/extension/postgis_topology.control': "default_version = '3.6.2'\n",
+      'share/postgresql/extension/postgis_topology--3.6.2.sql':
+        "-- there isn't any node\nCREATE FUNCTION topology_version()\nRETURNS text\nAS\n   '$libdir/postgis_topology-3',\n   'topology_version'\nLANGUAGE C;\n",
+      [`lib/postgresql/postgis-3${suffix}`]: 'primary PG module',
+      [`lib/postgresql/postgis_raster-3${suffix}`]: 'companion PG module',
+      [`lib/postgresql/postgis_topology-3${suffix}`]: 'topology PG module',
+      [`lib/postgresql/liboliphaunt_postgis_deps${suffix}`]: 'plain support library',
+    });
+    expect(desktopMemberModuleRoots(entries, `postgis-3${suffix}`)).toEqual([
+      `postgis-3${suffix}`,
+      `postgis_raster-3${suffix}`,
+      `postgis_topology-3${suffix}`,
+    ]);
+  });
+}
+
+test('historical and upgrade SQL cannot introduce roots absent from the current install script', () => {
+  const entries = moduleEntries({
+    'share/postgresql/extension/current.control':
+      "default_version = '2.0'\nmodule_pathname = '$libdir/current'\n",
+    'share/postgresql/extension/current--2.0.sql': "AS 'MODULE_PATHNAME', 'current_symbol';\n",
+    'lib/postgresql/current.so': 'PG module',
+  });
+  for (const name of [
+    'share/postgresql/extension/current--1.0.sql',
+    'share/postgresql/extension/current--1.0--2.0.sql',
+    'share/postgresql/extension/unselected--2.0.sql',
+  ])
+    entries.set(name, {
+      data: () => {
+        throw new Error('historical or unselected SQL must not be read');
+      },
+    });
+  expect(desktopMemberModuleRoots(entries, 'current.so')).toEqual(['current.so']);
+});
+
+test('a newest default reached through upgrades retains its control root without scanning the old base', () => {
+  const entries = moduleEntries({
+    'share/postgresql/extension/hstore.control':
+      "default_version = '1.8'\nmodule_pathname = '$libdir/hstore'\n",
+    'lib/postgresql/hstore.so': 'PG module',
+  });
+  entries.set('share/postgresql/extension/hstore--1.4.sql', {
+    data: () => {
+      throw new Error('old base SQL must not be read');
+    },
+  });
+  expect(desktopMemberModuleRoots(entries, 'hstore.so')).toEqual(['hstore.so']);
+});
+
+test('control and direct active SQL roots require actual candidate PG module files', () => {
+  expect(() =>
+    desktopMemberModuleRoots(
+      moduleEntries({
+        'share/postgresql/extension/missing.control': "module_pathname = '$libdir/missing'\n",
+      }),
+      'primary.so',
+    ),
+  ).toThrow(/candidate PG module/);
+  expect(() =>
+    desktopMemberModuleRoots(
+      moduleEntries({
+        'share/postgresql/extension/missing.control': "default_version = '1.0'\n",
+        'share/postgresql/extension/missing--1.0.sql': "AS '$libdir/missing', 'symbol';\n",
+      }),
+      'primary.so',
+    ),
+  ).toThrow(/candidate PG module/);
+});
+
+test('both control and active SQL declarations reject unsafe or external module paths', () => {
+  for (const library of ['/tmp/host.so', '$libdir/../host', '$libdir/subdir/host', 'host']) {
+    expect(() =>
+      desktopMemberModuleRoots(
+        moduleEntries({
+          'share/postgresql/extension/unsafe.control': `module_pathname = '${library}'\n`,
+        }),
+        'primary.so',
+      ),
+    ).toThrow(/unsupported module/);
+    expect(() =>
+      desktopMemberModuleRoots(
+        moduleEntries({
+          'share/postgresql/extension/unsafe.control': "default_version = '1.0'\n",
+          'share/postgresql/extension/unsafe--1.0.sql': `AS '${library}', 'symbol';\n`,
+        }),
+        'primary.so',
+      ),
+    ).toThrow(/unsupported module/);
+  }
+});
+
+test('MODULE_PATHNAME SQL requires its control binding while SQL-only members need no module', () => {
+  const entries = moduleEntries({
+    'share/postgresql/extension/sql_only.control': "default_version = '1.0'\n",
+    'share/postgresql/extension/sql_only--1.0.sql': 'SELECT 1;\n',
+  });
+  expect(desktopMemberModuleRoots(entries, '')).toEqual([]);
+  entries.set('share/postgresql/extension/sql_only--1.0.sql', {
+    data: () => Buffer.from("AS 'MODULE_PATHNAME', 'symbol';\n"),
+  });
+  expect(() => desktopMemberModuleRoots(entries, 'primary.so')).toThrow(/control module_pathname/);
 });
 
 type Member = {

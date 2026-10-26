@@ -2,6 +2,68 @@
 import { readFileSync } from 'node:fs';
 import { inspect } from './validate_member_payload.mts';
 
+type ConstructionLicenseFile = { declared: boolean; mode: number; data: Buffer };
+
+/** Shared license resources retain each member's exact declared bytes and mode. */
+export function assertSharedDesktopLicense(
+  name: string,
+  original: ConstructionLicenseFile,
+  incoming: ConstructionLicenseFile,
+): void {
+  if (
+    !name.startsWith('share/licenses/') ||
+    !original.declared ||
+    !incoming.declared ||
+    original.mode !== incoming.mode ||
+    !original.data.equals(incoming.data)
+  ) {
+    throw new Error('candidate members overlap outside identical declared construction licenses');
+  }
+}
+
+/** Read only current control declarations and their exact default install SQL. */
+export function desktopMemberModuleRoots(
+  entries: ReadonlyMap<string, { data(): Buffer }>,
+  primaryModuleFile: string,
+): string[] {
+  const suffix = primaryModuleFile.slice(primaryModuleFile.lastIndexOf('.'));
+  const roots = new Set<string>();
+  const add = (library: string) => {
+    if (!/^\$libdir\/[A-Za-z_][A-Za-z0-9_.-]*$/u.test(library))
+      throw new Error(
+        `candidate control or install SQL declares an unsupported module: ${library}`,
+      );
+    const stem = library.slice('$libdir/'.length);
+    const filename = stem.endsWith(suffix) ? stem : stem + suffix;
+    if (!entries.has(`lib/postgresql/${filename}`))
+      throw new Error(`control or install SQL must name a candidate PG module: ${filename}`);
+    roots.add(filename);
+  };
+  for (const [name, entry] of entries) {
+    const sqlName = /^share\/postgresql\/extension\/([^/]+)[.]control$/u.exec(name)?.[1];
+    if (sqlName === undefined) continue;
+    const control = entry.data().toString('utf8');
+    const module = /^\s*module_pathname\s*=\s*'([^']+)'/mu.exec(control)?.[1];
+    if (module !== undefined) add(module);
+    const version = /^\s*default_version\s*=\s*'([^']+)'/mu.exec(control)?.[1];
+    const sql =
+      version === undefined
+        ? undefined
+        : entries.get(`share/postgresql/extension/${sqlName}--${version}.sql`);
+    if (sql === undefined) continue;
+    for (const match of sql
+      .data()
+      .toString('utf8')
+      .matchAll(/\bAS\s+'([^']+)'\s*,\s*'([^']+)'/giu)) {
+      const library = match[1].toUpperCase() === 'MODULE_PATHNAME' ? module : match[1];
+      if (library === undefined)
+        throw new Error(`${name} has MODULE_PATHNAME SQL without a control module_pathname`);
+      add(library);
+    }
+  }
+  return [...roots].sort();
+}
+
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('desktop construction inventory must contain objects');

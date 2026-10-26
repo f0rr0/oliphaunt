@@ -118,3 +118,26 @@ export function assertMissingHostRuntime(
     );
   }
 }
+
+export function missingHostModuleError(
+  response: string,
+  name: string,
+  platform: NodeJS.Platform = process.platform,
+  ownerRoots: readonly string[] = [],
+): boolean {
+  const diagnostics = response.matchAll(
+    /could not (?:access file|load library) ([^\n]*(?:\n[ \t]+(?:Referenced from:|Reason:|Library not loaded:)[^\n]*)*)/gu,
+  );
+  return [...diagnostics].some((match) => {
+    const diagnostic = match[1];
+    if (!/no such file|image not found|The specified module could not be found/iu.test(diagnostic))
+      return false;
+    const filenames = diagnostic.split(/[\s"':(),]+/u).map((path) => path.split(/[\\/]/u).at(-1));
+    const identifies = (filename: string) => {
+      const stem = filename.replace(/[.](?:so|dylib|dll)$/u, '');
+      return filenames.includes(filename) || filenames.includes(stem);
+    };
+    // Windows reports the importing PG module when an imported DLL is absent.
+    return identifies(name) || (platform === 'win32' && ownerRoots.some(identifies));
+  });
+}

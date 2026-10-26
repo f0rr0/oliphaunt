@@ -306,6 +306,8 @@ filegroup(
 test_suite(
     name = "portable_tests",
     tests = [
+        "//build_defs/release:frozen_native_npm_test",
+        "//build_defs/release:frozen_native_runtime_test",
         "//build_defs/apple:slices_test",
         "//build_defs/resources:seed_construction_test",
         "//build_defs/foundation:bun_toolchain_test",

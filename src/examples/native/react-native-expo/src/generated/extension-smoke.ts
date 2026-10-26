@@ -465,10 +465,9 @@ export const GENERATED_MOBILE_EXTENSION_SMOKE = {
     "SELECT * FROM pg_visibility_map('oliphaunt_visibility') LIMIT 1;"
   ],
   "pg_walinspect": [
-    "CREATE TEMP TABLE oliphaunt_walinspect (value text);",
-    "CREATE TEMP TABLE oliphaunt_walinspect_lsn AS SELECT pg_current_wal_lsn() AS before_lsn;",
-    "INSERT INTO oliphaunt_walinspect SELECT 'row ' || i::text FROM generate_series(1, 5) AS i;",
-    "SELECT * FROM pg_get_wal_block_info((SELECT before_lsn FROM oliphaunt_walinspect_lsn), pg_current_wal_lsn()) ORDER BY start_lsn, block_id LIMIT 20;"
+    "-- Temporary table inserts do not produce the heap WAL this smoke inspects.\nCREATE TABLE oliphaunt_walinspect (value text);",
+    "DO $$\nDECLARE before_lsn pg_lsn := pg_current_wal_insert_lsn();\nBEGIN\n  INSERT INTO oliphaunt_walinspect SELECT 'row ' || i::text FROM generate_series(1, 5) AS i;\n  -- Inspection reads flushed WAL, including when the caller wraps this smoke in BEGIN.\n  PERFORM pg_logical_emit_message(false, 'oliphaunt-walinspect', 'flush', true);\n  IF NOT EXISTS (\n    SELECT 1 FROM pg_get_wal_block_info(before_lsn, pg_current_wal_flush_lsn())\n    WHERE relfilenode = pg_relation_filenode('oliphaunt_walinspect'::regclass)\n      AND reldatabase = (SELECT oid FROM pg_database WHERE datname = current_database())\n      AND resource_manager = 'Heap' AND block_data IS NOT NULL\n  ) THEN\n    RAISE EXCEPTION 'pg_walinspect did not read the logged table block';\n  END IF;\nEND $$;",
+    "DROP TABLE oliphaunt_walinspect;"
   ],
   "pgcrypto": [
     "DO $$ DECLARE hashed text; encrypted bytea; BEGIN IF encode(digest('abc', 'sha256'), 'hex') IS DISTINCT FROM 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad' THEN RAISE EXCEPTION 'sha256 digest failed'; END IF; IF length(gen_random_bytes(16)) IS DISTINCT FROM 16 THEN RAISE EXCEPTION 'random bytes length failed'; END IF; SELECT crypt('secret', gen_salt('bf', 4)) INTO hashed; IF hashed IS NULL OR crypt('secret', hashed) IS DISTINCT FROM hashed THEN RAISE EXCEPTION 'password hash verify failed'; END IF; SELECT pgp_sym_encrypt('oliphaunt secret', 'passphrase') INTO encrypted; IF pgp_sym_decrypt(encrypted, 'passphrase') IS DISTINCT FROM 'oliphaunt secret' THEN RAISE EXCEPTION 'PGP symmetric decrypt failed'; END IF; END $$;",

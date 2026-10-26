@@ -69,7 +69,7 @@ runs:
     - name: Configure standard hosted Bazel caches
       if: inputs.phase == 'restore'
       shell: bash
-      run: |
+      run: | # zizmor: ignore[github-env] only the fixed runner-owned download cache path is exported.
         set -euo pipefail
         cache_root="$HOME/.cache/oliphaunt/bazel-ci"
         # Downloads remain a per-job content-addressed cache, not hosted archives.
@@ -78,8 +78,9 @@ runs:
           cache_root="$(cygpath -m "$cache_root")"
         fi
         # Hosted user configuration stays outside source and cache transport.
-        printf '\nbuild --config=ci-cache\nbuild --disk_cache="%s/disk"\ncommon --repository_cache="%s/repositories"\n' \
+        printf '\nstartup --preemptible\nbuild --config=ci-cache\nbuild --disk_cache="%s/disk"\ncommon --repository_cache="%s/repositories"\n' \
           "$cache_root" "$cache_root" >> "$HOME/.bazelrc"
+        printf 'OLIPHAUNT_BAZEL_REPOSITORY_CACHE=%s/repositories\n' "$cache_root" >> "$GITHUB_ENV"
 
     - name: Freeze, collect and bound cache transport
       id: ready

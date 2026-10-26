@@ -111,6 +111,8 @@ if(command==='aquery') {
 }
 if(command==='cquery') {console.log(JSON.stringify({configurations:[{id:1,checksum:'c'.repeat(64)}],results:['//fixture:archive','//fixture:executed_test'].map(name=>({configurationId:1,target:{rule:{name,configuredRuleInput:[{label:'//fixture:input.rs'}]}}})).concat([{target:{sourceFile:{name:'//fixture:input.rs'}}}])}));process.exit(0);}
 if(command==='query') {console.log('//fixture:BUILD');process.exit(0);}
+if(mode==='interrupted-build')process.exit(8);
+if(mode==='signalled-build')process.kill(process.pid,'SIGTERM');
 if(mode.startsWith('failed-build'))process.exit(1);
 const bep=args.find(arg=>arg.startsWith('--build_event_json_file='));if(bep){
  const configuration=mode==='opaque'?'opaque-configuration-id':'c'.repeat(64);
@@ -345,6 +347,31 @@ for (const [mode, executionMode] of [
       f.cleanup();
     }
   });
+
+for (const executionMode of ['full', 'source'])
+  for (const [mode, reason] of [
+    ['interrupted-build', '8'],
+    ['signalled-build', 'SIGTERM'],
+  ])
+    test.skipIf(process.platform === 'win32' && mode === 'signalled-build')(
+      `${executionMode} ${mode} request stops without a diagnostic query or success evidence`,
+      () => {
+        const f = fixture(mode);
+        try {
+          const result = f.run(executionMode);
+          expect(result.status).toBe(1);
+          expect(result.stderr).toContain(`CI test failed (${reason})`);
+          expect(f.calls()).toHaveLength(1);
+          for (const name of ['ci-request.json', 'diagnostics', 'evidence'])
+            expect(existsSync(path.join(f.output, name))).toBe(false);
+          const bep = f.calls()[0].find((arg) => arg.startsWith('--build_event_json_file='));
+          if (executionMode === 'full') expect(existsSync(path.dirname(bep.slice(24)))).toBe(false);
+          else expect(bep).toBeUndefined();
+        } finally {
+          f.cleanup();
+        }
+      },
+    );
 
 test('plain build request keeps its command rather than silently running test', () => {
   const f = fixture('success');

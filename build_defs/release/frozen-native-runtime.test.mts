@@ -4,6 +4,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { archiveDirectory } from '../../tools/packaging/archive-directory.mts';
+import {
+  windowsImportLibraryFixture,
+  windowsPeFixture,
+} from '../../tools/packaging/testdata/release-fixture-utils.mts';
 import { extractFrozenNativeRuntime, frozenNativeRuntimeInputs } from './frozen-native-runtime.mts';
 
 const directory = path.dirname(import.meta.path);
@@ -230,7 +234,22 @@ describe('captured completed native publication acquisition', () => {
       expect(await extract()).toThrow('missing regular member lib/oliphaunt.lib');
       await fs.mkdir(path.join(source, 'lib'));
       await fs.writeFile(path.join(source, 'lib/oliphaunt.lib'), 'not an import library');
+      const crt = windowsPeFixture();
+      const names = ['msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll'];
+      for (const directory of ['bin', 'runtime/bin']) {
+        await fs.mkdir(path.join(source, directory), { recursive: true });
+        for (const name of names) await fs.writeFile(path.join(source, directory, name), crt);
+        await fs.writeFile(
+          path.join(source, directory, 'windows-vc-runtime.sha256'),
+          names
+            .map((name) => `${createHash('sha256').update(crt).digest('hex')}  ${name}\n`)
+            .join(''),
+        );
+      }
       expect(await extract()).toThrow(/malformed|truncated/u);
+      await fs.writeFile(path.join(source, 'bin/oliphaunt.dll'), windowsPeFixture());
+      await fs.writeFile(path.join(source, 'lib/oliphaunt.lib'), windowsImportLibraryFixture());
+      expect(await extract()).not.toThrow();
     } finally {
       rmSync(temp, { recursive: true, force: true });
     }

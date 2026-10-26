@@ -197,6 +197,9 @@ export async function runConfiguredRequest(request: ConfiguredRequest, workspace
     });
     if (result.error) throw result.error;
     if (result.status !== 0) {
+      const failure = new Error(`CI ${request.command} failed (${result.signal ?? result.status})`);
+      // Stock Bazel INTERRUPTED (8) must not start another command during cache shutdown.
+      if (result.status === 8 || result.signal !== null) throw failure;
       try {
         await assertConfiguredCiSource(workspace, source);
         const diagnostics = requireSafeDirectoryChain(
@@ -227,7 +230,7 @@ export async function runConfiguredRequest(request: ConfiguredRequest, workspace
       } catch (error) {
         console.error(error instanceof Error ? error.message : String(error));
       }
-      throw new Error(`CI ${request.command} failed (${result.signal ?? result.status})`);
+      throw failure;
     }
     const context = {
       id: request.id,

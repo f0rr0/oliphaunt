@@ -54,6 +54,9 @@ const subprocessEnvironment = Object.fromEntries(
   ),
 );
 const startupOptions = ['--nosystem_rc', '--nohome_rc', `--output_base=${outputBase}`];
+const repositoryCacheOptions = process.env.OLIPHAUNT_BAZEL_REPOSITORY_CACHE
+  ? [`--repository_cache=${process.env.OLIPHAUNT_BAZEL_REPOSITORY_CACHE}`]
+  : [];
 
 function removePrivateScratch(directory: string) {
   const makeDirectoriesWritable = (current: string) => {
@@ -116,6 +119,7 @@ function bazel(command: string, args: string[], expectFailure = false, base = ou
       ),
       ...(base === outputBase ? [] : ['--host_jvm_args=-Xmx768m']),
       command,
+      ...repositoryCacheOptions,
       '--repo_env=DO_NOT_TRACK=1',
       ...args,
     ],
@@ -1929,11 +1933,15 @@ try {
   completed = true;
 } finally {
   if (existsSync(wrapper)) {
-    const stopped = spawnSync('bash', [wrapper, ...startupOptions, 'shutdown'], {
-      cwd: workspace,
-      timeout: 30_000,
-      env: subprocessEnvironment,
-    });
+    const stopped = spawnSync(
+      'bash',
+      [wrapper, ...startupOptions, 'shutdown', ...repositoryCacheOptions],
+      {
+        cwd: workspace,
+        timeout: 30_000,
+        env: subprocessEnvironment,
+      },
+    );
     if (completed)
       assert.equal(stopped.status, 0, 'isolated Bazel server must stop before cleanup');
   }

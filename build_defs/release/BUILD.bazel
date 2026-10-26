@@ -32,7 +32,7 @@ bun_test(
     data = ["frozen-native-runtime.mts", "native-0.3.2-releases.json", "native-0.3.2-completed-publication.json", "native-0.3.3-releases.json", "native-0.3.3-completed-publication.json",
         "//src/native/sdks/rust:release.toml", "//src/native/sdks/rust:Cargo.toml", "//tools/release:compatibility-version-parser.mts",
         "//src/native/sdks/kotlin:release.toml", "//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:src/main/resources/dev/oliphaunt/android/liboliphaunt.version",
-        "//:tools/packaging/portable-archive.mts", "//:tools/packaging/archive-directory.mts"] + NATIVE_BINARY_HELPERS,
+        "//:tools/packaging/portable-archive.mts", "//:tools/packaging/archive-directory.mts", "//:tools/packaging/testdata/release-fixture-utils.mts"] + NATIVE_BINARY_HELPERS,
     size = "small",
 )
 

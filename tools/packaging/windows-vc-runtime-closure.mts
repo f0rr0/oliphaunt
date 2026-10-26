@@ -393,7 +393,14 @@ function checkedRuntimeImport(name, importer) {
 
 export function windowsVcRuntimeProfileNames(profile) {
   if (profile === undefined || profile === null || profile === '') return [];
-  const names = WINDOWS_VC_RUNTIME_PROFILES[profile];
+  const names = Array.isArray(profile) ? profile : WINDOWS_VC_RUNTIME_PROFILES[profile];
+  if (
+    Array.isArray(profile) &&
+    (names.length === 0 ||
+      new Set(names).size !== names.length ||
+      names.some((name) => !WINDOWS_VC_RUNTIME_DLLS.includes(name)))
+  )
+    throw failure('explicit VC runtime profile requires unique canonical allowed DLL filenames');
   if (names === undefined) {
     throw failure(
       `unknown VC runtime profile ${profile}; expected one of ${Object.keys(WINDOWS_VC_RUNTIME_PROFILES).sort().join(', ')}`,

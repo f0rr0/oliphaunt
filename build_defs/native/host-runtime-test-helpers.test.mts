@@ -6,6 +6,7 @@ import {
   assertMissingHostRuntime,
   extractNativePayload,
   hostRuntimeEnvironment,
+  missingHostModuleError,
   runHostBinary,
 } from './host-runtime-test-helpers.mts';
 
@@ -106,6 +107,166 @@ assert.throws(() =>
     'darwin',
   ),
 );
+
+const ownerRoots = ['postgis-3.dll', 'postgis_raster-3.dll', 'postgis_topology-3.dll'];
+const missingModuleCases: {
+  name: string;
+  platform: NodeJS.Platform;
+  filename: string;
+  response: string;
+  expected: boolean;
+  ownerRoots?: readonly string[];
+}[] = [
+  {
+    name: 'Linux missing direct module',
+    platform: 'linux',
+    filename: 'postgis-3.so',
+    response:
+      'ERROR: could not load library "/tmp/path with spaces/postgis-3.so": No such file or directory',
+    expected: true,
+  },
+  {
+    name: 'Linux imported helper',
+    platform: 'linux',
+    filename: 'liboliphaunt_postgis_deps.so',
+    response:
+      'ERROR: could not load library "/tmp/postgis-3.so": liboliphaunt_postgis_deps.so: cannot open shared object file: No such file or directory',
+    expected: true,
+  },
+  {
+    name: 'PostgreSQL reports a canonical root without its suffix',
+    platform: 'linux',
+    filename: 'postgis-3.so',
+    response: 'ERROR: could not access file "$libdir/postgis-3": No such file or directory',
+    expected: true,
+  },
+  {
+    name: 'Wrong root stem',
+    platform: 'linux',
+    filename: 'postgis-3.so',
+    response: 'ERROR: could not access file "$libdir/postgis-30": No such file or directory',
+    expected: false,
+  },
+  {
+    name: 'Another module basename contains the expected name',
+    platform: 'linux',
+    filename: 'postgis-3.so',
+    response: 'ERROR: could not load library "/tmp/other_postgis-3.so": No such file or directory',
+    expected: false,
+  },
+  {
+    name: 'Wrong module diagnostic with the intended name in echoed LOAD',
+    platform: 'linux',
+    filename: 'liboliphaunt_postgis_deps.so',
+    response:
+      'ERROR: could not load library "$libdir/unrelated.so": No such file or directory\nSTATEMENT: LOAD \'$libdir/liboliphaunt_postgis_deps.so\';',
+    expected: false,
+  },
+  {
+    name: 'Undefined symbol is not a missing module',
+    platform: 'linux',
+    filename: 'postgis-3.so',
+    response: 'ERROR: could not load library "/tmp/postgis-3.so": undefined symbol: broken',
+    expected: false,
+  },
+  {
+    name: 'Missing reason occurs only in echoed SQL',
+    platform: 'linux',
+    filename: 'postgis-3.so',
+    response:
+      'ERROR: could not load library "/tmp/postgis-3.so": undefined symbol: broken\nSTATEMENT: SELECT \'No such file or directory\';',
+    expected: false,
+  },
+  {
+    name: 'Missing reason occurs only in an unrelated error',
+    platform: 'linux',
+    filename: 'postgis-3.so',
+    response:
+      'ERROR: could not load library "/tmp/postgis-3.so": undefined symbol: broken\nERROR: unrelated file: No such file or directory',
+    expected: false,
+  },
+  {
+    name: 'macOS direct module without its suffix',
+    platform: 'darwin',
+    filename: 'postgis-3.dylib',
+    response: 'ERROR: could not access file "$libdir/postgis-3": No such file or directory',
+    expected: true,
+  },
+  {
+    name: 'macOS multiline imported helper diagnostic',
+    platform: 'darwin',
+    filename: 'liboliphaunt_postgis_deps.dylib',
+    response:
+      'ERROR: could not load library "/tmp/path with spaces/postgis-3.dylib": dlopen(/tmp/postgis-3.dylib, 0x0002): Library not loaded: @rpath/liboliphaunt_postgis_deps.dylib\n  Referenced from: /tmp/postgis-3.dylib\n  Reason: tried: /tmp/liboliphaunt_postgis_deps.dylib (no such file)',
+    expected: true,
+  },
+  {
+    name: 'macOS image not found continuation',
+    platform: 'darwin',
+    filename: 'liboliphaunt_postgis_deps.dylib',
+    response:
+      'ERROR: could not load library "/tmp/postgis-3.dylib": dlopen(/tmp/postgis-3.dylib, 2): Library not loaded: @loader_path/liboliphaunt_postgis_deps.dylib\n  Referenced from: /tmp/postgis-3.dylib\n  Reason: image not found',
+    expected: true,
+  },
+  {
+    name: 'Windows reports the selected importing root',
+    platform: 'win32',
+    filename: 'liboliphaunt_postgis_deps.dll',
+    response:
+      'ERROR: could not load library "C:\\tmp\\path with spaces\\postgis-3.dll": The specified module could not be found.',
+    expected: true,
+    ownerRoots,
+  },
+  {
+    name: 'Windows reports the selected companion root',
+    platform: 'win32',
+    filename: 'liboliphaunt_postgis_deps.dll',
+    response:
+      'ERROR: could not load library "C:\\tmp\\postgis_raster-3.dll": The specified module could not be found.',
+    expected: true,
+    ownerRoots,
+  },
+  {
+    name: 'Windows reports a different importing owner',
+    platform: 'win32',
+    filename: 'liboliphaunt_postgis_deps.dll',
+    response:
+      'ERROR: could not load library "C:\\tmp\\unrelated.dll": The specified module could not be found.',
+    expected: false,
+    ownerRoots,
+  },
+  {
+    name: 'Windows wrong root stem',
+    platform: 'win32',
+    filename: 'postgis-3.dll',
+    response:
+      'ERROR: could not access file "$libdir/postgis-30": The specified module could not be found.',
+    expected: false,
+    ownerRoots,
+  },
+  {
+    name: 'Windows missing procedure is not a missing module',
+    platform: 'win32',
+    filename: 'liboliphaunt_postgis_deps.dll',
+    response:
+      'ERROR: could not load library "C:\\tmp\\postgis-3.dll": The specified procedure could not be found.',
+    expected: false,
+    ownerRoots,
+  },
+  {
+    name: 'Echoed LOAD without a loader diagnostic',
+    platform: 'linux',
+    filename: 'postgis-3.so',
+    response: "STATEMENT: LOAD '$libdir/postgis-3.so';\nERROR: unrelated No such file or directory",
+    expected: false,
+  },
+];
+for (const test of missingModuleCases)
+  assert.equal(
+    missingHostModuleError(test.response, test.filename, test.platform, test.ownerRoots),
+    test.expected,
+    test.name,
+  );
 
 function tar(names: string[]): Buffer {
   const members: Buffer[] = [];

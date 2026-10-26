@@ -100,7 +100,7 @@ test('held npm rejects pin, owner, registry, provenance and physical target subs
   });
 });
 
-test('Windows held npm requires initdb.exe, x64 PE bytes and both complete CRT receipts', async () => {
+test('Windows held npm preserves captured provider inventories and requires actual PE closure and both receipts', async () => {
   const temp = mkdtempSync(path.join(os.tmpdir(), 'held-native-npm-windows-'));
   try {
     const source = path.join(temp, 'package');
@@ -157,6 +157,35 @@ test('Windows held npm requires initdb.exe, x64 PE bytes and both complete CRT r
       };
     };
     verifyFrozenNativeNpm(await pack(), archive);
+    const fourNames = [...names, 'msvcp140_2.dll'].sort();
+    const fourReceipt = fourNames
+      .map((name) => `${createHash('sha256').update(crt).digest('hex')}  ${name}\n`)
+      .join('');
+    for (const directory of ['bin', 'runtime/bin']) {
+      write(`${directory}/msvcp140_2.dll`, crt);
+      write(`${directory}/windows-vc-runtime.sha256`, fourReceipt);
+    }
+    verifyFrozenNativeNpm(await pack(), archive);
+    for (const directory of ['bin', 'runtime/bin']) {
+      rmSync(path.join(source, directory, 'msvcp140_2.dll'));
+      write(`${directory}/windows-vc-runtime.sha256`, receipt);
+    }
+    write(input.library, windowsPeFixture({ imports: ['MSVCP140_2.dll'] }));
+    const missingImport = await pack();
+    expect(() => verifyFrozenNativeNpm(missingImport, archive)).toThrow('exact DLL is not bundled');
+    write(input.library, windowsPeFixture({ imports: ['VCRUNTIME140.dll'] }));
+    rmSync(path.join(source, 'bin/windows-vc-runtime.sha256'));
+    const missingReceipt = await pack();
+    expect(() => verifyFrozenNativeNpm(missingReceipt, archive)).toThrow(
+      'missing regular VC runtime receipt',
+    );
+    write('bin/windows-vc-runtime.sha256', receipt);
+    rmSync(path.join(source, 'runtime/bin/windows-vc-runtime.sha256'));
+    const missingRuntimeReceipt = await pack();
+    expect(() => verifyFrozenNativeNpm(missingRuntimeReceipt, archive)).toThrow(
+      'missing regular VC runtime digest receipt',
+    );
+    write('runtime/bin/windows-vc-runtime.sha256', receipt);
     rmSync(path.join(source, 'runtime/bin/initdb.exe'));
     write('runtime/bin/initdb', windowsPeFixture());
     const unixInitdb = await pack();

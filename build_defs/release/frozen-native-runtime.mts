@@ -6,7 +6,11 @@ import {
   extractPortableArchiveTree,
   readPortableArchiveEntries,
 } from '../../tools/packaging/portable-archive.mts';
-import { verifyWindowsVcRuntimeClosure } from '../../tools/packaging/windows-vc-runtime-closure.mts';
+import {
+  parseWindowsVcRuntimeReceipt,
+  verifyWindowsVcRuntimeClosure,
+  WINDOWS_VC_RUNTIME_RECEIPT,
+} from '../../tools/packaging/windows-vc-runtime-closure.mts';
 import { compatibilityVersionFromText } from '../../tools/release/compatibility-version-parser.mts';
 
 const product = 'liboliphaunt-native';
@@ -140,6 +144,16 @@ export function frozenNativeRuntimeInputs({
   });
 }
 
+/** Read the provider inventory from its original, archive-authenticated receipt. */
+export function frozenWindowsVcRuntimeProfile(entries, prefix = '') {
+  const name = `${prefix}bin/${WINDOWS_VC_RUNTIME_RECEIPT}`;
+  const entry = entries.get(name);
+  if (!entry?.isFile)
+    throw new Error(`frozen native runtime is missing regular VC runtime receipt ${name}`);
+  const bytes = typeof entry.data === 'function' ? entry.data() : entry.data;
+  return [...parseWindowsVcRuntimeReceipt(bytes, name).keys()];
+}
+
 /** Check physical immutable bytes and extract through the retained safe archive reader. */
 export function extractFrozenNativeRuntime(input, archive, destination) {
   const bytes = readFileSync(archive);
@@ -162,19 +176,21 @@ export function extractFrozenNativeRuntime(input, archive, destination) {
   ])
     if (!entries.get(member)?.isFile)
       throw new Error(`frozen native runtime is missing regular member ${member}`);
+  const capturedRuntimeProfile =
+    input.target === 'windows-x64-msvc' ? frozenWindowsVcRuntimeProfile(entries) : undefined;
   if (input.target === 'windows-x64-msvc')
     inspectPlatformBinaryEntries(entries.values(), {
       target: input.target,
       rootLabel: input.name,
       requireWindowsRuntimeImportLibrary: true,
-      windowsVcRuntimeProfile: 'provider',
+      windowsVcRuntimeProfile: capturedRuntimeProfile,
     });
   extractPortableArchiveTree(archive, destination);
   if (input.target === 'windows-x64-msvc')
     verifyWindowsVcRuntimeClosure({
       root: destination,
       searchRoots: [path.join(destination, 'bin'), path.join(destination, 'runtime/bin')],
-      profile: 'provider',
+      profile: capturedRuntimeProfile,
     });
 }
 
