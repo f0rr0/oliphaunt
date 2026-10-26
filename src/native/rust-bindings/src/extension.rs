@@ -206,13 +206,12 @@ fn visit_extension(
     if let Some(previous) = resolved
         .iter()
         .find(|previous| previous.sql_name() == extension.sql_name())
+        && previous.package != extension.package
     {
-        if previous.package != extension.package {
-            return Err(Error::InvalidConfig(format!(
-                "conflicting native extension packages for {}",
-                extension.sql_name()
-            )));
-        }
+        return Err(Error::InvalidConfig(format!(
+            "conflicting native extension packages for {}",
+            extension.sql_name()
+        )));
     }
     if visiting.contains(extension.sql_name()) {
         return Err(Error::InvalidConfig(format!(

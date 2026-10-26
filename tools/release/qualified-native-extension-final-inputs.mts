@@ -252,10 +252,10 @@ function collectNativeFinalInputs(
           const pkg = root.package;
           const cargo = isNativeCurrentCargoRoot(root, metadata, extensionConstructors);
           const github = isNativeCurrentGithubRoot(root, githubArtifacts);
-          const constructor = isNativeConstructorInputRoot(root);
+          const constructorInput = isNativeConstructorInputRoot(root);
           if (pkg.role === 'constructor-input')
-            assert.ok(constructor, 'constructor input needs its source-owned internal root');
-          if (!(cargo || github || constructor)) continue;
+            assert.ok(constructorInput, 'constructor input needs its source-owned internal root');
+          if (!(cargo || github || constructorInput)) continue;
           assert.equal(
             pkg.version,
             metadata.products[pkg.product]?.version,
@@ -277,7 +277,7 @@ function collectNativeFinalInputs(
               assert.deepEqual(prior, row, 'current carrier has conflicting original producers');
             else current.set(key, row);
           };
-          if (constructor) {
+          if (constructorInput) {
             assert.equal(files.length, 1, 'constructor input needs one original regular File');
             assert.equal(files[0].member, undefined, 'constructor input cannot be a Tree member');
             retain(`constructor:${pkg.name}`, files[0]);

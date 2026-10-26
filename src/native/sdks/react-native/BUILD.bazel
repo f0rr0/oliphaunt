@@ -97,7 +97,7 @@ react_native_templates(name = "broker_templates", sources = "//src/native/sdks/s
 
 bun_script_test(
     name = "ios_stager_test",
-    entry_point = "tools/stage-ios-app.bazel.test.mts",
+    entry_point = "tools/stage-ios-app.bazel.mts",
     args = [
         "$(rootpath :app_plugin)",
         "$(rootpath :ios_stager)",

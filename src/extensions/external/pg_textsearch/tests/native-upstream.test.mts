@@ -58,6 +58,7 @@ const env = {
 };
 let running = false;
 let failed = false;
+let shutdownError: Error | undefined;
 const run = (binary: string, args: string[]) => runHostBinary(binary, args, env, root);
 const psql = (database: string, args: string[]) =>
   run(join(tools, 'bin/psql'), ['-X', '-v', 'ON_ERROR_STOP=1', '-d', database, ...args]);
@@ -252,7 +253,9 @@ try {
     'review a nonliteral upstream DATA inventory',
   );
   assert.deepEqual(
-    readdirSync(currentExtension).filter((file) => file.endsWith('.sql')).sort(),
+    readdirSync(currentExtension)
+      .filter((file) => file.endsWith('.sql'))
+      .sort(),
     dataFiles.map((file) => file.slice('sql/'.length)).sort(),
     'shipped SQL differs from the upstream PGXS DATA inventory',
   );
@@ -343,11 +346,10 @@ try {
     );
     if (result.exitCode !== 0) {
       mayRemove = false;
-      const error = new Error(
+      shutdownError = new Error(
         `server stop failed; preserving ${root}: ${result.stderr.toString()}`,
       );
-      if (!failed) throw error;
-      console.error(error);
+      if (failed) console.error(shutdownError);
     }
   }
   if (mayRemove) {
@@ -355,3 +357,4 @@ try {
     rmSync(root, { recursive: true, force: true });
   }
 }
+if (shutdownError) throw shutdownError;

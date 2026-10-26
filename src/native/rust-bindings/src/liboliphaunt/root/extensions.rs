@@ -187,8 +187,8 @@ pub(super) fn resolve_extension_modules(
                         if descriptor.schema != "oliphaunt-extension-member-payload-v1"
                             || descriptor.sql_name != extension.sql_name()
                             || descriptor.dependency_modules.iter().any(|module| {
-                                !candidates.contains(module)
-                                    && !(files.contains(module)
+                                !(candidates.contains(module)
+                                    || files.contains(module)
                                         && Some(module) != main_module.as_ref())
                             })
                             || descriptor

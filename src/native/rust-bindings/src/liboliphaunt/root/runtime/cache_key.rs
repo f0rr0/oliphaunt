@@ -868,7 +868,6 @@ mod tests {
         assert!(valid());
         let mut required = Extension::POSTGIS
             .native_module_files()
-            .into_iter()
             .map(|module| cache_dir.join("lib/postgresql").join(module))
             .collect::<Vec<_>>();
         for member in Extension::POSTGIS.sql_members() {

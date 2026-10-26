@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import type { NativeCurrentArtifact } from '../../tools/release/native-extension-final-inputs.mts';
 import {
   type ConstructorKind,
@@ -136,7 +137,12 @@ test('repository projector CLI consumes the existing metadata map without acquir
   writeFileSync(input, JSON.stringify(inputs));
   const result = spawnSync(
     process.execPath,
-    [new URL('./constructor-inputs.mts', import.meta.url).pathname, 'windows-v8', input, output],
+    [
+      fileURLToPath(new URL('./constructor-inputs.mts', import.meta.url)),
+      'windows-v8',
+      input,
+      output,
+    ],
     { encoding: 'utf8' },
   );
   assert.equal(result.status, 0, result.stderr);

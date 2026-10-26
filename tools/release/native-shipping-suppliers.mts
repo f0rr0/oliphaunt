@@ -325,7 +325,7 @@ export async function projectNativeBuildBoundSuppliers(
       'original current supplier identity',
     );
     const appleBase = isNativeAppleBaseInputRoot(root);
-    const constructor = isNativeConstructorInputRoot(root);
+    const constructorInput = isNativeConstructorInputRoot(root);
     const document = appleBase || swiftSourceDocument(root, producer.member);
     const sourceArchive = swiftSourceArchive(root, producer.member);
     const dataInput = document || sourceArchive;
@@ -333,16 +333,16 @@ export async function projectNativeBuildBoundSuppliers(
       (canonicalShippingLabel(root.label) ===
         '//src/native/sdks/swift:shipping_Oliphaunt-source_zip' &&
         !sourceArchive) ||
-      (root.package.role === 'constructor-input' && !constructor) ||
+      (root.package.role === 'constructor-input' && !constructorInput) ||
       (!dataInput &&
-        !constructor &&
+        !constructorInput &&
         (!['cargo', 'npm', 'github'].includes(root.package.ecosystem) ||
           (root.package.ecosystem === 'github' && root.package.role !== 'github-release-asset'))) ||
       (dataInput &&
         (supplier.binding !== 'abi-contract' ||
           (appleBase && producer.member !== undefined) ||
           files.some(({ declaration }) => declaration.member !== undefined))) ||
-      (constructor &&
+      (constructorInput &&
         (producer.member !== undefined ||
           files.some(({ declaration }) => declaration.member !== undefined))) ||
       root.package.outputs.filter(({ path }) => path === producer.output).length !== 1
@@ -402,7 +402,7 @@ export async function projectNativeBuildBoundSuppliers(
       { size: output.size, sha256: output.sha256 },
       'original current supplier physical archive',
     );
-    const members = document || constructor ? [] : nativeArchiveDeliveryMembers(archives[0]);
+    const members = document || constructorInput ? [] : nativeArchiveDeliveryMembers(archives[0]);
     equal(fileIdentity(archives[0]), before, 'original current supplier archive after read');
     transport.assertUnchanged?.();
     for (const { declaration, member } of files) {

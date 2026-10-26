@@ -129,7 +129,7 @@ for (const dependency of member.nativeDependencyModules ?? []) {
   assert.throws(
     () =>
       validateEntries(canonicalEntries, { ...metadata, nativeDependencyModules: ['foreign.so'] }),
-    /differ from the canonical recipe/,
+    /leaf inventory mismatch; undeclared: .+; missing: files\/lib\/modules\/foreign\.so,files\/lib\/postgresql\/foreign\.so$/u,
   );
 }
 for (const construction of metadata.nativeConstructionLicenseFiles) {

@@ -7,7 +7,7 @@
     "linux-x64-gnu": {
       "cargoTarget": "x86_64-unknown-linux-gnu",
       "packages": [
-        "bitflags@2.12.1",
+        "bitflags@2.13.2",
         "block-buffer@0.10.4",
         "cfg-if@1.0.4",
         "convert_case@0.11.0",
@@ -17,15 +17,15 @@
         "digest@0.10.7",
         "filetime@0.2.29",
         "fs2@0.4.3",
-        "futures-channel@0.3.32",
-        "futures-core@0.3.32",
-        "futures-executor@0.3.32",
-        "futures-io@0.3.32",
-        "futures-macro@0.3.32",
-        "futures-sink@0.3.32",
-        "futures-task@0.3.32",
-        "futures-util@0.3.32",
-        "futures@0.3.32",
+        "futures-channel@0.3.34",
+        "futures-core@0.3.34",
+        "futures-executor@0.3.34",
+        "futures-io@0.3.34",
+        "futures-macro@0.3.34",
+        "futures-sink@0.3.34",
+        "futures-task@0.3.34",
+        "futures-util@0.3.34",
+        "futures@0.3.34",
         "generic-array@0.14.7",
         "getrandom@0.3.4",
         "itoa@1.0.18",
@@ -52,6 +52,7 @@
         "sha2@0.10.9",
         "slab@0.4.12",
         "syn@2.0.117",
+        "syn@3.0.5",
         "tar@0.4.46",
         "typenum@1.20.1",
         "unicode-ident@1.0.24",
@@ -59,14 +60,14 @@
         "xattr@1.6.1",
         "zmij@1.0.21",
         "zstd-safe@7.2.4",
-        "zstd-sys@2.0.16+zstd.1.5.7",
+        "zstd-sys@2.1.2+zstd.1.5.7",
         "zstd@0.13.3"
       ]
     },
     "linux-arm64-gnu": {
       "cargoTarget": "aarch64-unknown-linux-gnu",
       "packages": [
-        "bitflags@2.12.1",
+        "bitflags@2.13.2",
         "block-buffer@0.10.4",
         "cfg-if@1.0.4",
         "convert_case@0.11.0",
@@ -76,15 +77,15 @@
         "digest@0.10.7",
         "filetime@0.2.29",
         "fs2@0.4.3",
-        "futures-channel@0.3.32",
-        "futures-core@0.3.32",
-        "futures-executor@0.3.32",
-        "futures-io@0.3.32",
-        "futures-macro@0.3.32",
-        "futures-sink@0.3.32",
-        "futures-task@0.3.32",
-        "futures-util@0.3.32",
-        "futures@0.3.32",
+        "futures-channel@0.3.34",
+        "futures-core@0.3.34",
+        "futures-executor@0.3.34",
+        "futures-io@0.3.34",
+        "futures-macro@0.3.34",
+        "futures-sink@0.3.34",
+        "futures-task@0.3.34",
+        "futures-util@0.3.34",
+        "futures@0.3.34",
         "generic-array@0.14.7",
         "getrandom@0.3.4",
         "itoa@1.0.18",
@@ -111,6 +112,7 @@
         "sha2@0.10.9",
         "slab@0.4.12",
         "syn@2.0.117",
+        "syn@3.0.5",
         "tar@0.4.46",
         "typenum@1.20.1",
         "unicode-ident@1.0.24",
@@ -118,14 +120,14 @@
         "xattr@1.6.1",
         "zmij@1.0.21",
         "zstd-safe@7.2.4",
-        "zstd-sys@2.0.16+zstd.1.5.7",
+        "zstd-sys@2.1.2+zstd.1.5.7",
         "zstd@0.13.3"
       ]
     },
     "macos-arm64": {
       "cargoTarget": "aarch64-apple-darwin",
       "packages": [
-        "bitflags@2.12.1",
+        "bitflags@2.13.2",
         "block-buffer@0.10.4",
         "cfg-if@1.0.4",
         "convert_case@0.11.0",
@@ -136,15 +138,15 @@
         "errno@0.3.14",
         "filetime@0.2.29",
         "fs2@0.4.3",
-        "futures-channel@0.3.32",
-        "futures-core@0.3.32",
-        "futures-executor@0.3.32",
-        "futures-io@0.3.32",
-        "futures-macro@0.3.32",
-        "futures-sink@0.3.32",
-        "futures-task@0.3.32",
-        "futures-util@0.3.32",
-        "futures@0.3.32",
+        "futures-channel@0.3.34",
+        "futures-core@0.3.34",
+        "futures-executor@0.3.34",
+        "futures-io@0.3.34",
+        "futures-macro@0.3.34",
+        "futures-sink@0.3.34",
+        "futures-task@0.3.34",
+        "futures-util@0.3.34",
+        "futures@0.3.34",
         "generic-array@0.14.7",
         "getrandom@0.3.4",
         "itoa@1.0.18",
@@ -170,6 +172,7 @@
         "sha2@0.10.9",
         "slab@0.4.12",
         "syn@2.0.117",
+        "syn@3.0.5",
         "tar@0.4.46",
         "typenum@1.20.1",
         "unicode-ident@1.0.24",
@@ -177,14 +180,14 @@
         "xattr@1.6.1",
         "zmij@1.0.21",
         "zstd-safe@7.2.4",
-        "zstd-sys@2.0.16+zstd.1.5.7",
+        "zstd-sys@2.1.2+zstd.1.5.7",
         "zstd@0.13.3"
       ]
     },
     "windows-x64-msvc": {
       "cargoTarget": "x86_64-pc-windows-msvc",
       "packages": [
-        "bitflags@2.12.1",
+        "bitflags@2.13.2",
         "block-buffer@0.10.4",
         "cfg-if@1.0.4",
         "convert_case@0.11.0",
@@ -194,15 +197,15 @@
         "digest@0.10.7",
         "filetime@0.2.29",
         "fs2@0.4.3",
-        "futures-channel@0.3.32",
-        "futures-core@0.3.32",
-        "futures-executor@0.3.32",
-        "futures-io@0.3.32",
-        "futures-macro@0.3.32",
-        "futures-sink@0.3.32",
-        "futures-task@0.3.32",
-        "futures-util@0.3.32",
-        "futures@0.3.32",
+        "futures-channel@0.3.34",
+        "futures-core@0.3.34",
+        "futures-executor@0.3.34",
+        "futures-io@0.3.34",
+        "futures-macro@0.3.34",
+        "futures-sink@0.3.34",
+        "futures-task@0.3.34",
+        "futures-util@0.3.34",
+        "futures@0.3.34",
         "generic-array@0.14.7",
         "getrandom@0.3.4",
         "itoa@1.0.18",
@@ -226,6 +229,7 @@
         "sha2@0.10.9",
         "slab@0.4.12",
         "syn@2.0.117",
+        "syn@3.0.5",
         "tar@0.4.46",
         "typenum@1.20.1",
         "unicode-ident@1.0.24",
@@ -234,7 +238,7 @@
         "windows-link@0.2.1",
         "zmij@1.0.21",
         "zstd-safe@7.2.4",
-        "zstd-sys@2.0.16+zstd.1.5.7",
+        "zstd-sys@2.1.2+zstd.1.5.7",
         "zstd@0.13.3"
       ]
     }
@@ -242,8 +246,8 @@
   "packages": [
     {
       "name": "bitflags",
-      "version": "2.12.1",
-      "checksum": "84d7ced0ae9557296835c32bf1b1e02b44c746701f898460fb000d7eaa84f00a",
+      "version": "2.13.2",
+      "checksum": "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06",
       "declaredLicense": "MIT OR Apache-2.0",
       "selectedLicense": "MIT",
       "targets": ["linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"],
@@ -457,8 +461,8 @@
     },
     {
       "name": "futures-channel",
-      "version": "0.3.32",
-      "checksum": "07bbe89c50d7a535e539b8c17bc0b49bdb77747034daa8087407d655f3f7cc1d",
+      "version": "0.3.34",
+      "checksum": "b1f9e3d69d39e4862ffed03ed071a76f9a13ba1d9109d355b0f0aa6b15e393c4",
       "declaredLicense": "MIT OR Apache-2.0",
       "selectedLicense": "MIT",
       "targets": ["linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"],
@@ -477,8 +481,8 @@
     },
     {
       "name": "futures-core",
-      "version": "0.3.32",
-      "checksum": "7e3450815272ef58cec6d564423f6e755e25379b217b0bc688e295ba24df6b1d",
+      "version": "0.3.34",
+      "checksum": "92d699e522242e69e3003b94ecc1f960f3a5e015aa7c5d7486e65ad01dd94f5e",
       "declaredLicense": "MIT OR Apache-2.0",
       "selectedLicense": "MIT",
       "targets": ["linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"],
@@ -497,8 +501,8 @@
     },
     {
       "name": "futures-executor",
-      "version": "0.3.32",
-      "checksum": "baf29c38818342a3b26b5b923639e7b1f4a61fc5e76102d4b1981c6dc7a7579d",
+      "version": "0.3.34",
+      "checksum": "031b47cf1a3c6cc8bc2fc76cd437f521619387907d469316e7c0bc278f1f5432",
       "declaredLicense": "MIT OR Apache-2.0",
       "selectedLicense": "MIT",
       "targets": ["linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"],
@@ -517,8 +521,8 @@
     },
     {
       "name": "futures-io",
-      "version": "0.3.32",
-      "checksum": "cecba35d7ad927e23624b22ad55235f2239cfa44fd10428eecbeba6d6a717718",
+      "version": "0.3.34",
+      "checksum": "53c0fa8157de1303bfffdaa1cc2a673bfffb60102f76b0ef4441659124373fed",
       "declaredLicense": "MIT OR Apache-2.0",
       "selectedLicense": "MIT",
       "targets": ["linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"],
@@ -537,8 +541,8 @@
     },
     {
       "name": "futures-macro",
-      "version": "0.3.32",
-      "checksum": "e835b70203e41293343137df5c0664546da5745f82ec9b84d40be8336958447b",
+      "version": "0.3.34",
+      "checksum": "9fb9654ba8355388abeb8dcb4fc62f511300867002afc858860463bdd9fe0c44",
       "declaredLicense": "MIT OR Apache-2.0",
       "selectedLicense": "MIT",
       "targets": ["linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"],
@@ -557,8 +561,8 @@
     },
     {
       "name": "futures-sink",
-      "version": "0.3.32",
-      "checksum": "c39754e157331b013978ec91992bde1ac089843443c49cbc7f46150b0fad0893",
+      "version": "0.3.34",
+      "checksum": "1944426bf7d03f1d14f708785e4b33efd750b36d48a157b836b3efc15ede8e1d",
       "declaredLicense": "MIT OR Apache-2.0",
       "selectedLicense": "MIT",
       "targets": ["linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"],
@@ -577,8 +581,8 @@
     },
     {
       "name": "futures-task",
-      "version": "0.3.32",
-      "checksum": "037711b3d59c33004d3856fbdc83b99d4ff37a24768fa1be9ce3538a1cde4393",
+      "version": "0.3.34",
+      "checksum": "cd417de3d1d015fc3bfd2b1ea46dfc7bab72ef86f1cc7cc9c78e728b34a6d1fd",
       "declaredLicense": "MIT OR Apache-2.0",
       "selectedLicense": "MIT",
       "targets": ["linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"],
@@ -597,8 +601,8 @@
     },
     {
       "name": "futures-util",
-      "version": "0.3.32",
-      "checksum": "389ca41296e6190b48053de0321d02a77f32f8a5d2461dd38762c0593805c6d6",
+      "version": "0.3.34",
+      "checksum": "0d50a92467f8ba5dd6e3ee5d4bd04d73ab2e4e1c44474a0674821dfce14b79bc",
       "declaredLicense": "MIT OR Apache-2.0",
       "selectedLicense": "MIT",
       "targets": ["linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"],
@@ -617,8 +621,8 @@
     },
     {
       "name": "futures",
-      "version": "0.3.32",
-      "checksum": "8b147ee9d1f6d097cef9ce628cd2ee62288d963e16fb287bd9286455b241382d",
+      "version": "0.3.34",
+      "checksum": "9a31d2a3fbaaeb2af2368bbdd904aa8e812d3c04a1ee10d3171f52d556e5d0a3",
       "declaredLicense": "MIT OR Apache-2.0",
       "selectedLicense": "MIT",
       "targets": ["linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"],
@@ -1161,6 +1165,26 @@
       ]
     },
     {
+      "name": "syn",
+      "version": "3.0.5",
+      "checksum": "12df2e0110f65b775f769bb17ef989067a1d931b2eb822bd4346631eeada89f9",
+      "declaredLicense": "MIT OR Apache-2.0",
+      "selectedLicense": "MIT",
+      "targets": ["linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"],
+      "licenseFiles": [
+        {
+          "name": "LICENSE-APACHE",
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
+          "bytes": 9723
+        },
+        {
+          "name": "LICENSE-MIT",
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+          "bytes": 1023
+        }
+      ]
+    },
+    {
       "name": "tar",
       "version": "0.4.46",
       "checksum": "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840",
@@ -1357,31 +1381,21 @@
     },
     {
       "name": "zstd-sys",
-      "version": "2.0.16+zstd.1.5.7",
-      "checksum": "91e19ebc2adc8f83e43039e79776e3fda8ca919132d68a1fed6a5faca2683748",
-      "declaredLicense": "MIT/Apache-2.0",
-      "selectedLicense": "MIT AND BSD-3-Clause",
+      "version": "2.1.2+zstd.1.5.7",
+      "checksum": "481ada9c543b2323cbb7bbdbb5249177fbf0188ed959ed2c15e4b22421c84ed3",
+      "declaredLicense": "BSD-3-Clause",
+      "selectedLicense": "BSD-3-Clause",
       "targets": ["linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"],
       "licenseFiles": [
         {
           "name": "LICENSE",
-          "sha256": "a77b7cfeaf911ed410ffbe76f0cb2b24ad8a4d94e7ead5727e914425c416cc63",
-          "bytes": 18
-        },
-        {
-          "name": "LICENSE.Apache-2.0",
-          "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
-          "bytes": 10174
+          "sha256": "ce4868c8e4ebe47a7d4b3c93dbf6b802033e5ae2fa7638098173f80836daac60",
+          "bytes": 1501
         },
         {
           "name": "LICENSE.BSD-3-Clause",
-          "sha256": "48341f685c87304089aa099b23c386f8bacc519ef555aa7a13e239908907b3fd",
-          "bytes": 1595
-        },
-        {
-          "name": "LICENSE.Mit",
-          "sha256": "129e8edef29e9abcd2ebabe252f4ef1b1289cdca356bf0040284a2fbccfb96c8",
-          "bytes": 1080
+          "sha256": "bf7017a73a95ea63bf3716b13ec2bcd79c92942356e3408c6fb66332bad6d977",
+          "bytes": 1614
         },
         {
           "name": "zstd/COPYING",

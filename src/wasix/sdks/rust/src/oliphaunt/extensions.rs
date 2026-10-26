@@ -1376,6 +1376,16 @@ pub struct ExtensionPackage {
     dependencies: &'static [ExtensionPackageDependency],
 }
 
+type ExtensionPackageIdentity = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static [(&'static str, &'static [u8], &'static str)],
+    &'static str,
+    &'static [(&'static str, &'static [u8])],
+    Option<FrozenExtensionInstall>,
+);
+
 impl PartialEq for ExtensionPackage {
     fn eq(&self, other: &Self) -> bool {
         self.identity() == other.identity()
@@ -1400,17 +1410,7 @@ impl std::hash::Hash for ExtensionPackage {
 
 impl ExtensionPackage {
     // Dependency bindings are request composition; the immutable resource identity stays finite.
-    fn identity(
-        &self,
-    ) -> (
-        &'static str,
-        &'static str,
-        &'static str,
-        &'static [(&'static str, &'static [u8], &'static str)],
-        &'static str,
-        &'static [(&'static str, &'static [u8])],
-        Option<FrozenExtensionInstall>,
-    ) {
+    fn identity(&self) -> ExtensionPackageIdentity {
         (
             self.product,
             self.version,

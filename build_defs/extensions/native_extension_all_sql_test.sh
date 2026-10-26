@@ -59,6 +59,11 @@ server_sql() {
   { printf 'BEGIN;\n\n'; cat "$install" "$smoke"; printf '\nCOMMIT;\n\n'; } | sed 's/^-- oliphaunt-statement$//'
 }
 
+startup_args=()
+while IFS= read -r assignment; do
+  [[ -z "$assignment" ]] || startup_args+=(-c "$assignment")
+done < "$startup"
+
 while IFS= read -r name; do
   [[ -z "$name" ]] && continue
   for profile in postgresql modules; do
@@ -71,7 +76,7 @@ while IFS= read -r name; do
     if [[ "$profile" == modules ]]; then
       "$consumer" "$database/pgdata" "$runtime" --sql-plan "$install" "$smoke" "$startup" > "$database/consumer.log" 2>&1
     else
-      server_sql | "$runtime/bin/postgres" --single -j -D "$database/pgdata" postgres > "$database/consumer.log" 2>&1
+      server_sql | "$runtime/bin/postgres" --single -j -D "$database/pgdata" "${startup_args[@]}" postgres > "$database/consumer.log" 2>&1
     fi
     status=$?
     set -e
@@ -94,10 +99,6 @@ initialize "$database"
 
 database="$TEST_TMPDIR/server"
 initialize "$database"
-startup_args=()
-while IFS= read -r assignment; do
-  [[ -z "$assignment" ]] || startup_args+=(-c "$assignment")
-done < "$startup"
 log="$TEST_TMPDIR/server.log"
 server_sql | "$runtime/bin/postgres" --single -j -D "$database/pgdata" "${startup_args[@]}" postgres > "$log" 2>&1
 response=$(<"$log")

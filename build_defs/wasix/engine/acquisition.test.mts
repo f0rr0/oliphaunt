@@ -178,11 +178,15 @@ test('generated replacement patches apply to the exact original manifest includi
       const prepared = prepareEngineAcquisition(sources, version, pins);
       const directory = prepared.patch[ENGINE_SOURCE_PACKAGES[original]].path;
       writeFileSync(path.join(root, 'Cargo.toml'), sources[original]);
-      const applied = spawnSync('git', ['apply', '--no-index', '-p1', '-'], {
-        cwd: root,
-        input: prepared.files[`${directory}/Cargo.toml.patch`],
-        encoding: 'utf8',
-      });
+      const applied = spawnSync(
+        'git',
+        ['-c', 'core.autocrlf=false', 'apply', '--no-index', '-p1', '-'],
+        {
+          cwd: root,
+          input: prepared.files[`${directory}/Cargo.toml.patch`],
+          encoding: 'utf8',
+        },
+      );
       assert.equal(applied.status, 0, applied.stderr);
       assert.equal(
         readFileSync(path.join(root, 'Cargo.toml'), 'utf8'),

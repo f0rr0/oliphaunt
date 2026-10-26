@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { nativeComponentInventory } from './native-component-contract.mts';
 import { nativeExtensionDependencyModulePaths } from '../contracts/extension-target-profiles.mts';
+import { nativeComponentInventory } from './native-component-contract.mts';
 
 type Row = Record<string, any>;
 export const modelPath = 'src/extensions/tools/check-extension-model.sh';
@@ -800,7 +800,6 @@ export function catalogProjections(catalog: Row): Map<string, string> {
 }
 
 function wasixRustModule(rows: Row[]): string {
-  const cfg = (_row: Row) => ''; // Metadata is available independently of embedded payload features.
   const array = (values: string[]) => `&[${values.map(literal).join(', ')}]`;
   const option = (value: string | undefined) =>
     value === undefined ? 'None' : `Some(${literal(value)})`;
@@ -815,10 +814,10 @@ function wasixRustModule(rows: Row[]): string {
         (module) =>
           `super::ExtensionNativeModule { runtime_path: ${literal(module.runtime_path)}, aot_name: Some(${literal(`extension:${row['sql-name']}:${module.name}`)}) }`,
       );
-    text += `${cfg(row)}\nconst DEFINITION_${row['rust-constant']}: Extension = Extension {\n    sql_name: ${literal(row['sql-name'])},\n    native_support_modules: &[${modules.join(', ')}],\n    native_module_file: ${option(row['native-module-file'])},\n    aot_name: ${option(row['native-module-file'] ? `extension:${row['sql-name']}` : undefined)},\n    dependencies: ${array(row.dependencies.filter((sql: string) => sql !== 'plpgsql'))},\n    startup_config: ${array(row.lifecycle['startup-config'])},\n    package: None,\n};\n\n`;
+    text += `const DEFINITION_${row['rust-constant']}: Extension = Extension {\n    sql_name: ${literal(row['sql-name'])},\n    native_support_modules: &[${modules.join(', ')}],\n    native_module_file: ${option(row['native-module-file'])},\n    aot_name: ${option(row['native-module-file'] ? `extension:${row['sql-name']}` : undefined)},\n    dependencies: ${array(row.dependencies.filter((sql: string) => sql !== 'plpgsql'))},\n    startup_config: ${array(row.lifecycle['startup-config'])},\n    package: None,\n};\n\n`;
   }
-  text += `impl Extension {\n${rows.map((row) => `    /// Select the \`${row['sql-name']}\` artifact.\n    ${cfg(row)}\n    pub const ${row['rust-constant']}: Self = DEFINITION_${row['rust-constant']};`).join('\n')}\n\n    /// Supported extension metadata; payloads are selected independently.\n    pub const ALL: &'static [Self] = &[\n${rows.map((row) => `        ${cfg(row)}\n        Self::${row['rust-constant']},`).join('\n')}\n    ];\n}\n`;
-  text += `\n#[cfg(test)]\npub(super) fn creates_database_object_for_test(extension: Extension) -> bool {\n    match extension.sql_name() {\n${rows.map((row) => `        ${cfg(row)}\n        ${literal(row['sql-name'])} => ${row.lifecycle['create-extension']},`).join('\n')}\n        _ => false,\n    }\n}\n`;
+  text += `impl Extension {\n${rows.map((row) => `    /// Select the \`${row['sql-name']}\` artifact.\n    pub const ${row['rust-constant']}: Self = DEFINITION_${row['rust-constant']};`).join('\n')}\n\n    /// Supported extension metadata; payloads are selected independently.\n    pub const ALL: &'static [Self] = &[\n${rows.map((row) => `        Self::${row['rust-constant']},`).join('\n')}\n    ];\n}\n`;
+  text += `\n#[cfg(test)]\npub(super) fn creates_database_object_for_test(extension: Extension) -> bool {\n    match extension.sql_name() {\n${rows.map((row) => `        ${literal(row['sql-name'])} => ${row.lifecycle['create-extension']},`).join('\n')}\n        _ => false,\n    }\n}\n`;
   const activation = (row: Row) => {
     const sql: string[] = [],
       lifecycle = row.lifecycle,
@@ -834,7 +833,7 @@ function wasixRustModule(rows: Row[]): string {
   };
   return (
     text +
-    `\n#[cfg(test)]\npub(super) fn activation_sql_for_test(extension: Extension) -> &'static [&'static str] {\n    match extension.sql_name() {\n${rows.map((row) => `        ${cfg(row)}\n        ${literal(row['sql-name'])} => ${array(activation(row))},`).join('\n')}\n        _ => &[],\n    }\n}\n`
+    `\n#[cfg(test)]\npub(super) fn activation_sql_for_test(extension: Extension) -> &'static [&'static str] {\n    match extension.sql_name() {\n${rows.map((row) => `        ${literal(row['sql-name'])} => ${array(activation(row))},`).join('\n')}\n        _ => &[],\n    }\n}\n`
   );
 }
 
