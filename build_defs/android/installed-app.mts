@@ -26,7 +26,6 @@ const digest = (file: string) =>
   createHash('sha256')
     .update(readFileSync(realpathSync(file)))
     .digest('hex');
-const shellQuote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 
 export function assertKvmAvailable(device = '/dev/kvm') {
   try {
@@ -112,7 +111,6 @@ export function emulatorArguments(name: string, port: number, sdk: string) {
 /** Retain device diagnostics before the owned emulator and ADB server are stopped. */
 export function captureInstalledAndroidFailure(
   adb: string,
-  serverPort: number,
   serial: string,
   output: string,
   cwd: string,
@@ -124,7 +122,7 @@ export function captureInstalledAndroidFailure(
   ] as const) {
     const file = Bun.file(path.join(output, name));
     try {
-      Bun.spawnSync([adb, '-P', String(serverPort), '-s', serial, ...args], {
+      Bun.spawnSync([adb, '-s', serial, ...args], {
         cwd,
         env,
         stdout: file,
@@ -138,11 +136,12 @@ export function captureInstalledAndroidFailure(
   }
 }
 
-async function unusedPort(port = 0) {
+export async function unusedPort(port = 0) {
   const server = net.createServer();
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen(port, '127.0.0.1', resolve);
+    // ADB's localhost connection can select either family; probe the complete endpoint.
+    server.listen(port, resolve);
   });
   const address = server.address();
   assert(address && typeof address !== 'string');
@@ -244,13 +243,6 @@ export async function runInstalledAndroid(args: string[]) {
       serverPort = await unusedPort(),
       port = await emulatorPort();
     const serial = `127.0.0.1:${port + 1}`;
-    const adbWrapper = path.join(sdk, 'platform-tools/adb');
-    rmSync(adbWrapper);
-    writeFileSync(
-      adbWrapper,
-      `#!/bin/sh\nexec ${shellQuote(adb)} -P ${shellQuote(String(serverPort))} "$@"\n`,
-      { mode: 0o755 },
-    );
     Object.assign(env, {
       HOME: home,
       TMPDIR: path.join(scratch, 'tmp'),
@@ -264,7 +256,7 @@ export async function runInstalledAndroid(args: string[]) {
       ANDROID_EMULATOR_HOME: home,
       ANDROID_AVD_HOME: path.join(home, 'avd'),
       ANDROID_SERIAL: serial,
-      ADB_SERVER_SOCKET: `tcp:127.0.0.1:${serverPort}`,
+      ADB_SERVER_SOCKET: `tcp:localhost:${serverPort}`,
       ANDROID_ADB_SERVER_PORT: String(serverPort),
     });
     const avd = 'oliphaunt-bazel-' + randomUUID();
@@ -297,7 +289,7 @@ export async function runInstalledAndroid(args: string[]) {
         'no\n',
         Math.min(120_000, remaining()),
       );
-      command(adb, ['-P', String(serverPort), 'start-server'], checkout, env);
+      command(adb, ['start-server'], checkout, env);
       const emulatorLog = Bun.file(path.join(output, 'emulator.log'));
       processHandle = Bun.spawn([emulator, ...emulatorArguments(avd, port, sdk)], {
         cwd: scratch,
@@ -311,7 +303,7 @@ export async function runInstalledAndroid(args: string[]) {
           processHandle.exitCode === null,
           'Pinned emulator exited before boot; inspect emulator.log',
         );
-        Bun.spawnSync([adb, '-P', String(serverPort), 'connect', serial], {
+        Bun.spawnSync([adb, 'connect', serial], {
           cwd: scratch,
           env,
           stdout: 'ignore',
@@ -319,17 +311,14 @@ export async function runInstalledAndroid(args: string[]) {
           timeout: Math.min(10_000, remaining()),
           killSignal: 'SIGKILL',
         });
-        const boot = Bun.spawnSync(
-          [adb, '-P', String(serverPort), '-s', serial, 'shell', 'getprop', 'sys.boot_completed'],
-          {
-            cwd: scratch,
-            env,
-            stdout: 'pipe',
-            stderr: 'ignore',
-            timeout: Math.min(10_000, remaining()),
-            killSignal: 'SIGKILL',
-          },
-        );
+        const boot = Bun.spawnSync([adb, '-s', serial, 'shell', 'getprop', 'sys.boot_completed'], {
+          cwd: scratch,
+          env,
+          stdout: 'pipe',
+          stderr: 'ignore',
+          timeout: Math.min(10_000, remaining()),
+          killSignal: 'SIGKILL',
+        });
         if (boot.exitCode === 0 && boot.stdout.toString().trim() === '1') {
           booted = true;
           break;
@@ -339,13 +328,13 @@ export async function runInstalledAndroid(args: string[]) {
       assert(booted, 'Pinned Android emulator failed to boot within the bounded budget');
       const actualAbi = command(
         adb,
-        ['-P', String(serverPort), '-s', serial, 'shell', 'getprop', 'ro.product.cpu.abi'],
+        ['-s', serial, 'shell', 'getprop', 'ro.product.cpu.abi'],
         checkout,
         env,
       );
       const actualApi = command(
         adb,
-        ['-P', String(serverPort), '-s', serial, 'shell', 'getprop', 'ro.build.version.sdk'],
+        ['-s', serial, 'shell', 'getprop', 'ro.build.version.sdk'],
         checkout,
         env,
       );
@@ -435,11 +424,11 @@ export async function runInstalledAndroid(args: string[]) {
         ) + '\n',
       );
     } catch (error) {
-      captureInstalledAndroidFailure(adb, serverPort, serial, output, scratch, env);
+      captureInstalledAndroidFailure(adb, serial, output, scratch, env);
       console.error(`Installed Android failure diagnostics retained in ${output}`);
       throw error;
     } finally {
-      Bun.spawnSync([adb, '-P', String(serverPort), '-s', `emulator-${port}`, 'emu', 'kill'], {
+      Bun.spawnSync([adb, '-s', `emulator-${port}`, 'emu', 'kill'], {
         cwd: scratch,
         env,
         stdout: 'ignore',
@@ -455,7 +444,7 @@ export async function runInstalledAndroid(args: string[]) {
           await processHandle.exited;
         }
       }
-      Bun.spawnSync([adb, '-P', String(serverPort), 'kill-server'], {
+      Bun.spawnSync([adb, 'kill-server'], {
         cwd: scratch,
         env,
         stdout: 'ignore',

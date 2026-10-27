@@ -2,16 +2,18 @@ import { test } from 'bun:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { assertLifecycleReceipt } from '../apple/installed-app.mts';
 import {
   assertInstalledApk,
   assertKvmAvailable,
   captureInstalledAndroidFailure,
   emulatorArguments,
   stageSdkFiles,
+  unusedPort,
 } from './installed-app.mts';
-import { assertLifecycleReceipt } from '../apple/installed-app.mts';
 
 test('installed test binds the exact final signed APK, selected extensions and emulator ABI', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'android-installed-contract-'));
@@ -135,21 +137,44 @@ test('private emulator launch always uses KVM and requires actual lifecycle rece
 });
 
 test.skipIf(process.platform !== 'linux')(
+  'private ADB ports exclude services on either localhost address family',
+  async () => {
+    for (const host of ['127.0.0.1', '::1']) {
+      const occupied = net.createServer();
+      await new Promise<void>((resolve, reject) => {
+        occupied.once('error', reject);
+        occupied.listen({ host, port: 0, ipv6Only: host === '::1' }, resolve);
+      });
+      const address = occupied.address();
+      assert(address && typeof address !== 'string');
+      try {
+        await assert.rejects(unusedPort(address.port), { code: 'EADDRINUSE' });
+        assert.notEqual(await unusedPort(), address.port);
+      } finally {
+        await new Promise<void>((resolve) => occupied.close(() => resolve()));
+      }
+    }
+  },
+);
+
+test.skipIf(process.platform !== 'linux')(
   'failure diagnostics retain bounded Linux device output from a failed adb',
   () => {
     const root = mkdtempSync(path.join(tmpdir(), 'android-installed-failure-'));
     try {
       const adb = path.join(root, 'fixture-adb');
-      writeFileSync(adb, '#!/bin/sh\nprintf "%s\\n" "$*"\nexit 7\n');
+      writeFileSync(adb, '#!/bin/sh\nprintf "%s\\n" "$ADB_SERVER_SOCKET" "$*"\nexit 7\n');
       chmodSync(adb, 0o755);
-      captureInstalledAndroidFailure(adb, 56789, '127.0.0.1:5555', root, root, {});
+      captureInstalledAndroidFailure(adb, '127.0.0.1:5555', root, root, {
+        ADB_SERVER_SOCKET: 'tcp:localhost:56789',
+      });
       assert.equal(
         readFileSync(path.join(root, 'failure-logcat.log'), 'utf8'),
-        '-P 56789 -s 127.0.0.1:5555 logcat -d -v threadtime -t 2000\n',
+        'tcp:localhost:56789\n-s 127.0.0.1:5555 logcat -d -v threadtime -t 2000\n',
       );
       assert.equal(
         readFileSync(path.join(root, 'failure-activity.txt'), 'utf8'),
-        '-P 56789 -s 127.0.0.1:5555 shell dumpsys activity top\n',
+        'tcp:localhost:56789\n-s 127.0.0.1:5555 shell dumpsys activity top\n',
       );
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -160,14 +185,7 @@ test.skipIf(process.platform !== 'linux')(
 test('failure diagnostics retain a missing adb error on every host', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'android-installed-missing-adb-'));
   try {
-    captureInstalledAndroidFailure(
-      path.join(root, 'missing-adb'),
-      56789,
-      'fixture',
-      root,
-      root,
-      {},
-    );
+    captureInstalledAndroidFailure(path.join(root, 'missing-adb'), 'fixture', root, root, {});
     for (const file of ['failure-logcat.log', 'failure-activity.txt'])
       assert(readFileSync(path.join(root, file), 'utf8').includes('ENOENT'));
   } finally {
