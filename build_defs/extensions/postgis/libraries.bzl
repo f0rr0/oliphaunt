@@ -153,7 +153,7 @@ def postgis_libxml2(name, iconv = None, profile = "desktop"):
     _headers(name = name + "_config", profile = profile, kind = "libxml2", root = prefix + "VERSION",
              inputs = [prefix + "config.h.cmake.in", prefix + "include/libxml/xmlversion.h.in"],
              outs = ["config.h", "libxml/xmlversion.h"])
-    _source_headers(name = name + "_headers", root = prefix + "VERSION", headers = [prefix + "headers"], include_dirs = ["include", "."])
+    _source_headers(name = name + "_headers", root = prefix + "VERSION", headers = [prefix + "headers"], include_dirs = ["include"])
     cc_library(name = name,
                srcs = [prefix + stem + ".c" for stem in ["HTMLparser", "HTMLtree", "SAX2", "buf", "c14n", "catalog", "chvalid", "debugXML", "dict", "encoding", "entities", "error", "globals", "hash", "list", "parser", "parserInternals", "pattern", "relaxng", "schematron", "threads", "tree", "uri", "valid", "xinclude", "xlink", "xmlIO", "xmlmemory", "xmlmodule", "xmlreader", "xmlregexp", "xmlsave", "xmlschemas", "xmlschemastypes", "xmlstring", "xmlwriter", "xpath", "xpointer"]],
                hdrs = [prefix + "headers"],

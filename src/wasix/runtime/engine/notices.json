@@ -134,8 +134,10 @@
     {
       "id": "chromium-bsd",
       "name": "Chromium BSD terms referenced by zlib optimizations",
-      "url": "https://raw.githubusercontent.com/chromium/chromium/f0a564a4cb20ba0d90c4872929ddb6f01ab7cbbc/LICENSE",
-      "sha256": "368cca1106be99d39ecd32a38d8305585d802a475effb66380b91ffc9bcf709b"
+      "url": "https://chromium.googlesource.com/chromium/src/+/f0a564a4cb20ba0d90c4872929ddb6f01ab7cbbc/LICENSE?format=TEXT",
+      "sha256": "363eddfec00830d4826f38173bd40a17eeada40a947a8d93b935371a1ae5a6d1",
+      "encoding": "gitiles-base64",
+      "text_sha256": "368cca1106be99d39ecd32a38d8305585d802a475effb66380b91ffc9bcf709b"
     },
     {
       "id": "wasmer",

@@ -28,7 +28,15 @@ def _impl(ctx):
     definition_inputs = {file.path: True for file in parsers[0].inputs.to_list()}
     for library in ctx.attr.static_libraries:
         if library.label.name in ["libxml2", ctx.attr.dll_name[:-4] + "_objects"]:
-            asserts.true(env, "LIBXML_STATIC" in library[CcInfo].compilation_context.defines.to_list(), "libxml2 static mode must reach its owner and real module consumer: " + str(library.label))
+            compilation = library[CcInfo].compilation_context
+            asserts.true(env, "LIBXML_STATIC" in compilation.defines.to_list(), "libxml2 static mode must reach its owner and real module consumer: " + str(library.label))
+            private_headers = [file for file in compilation.headers.to_list() if file.basename == "libxml.h"]
+            asserts.equals(env, 1, len(private_headers), "libxml2 must retain its declared private headers")
+            if len(private_headers) == 1:
+                source_root = private_headers[0].dirname
+                angle_includes = compilation.includes.to_list() + compilation.system_includes.to_list() + compilation.external_includes.to_list()
+                asserts.true(env, source_root + "/include" in angle_includes, "libxml2 public API must remain available to its owner and module consumer")
+                asserts.false(env, any([directory in [source_root, source_root + "/."] for directory in angle_includes]), "libxml2 private source root must not shadow standard C++ headers on Windows")
         own_objects = [file for entry in library[CcInfo].linking_context.linker_inputs.to_list() if entry.owner == library.label for file in _objects(entry)]
         asserts.true(env, len(own_objects) > 0, "static module fixture must contribute actual compiled objects: " + str(library.label))
         for file in own_objects:

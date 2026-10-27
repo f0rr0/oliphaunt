@@ -66,7 +66,7 @@ def wasix_postgis_libxml2(name):
     _pin("libxml2", "96498992efa48d52b0e8b83058bd88dbdaf153c1")
     prefix = "@postgis_libxml2//:"
     wasix_dependency_headers(name = name + "_config", kind = "libxml2", root = prefix + "VERSION", inputs = [prefix + "config.h.cmake.in", prefix + "include/libxml/xmlversion.h.in"], outs = ["config.h", "libxml/xmlversion.h"])
-    postgis_source_headers(name = name + "_headers", root = prefix + "VERSION", headers = [prefix + "headers"], include_dirs = ["include", "."])
+    postgis_source_headers(name = name + "_headers", root = prefix + "VERSION", headers = [prefix + "headers"], include_dirs = ["include"])
     cc_library(name = name, srcs = [prefix + stem + ".c" for stem in _XML], hdrs = [prefix + "headers"], deps = [":" + name + "_config", ":" + name + "_headers"], defines = ["HAVE_STRINGS_H", "HAVE_UNISTD_H"], copts = _C, linkstatic = True, target_compatible_with = WASIX_DEPENDENCY_COMPATIBLE)
 
 def wasix_postgis_iconv(name):
