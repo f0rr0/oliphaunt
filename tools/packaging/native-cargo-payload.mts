@@ -38,11 +38,6 @@ const PREFIX = 'native-cargo-payload.mts';
 const PRODUCT = 'liboliphaunt-native';
 const CRATES_IO_MAX_BYTES = 10 * 1024 * 1024;
 const DEFAULT_PART_BYTES = 64 * 1024 * 1024;
-export const NATIVE_CARGO_CARRIER_LICENSES = Object.freeze({
-  'native-runtime': releaseProfilePackageLicense('native-runtime').spdx,
-  'native-tools': releaseProfilePackageLicense('native-tools').spdx,
-  'code-facade': releaseProfilePackageLicense('code-facade').spdx,
-});
 
 const AGGREGATOR_BUILD_RS = String.raw`use std::collections::BTreeMap;
 use std::env;
@@ -430,7 +425,7 @@ description = "Cargo artifact crate for the ${target.target} ${artifactLabel}."
 readme = "README.md"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
-license = "${NATIVE_CARGO_CARRIER_LICENSES['code-facade']}"
+license = "${releaseProfilePackageLicense('code-facade', { sourceRoot: noticeSourceRoot }).spdx}"
 links = "${links}"
 build = "build.rs"
 include = ${cargoIncludeMembers('code-facade', ['Cargo.toml', 'README.md', 'build.rs', 'src/**'], noticeSourceRoot)}

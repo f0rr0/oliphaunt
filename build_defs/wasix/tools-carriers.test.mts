@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { zstdCompressSync, zstdDecompressSync } from 'node:zlib';
@@ -185,6 +185,59 @@ async function archive(file: string) {
   const files = [...entries.keys()].filter((name) => !name.endsWith('/')).sort();
   return { files, read };
 }
+
+test('tools CLI packages from its isolated module tree with legal sources supplied only by the spec', async () => {
+  const { root, spec } = await fixture();
+  await packageToolsCarriers(spec);
+  const expected = await Promise.all(Object.values(spec.outputs).map((file) => readFile(file)));
+  await Promise.all(Object.values(spec.outputs).map((file) => rm(file)));
+  const sourceRoot = path.resolve(import.meta.dir, '../..');
+  const moduleRoot = path.join(root, 'modules');
+  const entry = 'build_defs/wasix/tools-carriers.mts';
+  const copied = new Set<string>();
+  const scanner = new Bun.Transpiler({ loader: 'ts' });
+  // Resolve from this test's declared helper tree, copying code without ambient data files.
+  async function copyModule(file: string) {
+    if (copied.has(file)) return;
+    copied.add(file);
+    const relative = path.relative(sourceRoot, file);
+    expect(path.isAbsolute(relative) || relative.startsWith('..')).toBe(false);
+    const output = path.join(moduleRoot, relative);
+    await mkdir(path.dirname(output), { recursive: true });
+    await copyFile(file, output);
+    const source = (await readFile(file, 'utf8')).replace(/^#![^\n]*\n/u, '');
+    for (const imported of scanner.scanImports(source)) {
+      if (imported.path.startsWith('.'))
+        await copyModule(path.resolve(path.dirname(file), imported.path));
+    }
+  }
+  await copyModule(path.join(sourceRoot, entry));
+  for (const component of ['postgres', 'icu'])
+    expect(
+      await Bun.file(path.join(moduleRoot, 'src/third-party', component, 'source.toml')).exists(),
+    ).toBe(false);
+  const specFile = path.join(root, 'spec.json');
+  const payloadFiles = path.join(root, 'payload-files.txt');
+  await writeFile(specFile, JSON.stringify(spec));
+  await writeFile(payloadFiles, `${spec.payloadFiles.join('\n')}\n`);
+  const result = Bun.spawnSync(
+    [
+      process.execPath,
+      '--no-install',
+      '--no-env-file',
+      path.join(moduleRoot, entry),
+      '--spec',
+      specFile,
+      '--payload-files',
+      payloadFiles,
+    ],
+    { cwd: moduleRoot, stdout: 'pipe', stderr: 'pipe' },
+  );
+  if (result.exitCode !== 0) throw new Error(result.stderr.toString());
+  expect(await Promise.all(Object.values(spec.outputs).map((file) => readFile(file)))).toEqual(
+    expected,
+  );
+});
 
 for (const target of ['portable', ...Object.keys(platforms)] as Target[]) {
   test(`final ${target} tools archives preserve the exact payload, identities, local Cargo sources and notices`, async () => {
