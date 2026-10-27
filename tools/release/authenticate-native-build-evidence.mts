@@ -99,7 +99,8 @@ const scopedExecutionAssumptions = [
   'the reviewed coordinator retained each native action graph from its producing build or corresponding scoped analysis in the same immutable producer window',
 ];
 
-/** Shape validation does not authenticate JSON; its public use requires the signed metadata origin. */
+/** Frozen assurance shape; current job roles are enforced during issuance.
+ * Public use requires the signed metadata origin. */
 export function validateReviewedNativeProducerAssurance(
   value: any,
   expected: {
@@ -138,7 +139,8 @@ export function validateReviewedNativeProducerAssurance(
     value.github.repository !== 'f0rr0/oliphaunt' ||
     value.github.workflow !== 'Native Bazel qualification' ||
     value.github.workflowPath !== '.github/workflows/bazel.yml' ||
-    !isReviewedProducerArtifact(value.github.job, value.artifact?.name) ||
+    typeof value.artifact?.name !== 'string' ||
+    !/^[A-Za-z0-9_.-]+$/u.test(value.artifact.name) ||
     value.shippingAnalysis !== 'bound' ||
     value.testQualification !== 'passed' ||
     !Array.isArray(value.requiredTests) ||

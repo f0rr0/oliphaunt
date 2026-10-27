@@ -592,14 +592,23 @@ test('measured native metadata bound preserves the default receipt limit and imm
   });
 });
 
-test('public baseline joins completed source and signed public bytes without an expiring Actions read', async () => {
+test('public baseline preserves historical producer roles in authenticated completed metadata', async () => {
   await fixture(
     async ({ input, transports, directory, requests }) => {
-      const [artifact] = await writePreparedNativePublicationMetadata(
+      const [sealed] = await writePreparedNativePublicationMetadata(
         path.join(directory, 'sealed'),
         { ...preparation(input), reviewedSource: source },
         transports,
       );
+      const historical = JSON.parse(readFileSync(sealed.path, 'utf8'));
+      const build = historical.builds[0];
+      for (const record of [build, build.producerAssurance]) {
+        record.github.job = 'Portable packages (macos-arm64)';
+        record.artifact.name = 'native-build-evidence-mobile-ios';
+      }
+      const bytes = Buffer.from(JSON.stringify(historical));
+      writeFileSync(sealed.path, bytes);
+      const artifact = { ...sealed, sha256: hash(bytes), size: bytes.length };
       requests.length = 0;
       const publication = {
         product: 'alpha',
@@ -666,6 +675,7 @@ test('public baseline joins completed source and signed public bytes without an 
       expect(signatures).toBe(1);
       expect(result.metadata.builds[0].artifact.id).toBe(101);
       expect(result.metadata.builds[0].producerAssurance.ref).toBe('refs/heads/main');
+      expect(result.metadata).toEqual(historical);
       expect(result.publicOrigin.sha256).toBe(artifact.sha256);
       expect(result.baselineAdmission).toBe('unknown');
       expect(() => assertAuthenticatedNativePublicBaseline(result)).toThrow(

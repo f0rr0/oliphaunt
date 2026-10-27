@@ -357,9 +357,16 @@ test('Apple package evidence retains its artifact role only under the independen
     'Portable packages (macos-arm64)',
     'native-build-evidence-mobile-ios',
   );
-  await expect(assureReviewedNativeBuildProducer('synthetic', old.request, old)).rejects.toThrow(
-    'job/artifact role is not canonical',
-  );
+  let acquisitions = 0;
+  await expect(
+    assureReviewedNativeBuildProducer('synthetic', old.request, {
+      authenticate: async () => {
+        acquisitions++;
+        return old.origin;
+      },
+    }),
+  ).rejects.toThrow('job/artifact role is not canonical');
+  expect(acquisitions).toBe(0);
 });
 
 test('reviewed execution assumptions retain immutable dump readback and describe scoped capture honestly', async () => {
@@ -544,16 +551,25 @@ test('reviewed producer rejects unreviewed sources, PR origins and noncanonical 
   }
 });
 
-test('retained assurance rejects unknown jobs even when the artifact name is absent', async () => {
+test('retained assurance requires a canonical string artifact name', async () => {
   const f = syntheticReviewedProducer();
   const { assurance } = await assureReviewedNativeBuildProducer('synthetic', f.request, f);
   expect(
     validateReviewedNativeProducerAssurance(assurance, { source: f.request.reviewedSource }),
   ).toBe(assurance);
-  for (const job of ['Unreviewed builder', expected.github.job]) {
+  for (const name of [
+    undefined,
+    null,
+    123,
+    ['native-build-evidence-x86_64'],
+    '',
+    'with space',
+    '../artifact',
+    'foo/bar',
+    'foo\\bar',
+  ]) {
     const malformed = structuredClone(assurance);
-    malformed.github.job = job;
-    Reflect.deleteProperty(malformed.artifact, 'name');
+    malformed.artifact.name = name;
     expect(() =>
       validateReviewedNativeProducerAssurance(malformed, {
         source: f.request.reviewedSource,
