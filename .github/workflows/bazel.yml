@@ -621,6 +621,43 @@ jobs:
           bazel_binary="${XDG_CACHE_HOME:-$HOME/.cache}/oliphaunt/bazel/$bazel_version/bazel-$bazel_version-linux-x86_64"
           bash tools/dev/bun.sh build_defs/host/sdk-tree-conformance.mts "$bazel_binary"
 
+      - &ci_request_receipts
+        name: Upload completed source request receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-ci-requests-${{ github.job }}-${{ env.CI_PLATFORM || 'single' }}
+          path: ${{ runner.temp }}/ci-requests/**/ci-request.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Preserve final native Bazel command output
+        if: ${{ always() && (matrix.platform == 'macos-arm64' || matrix.platform == 'windows-x64') }}
+        continue-on-error: true
+        run: |
+          case "$RUNNER_OS" in
+            macOS) qualifier_output_base="$RUNNER_TEMP/native-bazel" ;;
+            Windows) qualifier_output_base="$RUNNER_TEMP/b" ;;
+            *) exit 0 ;;
+          esac
+          if [[ -f "$qualifier_output_base/command.log" ]]; then
+            mkdir -p "$RUNNER_TEMP/native-bazel-diagnostics"
+            cp "$qualifier_output_base/command.log" "$RUNNER_TEMP/native-bazel-diagnostics/qualification-command.log"
+          fi
+
+      - name: Save bounded standard Bazel caches
+        if: ${{ always() }}
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: ./.github/actions/bazel-cache
+        with:
+          phase: save
+          cohort: portable
+          disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
+          output-base: ${{ matrix.platform == 'windows-x64' && format('{0}/b', runner.temp) || matrix.platform == 'macos-arm64' && format('{0}/native-bazel', runner.temp) || '' }}
+          jvm-args: ${{ matrix.platform == 'macos-arm64' && '-Xmx3g' || '' }}
+          server-log: ${{ matrix.platform == 'macos-arm64' && format('{0}/native-bazel-diagnostics/server-jvm.out', runner.temp) || '' }}
+
       - name: Upload macOS Bazel diagnostics
         if: ${{ always() && matrix.platform == 'macos-arm64' }}
         timeout-minutes: 5
@@ -648,34 +685,12 @@ jobs:
         with:
           name: native-bazel-windows-test-diagnostics
           path: |
+            ${{ runner.temp }}/native-bazel-diagnostics/qualification-command.log
             ${{ runner.temp }}/b/command.log
             ${{ runner.temp }}/b/execroot/_main/bazel-out/**/testlogs/**/test.log
             ${{ runner.temp }}/b/execroot/_main/bazel-out/**/testlogs/**/test.xml
           if-no-files-found: ignore
           retention-days: 5
-
-      - &ci_request_receipts
-        name: Upload completed source request receipts
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: native-ci-requests-${{ github.job }}-${{ env.CI_PLATFORM || 'single' }}
-          path: ${{ runner.temp }}/ci-requests/**/ci-request.json
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Save bounded standard Bazel caches
-        if: ${{ always() }}
-        continue-on-error: true
-        timeout-minutes: 10
-        uses: ./.github/actions/bazel-cache
-        with:
-          phase: save
-          cohort: portable
-          disk-cache-hit: ${{ steps.bazel-cache.outputs.disk-cache-hit }}
-          output-base: ${{ matrix.platform == 'windows-x64' && format('{0}/b', runner.temp) || matrix.platform == 'macos-arm64' && format('{0}/native-bazel', runner.temp) || '' }}
-          jvm-args: ${{ matrix.platform == 'macos-arm64' && '-Xmx3g' || '' }}
-          server-log: ${{ matrix.platform == 'macos-arm64' && format('{0}/native-bazel-diagnostics/server-jvm.out', runner.temp) || '' }}
 
   linux:
     name: Linux runtime (${{ matrix.platform }})

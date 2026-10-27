@@ -1020,10 +1020,22 @@ exit "\${AUDIT_STATUS:-0}"
   });
 });
 
-test('macOS retains failed qualification reports before cache cleanup', () => {
+test('portable saves its checkpoint before optional diagnostics and preserves qualification output', () => {
   const job = jobs.portable;
   const diagnostics = job.steps.find((step: any) => step.name === 'Upload macOS Bazel diagnostics');
   const cache = job.steps.find((step: any) => step.name === 'Save bounded standard Bazel caches');
+  const conformance = job.steps.find(
+    (step: any) => step.name === 'Exercise cold, incremental and coverage scenarios',
+  );
+  const receipts = job.steps.find(
+    (step: any) => step.name === 'Upload completed source request receipts',
+  );
+  const snapshot = job.steps.find(
+    (step: any) => step.name === 'Preserve final native Bazel command output',
+  );
+  const windows = job.steps.find(
+    (step: any) => step.name === 'Upload failed Windows native test diagnostics',
+  );
   assert.ok(diagnostics.if.includes('always()'));
   assert.ok(diagnostics.if.includes("matrix.platform == 'macos-arm64'"));
   for (const id of ['apple_qualification', 'native_qualification']) {
@@ -1043,7 +1055,47 @@ test('macOS retains failed qualification reports before cache cleanup', () => {
     );
   assert.equal(diagnostics.with['if-no-files-found'], 'ignore');
   assert.equal(diagnostics['timeout-minutes'], 5);
-  assert.ok(job.steps.indexOf(diagnostics) < job.steps.indexOf(cache));
+  for (const [before, after] of [
+    [conformance, receipts],
+    [receipts, snapshot],
+    [snapshot, cache],
+    [cache, diagnostics],
+    [cache, windows],
+  ]) {
+    assert.ok(before && after, 'portable cleanup needs its declared producer and transport steps');
+    assert.ok(job.steps.indexOf(before) < job.steps.indexOf(after));
+  }
+  assert.ok(snapshot.if.includes('always()'));
+  assert.ok(snapshot.if.includes("matrix.platform == 'macos-arm64'"));
+  assert.ok(snapshot.if.includes("matrix.platform == 'windows-x64'"));
+  assert.equal(snapshot['continue-on-error'], true);
+  assert.ok(windows.with.path.includes('/native-bazel-diagnostics/qualification-command.log'));
+  for (const [os, base, present] of [
+    ['macOS', 'native-bazel', true],
+    ['Windows', 'b', true],
+    ['macOS', 'native-bazel', false],
+  ] as const) {
+    const directory = mkdtempSync(path.join(tmpdir(), 'native-command-snapshot-'));
+    try {
+      const command = path.join(directory, base, 'command.log');
+      if (present) {
+        mkdirSync(path.dirname(command), { recursive: true });
+        writeFileSync(command, 'original qualification output\n');
+      }
+      const result = spawnSync('bash', ['-eu', '-c', snapshot.run], {
+        env: { ...process.env, RUNNER_OS: os, RUNNER_TEMP: directory },
+        encoding: 'utf8',
+      });
+      assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      const preserved = path.join(directory, 'native-bazel-diagnostics/qualification-command.log');
+      if (present) {
+        writeFileSync(command, 'later cache collection command\n');
+        assert.equal(readFileSync(preserved, 'utf8'), 'original qualification output\n');
+      } else assert.equal(existsSync(preserved), false);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
 });
 
 test('React Native qualification retains diagnostics within its job budget', () => {
