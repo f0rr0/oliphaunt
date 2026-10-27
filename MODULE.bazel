@@ -62,6 +62,7 @@ single_version_override(
         "//build_defs/wasix/postmaster:crate-monorepo-source.patch",
         "//build_defs/host:rules-rust-declared-archiver.patch",
         "//build_defs/host:rules-rust-windows-dependency-paths.patch",
+        "//build_defs/host:rules-rust-msvc-stdlib.patch",
     ],
     patch_strip = 1,
 )

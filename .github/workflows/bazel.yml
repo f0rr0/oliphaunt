@@ -347,6 +347,8 @@ jobs:
           if [[ "$TARGET_PLATFORM" == linux-x64 ]]; then
             host_tests+=(
               //build_defs/host:rust_dependency_paths_tests
+              @rules_rust//test/unit/windows_stdlib:stdlib_linkflags_windows_test
+              @rules_rust//test/unit/windows_stdlib:build_for_rust_toolchain_windows_flags_test
               //tools/ci:source_checks
               //tools/dev:source_checks
               //:packaging_contract_test
