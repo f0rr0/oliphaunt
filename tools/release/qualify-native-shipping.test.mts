@@ -414,10 +414,16 @@ process.exit(result.status??1);
     `import {appendFileSync,existsSync,mkdirSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
+import assert from 'node:assert/strict';
 const state=JSON.parse(readFileSync(${JSON.stringify(stateFile)},'utf8'));
 const invocation=process.argv.slice(2);
 appendFileSync(${JSON.stringify(callsFile)},JSON.stringify(invocation)+'\\n');
 const args=invocation.slice(invocation.findIndex((arg:string)=>['test','build','cquery','query','aquery','info'].includes(arg)));
+if(state.mode==='source-environment') {
+  const git=(ref:string)=>execFileSync('git',['rev-parse',ref],{encoding:'utf8'}).trim();
+  const commit=git('HEAD^{commit}');
+  assert.deepEqual(JSON.parse(process.env.OLIPHAUNT_GIT_SOURCE_JSON??'{}'),{ref:'HEAD',commit,tree:git('HEAD^{tree}'),checkout:commit},'every Bazel command requires the current source snapshot');
+}
 if(state.commandLock && args[0]!=='test' && existsSync(state.commandLock)) throw Error('previous Bazel command still owns the lock');
 const profile=args.find((arg:string)=>arg.startsWith('--profile='));
 if(profile) writeFileSync(profile.slice(10),'fixture profile');
@@ -1472,9 +1478,21 @@ test('one exact serialized qualification replaces the raw and parent replay with
   }
 });
 
-test('the existing CLI accepts omitted additional targets and still runs owner policy', () => {
-  const f = fixture();
+test.each([
+  'absent',
+  'stale',
+])('the existing CLI binds every Bazel source with %s inherited identity and omitted additional targets', (identity) => {
+  const f = fixture('source-environment');
   try {
+    const env = { ...process.env };
+    delete env.OLIPHAUNT_GIT_SOURCE_JSON;
+    if (identity === 'stale')
+      env.OLIPHAUNT_GIT_SOURCE_JSON = JSON.stringify({
+        ref: 'HEAD',
+        commit: 'f'.repeat(40),
+        tree: 'e'.repeat(40),
+        checkout: 'f'.repeat(40),
+      });
     const input = path.dirname(f.outputDirectory);
     const github = path.join(input, 'github.json');
     const configuration = path.join(input, 'configuration.json');
@@ -1493,11 +1511,14 @@ test('the existing CLI accepts omitted additional targets and still runs owner p
         '--output-directory',
         f.outputDirectory,
       ],
-      { cwd: f.workspace, stdio: 'pipe' },
+      { cwd: f.workspace, env, stdio: 'pipe' },
     );
     expect(f.calls().find((call) => call[0] === 'test')).toContain('//fixture:mandatory_test');
     expect(existsSync(path.join(f.outputDirectory, 'evidence/native-build-evidence.json'))).toBe(
       true,
+    );
+    expect(new Set(f.calls().map((call) => call[0]))).toEqual(
+      new Set(['cquery', 'test', 'aquery', 'info', 'query']),
     );
   } finally {
     f.cleanup();

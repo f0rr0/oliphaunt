@@ -370,8 +370,15 @@ async function qualifyOwnedNativeShipping(
       finish();
     }
   };
+  const bazelCommand = [
+    'tools/release/with-source.sh',
+    'HEAD',
+    'bash',
+    'tools/dev/bazel.sh',
+    ...startup,
+  ];
   const bazel = (args: string[], stdout?: string) =>
-    run(args[0], 'bash', ['tools/dev/bazel.sh', ...startup, ...args], stdout, commands.spawnBazel);
+    run(args[0], 'bash', [...bazelCommand, ...args], stdout, commands.spawnBazel);
   const captureQueryDiagnostics = async () => {
     try {
       const base = startup.find((arg) => arg.startsWith('--output_base='))?.slice(14);
@@ -430,7 +437,7 @@ async function qualifyOwnedNativeShipping(
     const finish = phase('aquery');
     try {
       await new Promise<void>((resolve, reject) => {
-        const child = commands.spawnBazel('bash', ['tools/dev/bazel.sh', ...startup, ...args], {
+        const child = commands.spawnBazel('bash', [...bazelCommand, ...args], {
           cwd: workspace,
           stdio: ['ignore', 'inherit', 'inherit'],
         });
