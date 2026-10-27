@@ -82,7 +82,7 @@ def _sdk_directory(value):
 def _smoke_impl(ctx):
     compiler = find_cc_toolchain(ctx)
     features = cc_common.configure_features(ctx = ctx, cc_toolchain = compiler, requested_features = ["static_link_msvcrt"], unsupported_features = [])
-    environment = cc_common.get_environment_variables(feature_configuration = features, action_name = ACTION_NAMES.c_compile, variables = cc_common.create_compile_variables(cc_toolchain = compiler, feature_configuration = features))
+    environment = dict(cc_common.get_environment_variables(feature_configuration = features, action_name = ACTION_NAMES.c_compile, variables = cc_common.create_compile_variables(cc_toolchain = compiler, feature_configuration = features)))
     environment.update(cc_common.get_environment_variables(feature_configuration = features, action_name = ACTION_NAMES.cpp_link_dynamic_library, variables = cc_common.create_link_variables(cc_toolchain = compiler, feature_configuration = features, output_file = "relinked.dll", is_linking_dynamic_library = True)))
     llvm = ctx.files.llvm
     clang = [file for file in llvm if file.basename.lower() == "clang-cl.exe"]
