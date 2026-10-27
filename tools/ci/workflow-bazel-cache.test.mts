@@ -426,24 +426,32 @@ test('measured cohorts retain their observed cache population within a bounded a
     { RUNNER_OS: 'Linux', RUNNER_ARCH: 'X64', COHORT: 'portable' },
     { RUNNER_OS: 'Linux', RUNNER_ARCH: 'X64', COHORT: 'linux' },
   ]) {
+    const linuxX64 = cohort.RUNNER_OS === 'Linux' && cohort.COHORT === 'linux';
+    const limit = linuxX64 ? 8388608 : 5242880;
+    const overLimit = String(limit + 1);
     for (const scenario of [
-      { name: '3.6 GiB allocated snapshot', disk: '3774874', gc: false, saved: true },
-      { name: 'allocated boundary', disk: '5242880', gc: false, saved: true },
+      {
+        name: 'working set with allocation headroom',
+        disk: linuxX64 ? '7340032' : '3774874',
+        gc: false,
+        saved: true,
+      },
+      { name: 'allocated boundary', disk: String(limit), gc: false, saved: true },
       {
         name: 'completed collection',
-        disk: '5242881',
+        disk: overLimit,
         gc: true,
-        collected: '4404019',
+        collected: linuxX64 ? '7549747' : '4404019',
         saved: true,
       },
       {
         name: 'allocated overage after collection',
-        disk: '5242881',
+        disk: overLimit,
         gc: true,
-        collected: '5242881',
+        collected: overLimit,
         saved: false,
       },
-      { name: 'failed collection', disk: '5242881', gc: true, status: '1', saved: false },
+      { name: 'failed collection', disk: overLimit, gc: true, status: '1', saved: false },
     ]) {
       fixture((directory, env) => {
         const label = `${cohort.COHORT} ${cohort.RUNNER_OS} ${scenario.name}`;
@@ -469,7 +477,7 @@ test('measured cohorts retain their observed cache population within a bounded a
           assert.ok(commands.startsWith('shutdown\nbuild\ncquery\nshutdown\ngc begin\n'), label);
           assert.equal(
             readFileSync(env.GC_ARGS, 'utf8').trim().split('\n').at(-1),
-            '--max_size=4G',
+            linuxX64 ? '--max_size=7G' : '--max_size=4G',
           );
         } else {
           assert.equal(commands, 'shutdown\n', label);
