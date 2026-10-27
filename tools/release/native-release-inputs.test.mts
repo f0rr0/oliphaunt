@@ -50,6 +50,7 @@ import { discoverPublicationArtifacts, expectedProductArtifactRows } from './pub
 import {
   isNativeCurrentCargoRoot,
   isNativeCurrentGithubRoot,
+  readNativeCurrentCargoFamily,
 } from './qualified-native-extension-final-inputs.mts';
 import { loadProducts } from './release-graph.mts';
 
@@ -1493,6 +1494,197 @@ test('canonical WASIX core and contrib Cargo roots survive a shared extension co
   const extensionRoot = cargoRoot(extensionCarrier!);
   expect(isNativeCurrentCargoRoot(extensionRoot, metadata, new Set())).toBe(true);
   expect(isNativeCurrentCargoRoot(extensionRoot, metadata, extensionConstructors)).toBe(false);
+});
+
+function currentCargoFamilyFixture(parentName: string, parts = [1, 2], siblingTree = false) {
+  const root = mkdtempSync(path.join(tmpdir(), 'current-cargo-family-'));
+  const catalog = loadPublicationCatalog('current Cargo family fixture');
+  const parent = catalog.carriers.find(
+    (row) => row.ecosystem === 'cargo' && row.name === parentName,
+  );
+  if (!parent) throw new Error(`missing canonical fixture carrier ${parentName}`);
+  const pkg = { product: parent.product, version: parent.version, name: parent.name };
+  const files: { path: string; member?: string }[] = [];
+  const crate = (name: string, version = pkg.version, dependencies: string[] = []) => {
+    const member = `${name}-${version}.crate`;
+    const directory =
+      siblingTree && name !== pkg.name
+        ? path.join(root, 'cargo-parts', pkg.name)
+        : path.join(root, 'cargo-packages');
+    mkdirSync(directory, { recursive: true });
+    const file = path.join(directory, member);
+    writeFileSync(
+      file,
+      tarArchive([
+        {
+          name: `${name}-${version}/Cargo.toml`,
+          data:
+            `[package]\nname=${JSON.stringify(name)}\nversion=${JSON.stringify(version)}\n` +
+            (dependencies.length
+              ? '[build-dependencies]\n' +
+                dependencies
+                  .map((dependency) => `${JSON.stringify(dependency)}="=${version}"\n`)
+                  .join('')
+              : ''),
+        },
+      ]),
+    );
+    const record = { path: file, ...(siblingTree && name === pkg.name ? {} : { member }) };
+    files.push(record);
+    return record;
+  };
+  const names = parts.map((part) => `${pkg.name}-part-${String(part).padStart(3, '0')}`);
+  crate(pkg.name, pkg.version, names);
+  for (const name of names) crate(name);
+  const indexed = () => {
+    const companions: typeof files = [];
+    const index = path.join(root, 'cargo-packages/packages.json');
+    const document = {
+      schema: 'oliphaunt-liboliphaunt-cargo-artifacts-v1',
+      product: pkg.product,
+      packages: files.map((file, position) => {
+        const name = position === 0 ? pkg.name : names[position - 1];
+        const member = `manifests/${name}/Cargo.toml`;
+        const manifest = path.join(root, 'cargo-packages', member);
+        mkdirSync(path.dirname(manifest), { recursive: true });
+        writeFileSync(manifest, `[package]\nname="${name}"\nversion="${pkg.version}"\n`);
+        companions.push({ path: manifest, member });
+        return {
+          name,
+          role: position === 0 ? 'aggregator' : 'part',
+          cratePath: file.path,
+          manifestPath: manifest,
+        };
+      }),
+    };
+    writeFileSync(index, JSON.stringify(document));
+    files.push(...companions, { path: index, member: 'packages.json' });
+    return { index, document };
+  };
+  return {
+    root,
+    catalog,
+    pkg,
+    files,
+    crate,
+    indexed,
+    read: () => readNativeCurrentCargoFamily(pkg, files, catalog),
+    cleanup: () => rmSync(root, { recursive: true, force: true }),
+  };
+}
+
+for (const [label, parent, parts, siblingTree] of [
+  ['core singleton Tree', 'liboliphaunt-wasix-portable', [], false],
+  ['core multipart Tree', 'liboliphaunt-wasix-aot-x86_64-pc-windows-msvc', [1, 2], false],
+  [
+    'contrib parent File and sibling parts Tree',
+    'oliphaunt-extension-contrib-pg18-wasix',
+    [1, 2],
+    true,
+  ],
+] as const)
+  test(`current Cargo collector accepts ${label} from actual packed manifests without an inventory`, () => {
+    const f = currentCargoFamilyFixture(parent, [...parts], siblingTree);
+    try {
+      const rows = f.read();
+      expect(rows.filter((row) => row.declared).map((row) => row.name)).toEqual([parent]);
+      expect(rows.filter((row) => !row.declared)).toHaveLength(parts.length);
+      expect(rows.map((row) => row.file)).toEqual(f.files);
+    } finally {
+      f.cleanup();
+    }
+  });
+
+test('current Cargo collector preserves indexed native families and their conventional companion manifests', () => {
+  const f = currentCargoFamilyFixture('liboliphaunt-native-linux-x64-gnu');
+  try {
+    const { index } = f.indexed();
+    expect(f.read()).toHaveLength(3);
+    f.files.splice(
+      f.files.findIndex((file) => file.path === index),
+      1,
+    );
+    expect(f.read).toThrow('index-free Cargo family must contain only package archives');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('current Cargo collector rejects corrupt, incomplete, duplicate and mismatched inventories', () => {
+  const f = currentCargoFamilyFixture('liboliphaunt-native-linux-x64-gnu');
+  try {
+    const { index, document } = f.indexed();
+    for (const mutate of [
+      (value: typeof document) => {
+        value.schema = 'unknown';
+      },
+      (value: typeof document) => {
+        value.packages.pop();
+      },
+      (value: typeof document) => {
+        value.packages.push({ ...value.packages[0], cratePath: 'extra.crate' });
+      },
+      (value: typeof document) => {
+        value.packages[0].name = 'foreign';
+      },
+      (value: typeof document) => {
+        value.packages[0].role = 'part';
+      },
+    ]) {
+      const changed = structuredClone(document);
+      mutate(changed);
+      writeFileSync(index, JSON.stringify(changed));
+      expect(f.read).toThrow();
+    }
+    writeFileSync(index, 'invalid JSON');
+    expect(f.read).toThrow();
+    writeFileSync(index, JSON.stringify(document));
+    f.files.push({ path: index, member: 'packages.json' });
+    expect(f.read).toThrow('original package inventory');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('current Cargo collector validates every unindexed parent and part against its canonical family', () => {
+  for (const mutate of [
+    (f: ReturnType<typeof currentCargoFamilyFixture>) => {
+      f.files.shift();
+    },
+    (f: ReturnType<typeof currentCargoFamilyFixture>) => {
+      f.files.pop();
+    },
+    (f: ReturnType<typeof currentCargoFamilyFixture>) => {
+      f.files.push(f.files[1]);
+    },
+    (f: ReturnType<typeof currentCargoFamilyFixture>) => {
+      f.crate('liboliphaunt-wasix-portable');
+    },
+    (f: ReturnType<typeof currentCargoFamilyFixture>) => {
+      f.crate('liboliphaunt-native-linux-x64-gnu');
+    },
+    (f: ReturnType<typeof currentCargoFamilyFixture>) => {
+      f.files.splice(1, 1);
+      f.crate(`${f.pkg.name}-part-001`, '99.0.0');
+    },
+    (f: ReturnType<typeof currentCargoFamilyFixture>) => {
+      f.files.push({ path: path.join(f.root, 'undeclared.txt'), member: 'undeclared.txt' });
+    },
+  ]) {
+    const f = currentCargoFamilyFixture('liboliphaunt-wasix-aot-x86_64-pc-windows-msvc');
+    try {
+      mutate(f);
+      expect(f.read).toThrow();
+    } finally {
+      f.cleanup();
+    }
+  }
+  const f = currentCargoFamilyFixture('liboliphaunt-wasix-aot-x86_64-pc-windows-msvc', [1, 3]);
+  try {
+    expect(f.read).toThrow('contiguous');
+  } finally {
+    f.cleanup();
+  }
 });
 
 test('current GitHub construction covers every canonical product asset and rejects other identities', () => {

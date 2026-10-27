@@ -112,6 +112,65 @@ export function isNativeCurrentGithubRoot(
   );
 }
 
+/** Read packed family identities; the caller retains original File authentication and provenance. */
+export function readNativeCurrentCargoFamily<File extends { path: string; member?: string }>(
+  pkg: { product: string; version: string; name: string },
+  files: File[],
+  catalog: { carriers: any[] },
+) {
+  const crates = files.filter((file) => file.path.endsWith('.crate'));
+  assert.ok(crates.length, 'current Cargo carrier lacks its original package Files');
+  const index = files.filter((file) => path.basename(file.path) === 'packages.json');
+  let indexed: Record<string, any>[] | undefined;
+  if (index.length) {
+    assert.equal(index.length, 1, 'current Cargo Tree needs its original package inventory');
+    const document = JSON.parse(readFileSync(index[0].path, 'utf8'));
+    assert.equal(document.schema, 'oliphaunt-liboliphaunt-cargo-artifacts-v1');
+    assert.ok(Array.isArray(document.packages));
+    indexed = document.packages;
+    assert.deepEqual(
+      indexed.map((row) => path.basename(row.cratePath)).sort(),
+      crates.map((file) => path.basename(file.path)).sort(),
+      'current Cargo Tree differs from its original package inventory',
+    );
+  } else
+    assert.equal(
+      files.length,
+      crates.length,
+      'index-free Cargo family must contain only package archives',
+    );
+  const published = [];
+  for (const file of crates) {
+    const discovered = discoverPublicationArtifacts([file.path]);
+    assert.equal(discovered.length, 1, 'current Cargo File needs exactly one package identity');
+    const record = discovered[0];
+    assert.equal(record.ecosystem, 'cargo');
+    assert.equal(record.version, pkg.version, 'current Cargo package version differs');
+    const carrier = resolveActualCarrier(catalog, 'cargo', record.name);
+    assert.equal(carrier.product, pkg.product, 'current Cargo package owner differs');
+    if (indexed) {
+      const rows = indexed.filter(
+        (row) => path.basename(row.cratePath) === path.basename(file.path),
+      );
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].name, record.name, 'current Cargo inventory name differs');
+      assert.equal(
+        rows[0].role,
+        carrier.role === 'payload-part' ? 'part' : 'aggregator',
+        'current Cargo inventory role differs',
+      );
+    }
+    published.push({ ...carrier, packageDependencies: record.dependencies, file });
+  }
+  assert.deepEqual(
+    published.filter((row) => row.declared).map((row) => row.name),
+    [pkg.name],
+    'current Cargo Tree differs from its declared parent identity',
+  );
+  validateCargoPayloadPartSets(published);
+  return published;
+}
+
 function collectNativeFinalInputs(
   preparation: NativeFinalInputPreparation,
   metadata: ReleaseMetadata,
@@ -293,60 +352,8 @@ function collectNativeFinalInputs(
             retain(`github-release:${pkg.name}`, selected[0]);
             continue;
           }
-          const crates = files.filter((file) => file.path.endsWith('.crate'));
-          assert.ok(crates.length, 'current Cargo carrier lacks its original package Files');
-          const index = files.filter((file) => path.basename(file.path) === 'packages.json');
-          let indexed: Record<string, any>[] | undefined;
-          if (files.some((file) => file.member !== undefined)) {
-            assert.equal(
-              index.length,
-              1,
-              'current Cargo Tree needs its original package inventory',
-            );
-            const document = JSON.parse(readFileSync(index[0].path, 'utf8'));
-            assert.equal(document.schema, 'oliphaunt-liboliphaunt-cargo-artifacts-v1');
-            assert.ok(Array.isArray(document.packages));
-            indexed = document.packages;
-            assert.deepEqual(
-              indexed.map((row) => path.basename(row.cratePath)).sort(),
-              crates.map((file) => path.basename(file.path)).sort(),
-              'current Cargo Tree differs from its original package inventory',
-            );
-          }
-          const published = [];
-          for (const file of crates) {
-            const discovered = discoverPublicationArtifacts([file.path]);
-            assert.equal(
-              discovered.length,
-              1,
-              'current Cargo File needs exactly one package identity',
-            );
-            const record = discovered[0];
-            assert.equal(record.ecosystem, 'cargo');
-            assert.equal(record.version, pkg.version, 'current Cargo package version differs');
-            const carrier = resolveActualCarrier(catalog, 'cargo', record.name);
-            assert.equal(carrier.product, pkg.product, 'current Cargo package owner differs');
-            if (indexed) {
-              const rows = indexed.filter(
-                (row) => path.basename(row.cratePath) === path.basename(file.path),
-              );
-              assert.equal(rows.length, 1);
-              assert.equal(rows[0].name, record.name, 'current Cargo inventory name differs');
-              assert.equal(
-                rows[0].role,
-                carrier.role === 'payload-part' ? 'part' : 'aggregator',
-                'current Cargo inventory role differs',
-              );
-            }
-            published.push({ ...carrier, packageDependencies: record.dependencies });
-            retain(carrier.id, file);
-          }
-          assert.deepEqual(
-            published.filter((row) => row.declared).map((row) => row.name),
-            [pkg.name],
-            'current Cargo Tree differs from its declared parent identity',
-          );
-          validateCargoPayloadPartSets(published);
+          for (const carrier of readNativeCurrentCargoFamily(pkg, files, catalog))
+            retain(carrier.id, carrier.file);
         }
       }
       const nativeVersion = metadata.products['liboliphaunt-native'].version;
