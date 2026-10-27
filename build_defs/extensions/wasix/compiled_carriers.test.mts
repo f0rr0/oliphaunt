@@ -28,7 +28,7 @@ import {
   readPortableArchiveEntries,
 } from '../../../tools/packaging/portable-archive.mts';
 import { readWasixCargoCarrierPayload, readWasixCargoCarrierSet } from '../wasix_carriers.mts';
-import { prepareWasixConsumerInput } from './consumer_inputs.mts';
+import { prepareWasixConsumerInput, readCompletedContribPayload } from './consumer_inputs.mts';
 
 const [
   input,
@@ -60,9 +60,14 @@ const githubRoot = path.dirname(githubInput);
 const npmRoot = path.dirname(npmInput);
 const cargoRoot = path.dirname(cargoInput);
 const spec = JSON.parse(readFileSync(input, 'utf8'));
-const partInputs = process.argv.slice(22);
 const partParents = Object.keys(spec.outputs.cargoParts ?? {});
-assert.equal(process.argv.length, 22 + partParents.length);
+const partInputs = process.argv.slice(22, 22 + partParents.length);
+const contribPartInputs = process.argv.slice(22 + partParents.length);
+assert.equal(
+  contribPartInputs.length,
+  (napiContract.contribPortableParts ?? []).length,
+  'held contrib inputs differ from their original part pins',
+);
 if (partParents.length)
   assert.deepEqual(
     partParents.sort(),
@@ -429,7 +434,7 @@ try {
     }),
   );
   const selectedInputs = current ? currentAddonInputs : addonInputs;
-  let completedContrib: ReturnType<typeof readPortableArchiveEntries> | undefined;
+  let completedContrib: Map<string, Buffer> | undefined;
   const prepared = prepareWasixConsumerInput({
     frozen,
     sqlName: spec.sqlName,
@@ -451,22 +456,15 @@ try {
             '-',
             'held dependency requires its original carrier',
           );
-          const original = napi.contribPortable;
-          assert.equal(original.publication.version, addonManifest.oliphaunt.runtimeVersion);
-          const bytes = readFileSync(contribPortableInput);
-          assert.equal(digest(bytes), original.file.sha256);
-          assert.equal(bytes.length, original.file.size);
-          completedContrib = readPortableArchiveEntries(realpathSync(contribPortableInput));
+          completedContrib = readCompletedContribPayload(
+            napi.contribPortable,
+            napi.contribPortableParts ?? [],
+            [contribPortableInput, ...contribPartInputs],
+            addonManifest.oliphaunt.runtimeVersion,
+          );
         }
-        const member = completedContrib.get(
-          'oliphaunt-extension-contrib-pg18-wasix-' +
-            addonManifest.oliphaunt.runtimeVersion +
-            '/payload/files/extensions/' +
-            sqlName +
-            '/extension.tar.zst',
-        );
-        assert(member?.isFile && !member.isSymbolicLink, 'missing original dependency archive');
-        bytes = Buffer.from(member.data());
+        bytes = completedContrib.get(`extensions/${sqlName}/extension.tar.zst`);
+        assert(bytes, 'missing original dependency archive');
       }
       return { ...declared, bytes };
     },

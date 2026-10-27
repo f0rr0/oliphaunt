@@ -14,6 +14,10 @@ import {
 } from '../../src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import { cargoSatisfies } from '../../tools/packaging/cargo-manifest.mts';
 import { readPortableArchiveEntries } from '../../tools/packaging/portable-archive.mts';
+import {
+  readWasixCargoCarrierPayload,
+  readWasixCargoCarrierSet,
+} from '../../tools/packaging/wasix-extension-cargo-family.mts';
 import { copyNativeInputFile, safeRelative } from '../../tools/release/native-file-identity.mts';
 import { ROOT } from '../../tools/release/release-graph.mts';
 import { extractRuntimeCargoFamily } from './cargo.mts';
@@ -113,14 +117,17 @@ export function stageWasixNapiInputs(spec: WasixNapiInputsSpec) {
       'source SDK runtime requirement excludes the constructed core',
     );
   }
-  const archiveFiles = (value: string | string[]) => {
+  const archiveFiles = (value: string | string[], partsParent?: string) => {
     const roots = typeof value === 'string' ? [value] : value;
     assert(Array.isArray(roots) && roots.length, 'Cargo family has no declared inputs');
     const declared = spec.archiveFiles;
     const files = declared
       ? roots.flatMap((root) => {
           const leaves = declared.filter((file) => file === root || file.startsWith(`${root}/`));
-          assert(leaves.length, `Cargo family has no declared leaves: ${root}`);
+          assert(
+            leaves.length || path.basename(root) === partsParent,
+            `Cargo family has no declared leaves: ${root}`,
+          );
           return leaves;
         })
       : roots;
@@ -157,6 +164,35 @@ export function stageWasixNapiInputs(spec: WasixNapiInputsSpec) {
       'WASIX payload is a qualification package',
     );
     return member;
+  };
+  const extensionCrate = (archive: string | string[], name: string, target: string) => {
+    const records = readWasixCargoCarrierSet(
+      [
+        {
+          product: 'liboliphaunt-wasix',
+          ecosystem: 'cargo',
+          name,
+          version: spec.runtimeVersion,
+          target,
+          role: target === 'wasix-portable' ? 'portable-leaf' : 'aot-leaf',
+        },
+      ],
+      archiveFiles(archive, name).map((file) => realpathSync(file)),
+    );
+    const parent = records.find((record) => record.declared);
+    assert(parent, 'Contrib Cargo family has no canonical parent');
+    const payload = readWasixCargoCarrierPayload(records, parent);
+    return (relative: string) => {
+      safeRelative(relative);
+      const entry = parent.entries.get(`${parent.prefix}/${relative}`);
+      const bytes = relative.startsWith('payload/files/')
+        ? payload.get(relative.slice('payload/files/'.length))
+        : entry?.isFile && !entry.isSymbolicLink
+          ? Buffer.from(entry.data())
+          : undefined;
+      assert(bytes?.length, `missing regular Cargo payload ${name}/${relative}`);
+      return bytes;
+    };
   };
   const portable = crate(spec.portableArchive, 'liboliphaunt-wasix-portable');
   const portableManifest = write('portable/manifest.json', portable('payload/manifest.json'));
@@ -260,10 +296,15 @@ export function stageWasixNapiInputs(spec: WasixNapiInputsSpec) {
     assert(!members.has(member.sqlName), 'contrib metadata repeats a member');
     members.set(member.sqlName, member);
   }
-  const contribPortable = crate(spec.contribPortable, wasixExtensionPackageName(PRODUCT));
-  const contribAot = crate(
+  const contribPortable = extensionCrate(
+    spec.contribPortable,
+    wasixExtensionPackageName(PRODUCT),
+    'wasix-portable',
+  );
+  const contribAot = extensionCrate(
     spec.contribAot,
     wasixExtensionAotPackageName(PRODUCT, spec.targetTriple),
+    spec.targetTriple,
   );
   const portableArchives = [];
   const aotManifests = [];

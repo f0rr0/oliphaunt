@@ -354,6 +354,195 @@ function splitCoreFixture(spec: ReturnType<typeof fixture>) {
   ];
 }
 
+function splitContribFixture(archive: string, version: string, partsDirectory: string) {
+  const name = path.basename(archive, `-${version}.crate`);
+  const prefix = `${name}-${version}/`;
+  const files = Object.fromEntries(
+    [...readPortableArchiveEntries(archive)]
+      .filter(([, entry]) => entry.isFile)
+      .map(([member, entry]) => [member.slice(prefix.length), Buffer.from(entry.data())]),
+  );
+  const names = [1, 2].map((index) => `${name}-part-${String(index).padStart(3, '0')}`);
+  const payloads: Record<string, Uint8Array>[] = [{}, {}];
+  const members = Object.entries(files).filter(([member]) => member.startsWith('payload/files/'));
+  assert(members.length > 0);
+  for (const [index, [member, bytes]] of members.entries()) {
+    const relative = member.slice('payload/files/'.length);
+    if (index === 0) {
+      const middle = Math.ceil(bytes.length / 2);
+      payloads[0][`payload/chunks/${relative}.part000000`] = bytes.subarray(0, middle);
+      payloads[1][`payload/chunks/${relative}.part000001`] = bytes.subarray(middle);
+    } else payloads[index % 2][member] = bytes;
+    delete files[member];
+  }
+  files['Cargo.toml'] = Buffer.from(
+    `${files['Cargo.toml']}\n[build-dependencies]\n` +
+      names.map((part) => `${JSON.stringify(part)} = { version = "=${version}" }\n`).join(''),
+  );
+  writeFileSync(
+    archive,
+    canonicalGzipSync(
+      tar(
+        Object.fromEntries(
+          Object.entries(files).map(([member, bytes]) => [prefix + member, bytes]),
+        ),
+      ),
+    ),
+  );
+  mkdirSync(partsDirectory, { recursive: true });
+  return [
+    archive,
+    ...names.map((part, index) => {
+      const file = path.join(partsDirectory, `${part}-${version}.crate`);
+      writeFileSync(
+        file,
+        canonicalGzipSync(
+          tar(
+            Object.fromEntries(
+              Object.entries({
+                'Cargo.toml': Buffer.from(`[package]\nname="${part}"\nversion="${version}"\n`),
+                ...payloads[index],
+              }).map(([member, bytes]) => [`${part}-${version}/${member}`, bytes]),
+            ),
+          ),
+        ),
+      );
+      return file;
+    }),
+  ];
+}
+
+test('contrib parent and parts preserve NAPI inputs through source trees and original imported files', () => {
+  for (const target of Object.keys(AOT_TARGET_TRIPLES)) {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-napi-contrib-family-'));
+    try {
+      const spec = fixture(root, target, releaseSqlNames().slice(0, 3));
+      const before = stageWasixNapiInputs(spec).inventory;
+      const portableParts = path.join(root, 'cargo-parts', wasixExtensionPackageName(PRODUCT));
+      const aotParts = path.join(
+        root,
+        'cargo-parts',
+        wasixExtensionAotPackageName(PRODUCT, spec.targetTriple),
+      );
+      for (const directory of [portableParts, aotParts]) mkdirSync(directory, { recursive: true });
+      const leaves = [
+        spec.portableArchive,
+        spec.coreAotArchive,
+        spec.contribPortable,
+        spec.contribAot,
+      ];
+      const source = {
+        ...spec,
+        contribPortable: [spec.contribPortable, portableParts],
+        contribAot: [spec.contribAot, aotParts],
+        archiveFiles: leaves,
+        output: path.join(root, 'empty-parts'),
+      };
+      assert.deepEqual(stageWasixNapiInputs(source).inventory, before);
+      const portable = splitContribFixture(
+        spec.contribPortable,
+        spec.runtimeVersion,
+        portableParts,
+      );
+      const aot = splitContribFixture(spec.contribAot, spec.runtimeVersion, aotParts);
+      const split = {
+        ...source,
+        archiveFiles: [spec.portableArchive, spec.coreAotArchive, ...portable, ...aot],
+        output: path.join(root, 'split-source'),
+      };
+      assert.deepEqual(stageWasixNapiInputs(split).inventory, before);
+      const imported = {
+        ...spec,
+        contribPortable: portable,
+        contribAot: aot,
+        output: path.join(root, 'imported'),
+      };
+      assert.deepEqual(stageWasixNapiInputs(imported).inventory, before);
+      for (const output of [split.output, imported.output]) {
+        assert.deepEqual(physicalFiles(output), physicalFiles(spec.output));
+        for (const file of before.files)
+          assert.deepEqual(
+            readFileSync(path.join(output, file.path)),
+            readFileSync(path.join(spec.output, file.path)),
+          );
+      }
+      if (target !== 'windows-x64-msvc') continue;
+      const orphanName = `${wasixExtensionPackageName(PRODUCT)}-part-003`;
+      const orphan = path.join(root, `${orphanName}-${spec.runtimeVersion}.crate`);
+      writeFileSync(
+        orphan,
+        canonicalGzipSync(
+          tar({
+            [`${orphanName}-${spec.runtimeVersion}/Cargo.toml`]: Buffer.from(
+              `[package]\nname="${orphanName}"\nversion="${spec.runtimeVersion}"\n`,
+            ),
+          }),
+        ),
+      );
+      for (const [index, mutation] of [
+        { ...imported, contribPortable: portable.slice(0, 2) },
+        { ...imported, contribPortable: [...portable, orphan] },
+        { ...imported, contribAot: [...aot, aot[1]] },
+        { ...split, archiveFiles: split.archiveFiles.filter((file) => file !== aot[2]) },
+      ].entries())
+        assert.throws(() =>
+          stageWasixNapiInputs({
+            ...mutation,
+            output: path.join(root, `invalid-contrib-${index}`),
+          }),
+        );
+      for (const [index, file] of [portable[0], portable[1], aot[0], aot[1]].entries()) {
+        const original = readFileSync(file);
+        rewriteCrate(file, (entries) => {
+          const member = Object.keys(entries).find((name) => name.endsWith('/Cargo.toml'));
+          assert(member);
+          entries[member] = Buffer.from(
+            `${entries[member]}\n[package.metadata.oliphaunt]\nqualificationOnly=true\n`,
+          );
+        });
+        assert.throws(
+          () =>
+            stageWasixNapiInputs({
+              ...imported,
+              output: path.join(root, `qualification-contrib-${index}`),
+            }),
+          /qualification/i,
+        );
+        writeFileSync(file, original);
+      }
+      const original = readFileSync(aot[1]);
+      for (const [index, mutate] of [
+        (entries: Record<string, Buffer>) => {
+          entries['foreign-root/file'] = Buffer.from('outside package');
+        },
+        (entries: Record<string, Buffer>) => {
+          const member = Object.keys(entries).find((name) => name.endsWith('/Cargo.toml'));
+          assert(member);
+          entries[member] = Buffer.from(
+            entries[member].toString().replace('version="0.3.2"', 'version="9.9.9"'),
+          );
+        },
+        (entries: Record<string, Buffer>) => {
+          const member = Object.keys(entries).find((name) => name.includes('/payload/chunks/'));
+          assert(member);
+          entries[member] = Buffer.from('corrupted original contrib part');
+        },
+      ].entries()) {
+        rewriteCrate(aot[1], mutate);
+        assert.throws(() =>
+          stageWasixNapiInputs({
+            ...imported,
+            output: path.join(root, `malformed-contrib-${index}`),
+          }),
+        );
+        writeFileSync(aot[1], original);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
 test('Windows core parent and exact parts preserve NAPI payloads through declared family trees', () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-napi-family-'));
   try {

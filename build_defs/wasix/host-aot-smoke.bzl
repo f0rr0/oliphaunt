@@ -17,14 +17,18 @@ def _host_aot_smoke_impl(ctx):
     )]
     expected = [row["name"] + "-" + row["version"] + ".crate" for row in rows]
     crates = [file for file in ctx.files.carriers if file.basename in expected]
-    families = [file for file in ctx.files.carriers if file.is_directory]
+    contrib = [row["name"] for row in rows if row["name"].startswith("oliphaunt-extension-contrib-pg18-")]
+    families = [file for file in ctx.files.carriers if file.is_directory and not file.basename.startswith("oliphaunt-extension-contrib-pg18-")]
+    parts = [file for file in ctx.files.carriers if
+             (file.is_directory and file.basename in contrib) or
+             (not file.is_directory and any([file.basename.startswith(parent + "-part-") and file.basename.endswith("-" + PRODUCTS["liboliphaunt-wasix"]["version"] + ".crate") for parent in contrib]))]
     portable = [row["name"] + "-" + row["version"] + ".crate" for row in rows if row["name"] == "liboliphaunt-wasix-portable"]
     scalar_names = [name for name in expected if not families or name not in portable]
     if len(expected) != 5 or len(families) > 1 or sorted([file.basename for file in crates]) != sorted(scalar_names) or any([file.is_directory for file in crates]):
         fail("WASIX host smoke requires its exact portable core, contrib/tools and matching host AOT Files")
     archives = ctx.actions.declare_file(ctx.label.name + ".archives")
     leaves = ctx.actions.args()
-    leaves.add_all(crates + families, expand_directories = True, map_each = _archive_leaf)
+    leaves.add_all(crates + families + parts, expand_directories = True, map_each = _archive_leaf)
     leaves.set_param_file_format("multiline")
     ctx.actions.write(archives, leaves)
     spec = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
@@ -34,7 +38,7 @@ def _host_aot_smoke_impl(ctx):
         "runtimeVersion": PRODUCTS["liboliphaunt-wasix"]["version"],
         "toolsVersion": PRODUCTS["postgres-tools-wasix"]["version"],
     }))
-    files = crates + families + [spec, archives, binary] + ctx.files._helpers
+    files = crates + families + parts + [spec, archives, binary] + ctx.files._helpers
     return bun_test_entrypoint(ctx, ctx.file._runner, [spec, binary, archives], files,
         source_files = [ctx.file._runner] + ctx.files._helpers,
         runfiles_argument = True,

@@ -29,6 +29,10 @@ import {
   readPortableArchiveEntries,
   readPortableTarZstdBufferEntries,
 } from '../../tools/packaging/portable-archive.mts';
+import {
+  readWasixCargoCarrierPayload,
+  readWasixCargoCarrierSet,
+} from '../../tools/packaging/wasix-extension-cargo-family.mts';
 
 export type HostSmokeSpec = {
   target: string;
@@ -50,26 +54,51 @@ export function readWasixHostAotSmokeSpec(
       path.join(runfiles, file.startsWith('../') ? file.slice(3) : `${spec.workspace}/${file}`),
     );
   assert(
-    crates.length === 5 && crates.every((file) => path.isAbsolute(file)),
-    'WASIX host smoke requires five resolved declared archive Files',
+    crates.length >= 5 && crates.every((file) => path.isAbsolute(file)),
+    'WASIX host smoke requires five resolved declared parent archives and their parts',
   );
   const byName = Object.fromEntries(crates.map((file) => [path.basename(file), file]));
-  assert.equal(Object.keys(byName).length, 5, 'WASIX host smoke archive names must be unique');
+  assert.equal(
+    Object.keys(byName).length,
+    crates.length,
+    'WASIX host smoke archive names must be unique',
+  );
   const targetId = Object.keys(AOT_TARGET_TRIPLES).find(
     (key) => AOT_TARGET_TRIPLES[key] === spec.target,
   );
   assert(targetId, 'WASIX host smoke needs a canonical native target');
+  const contrib = [
+    wasixExtensionPackageName(PRODUCT),
+    wasixExtensionAotPackageName(PRODUCT, spec.target),
+  ];
+  const parents = [
+    `${RUNTIME_PACKAGE}-${spec.runtimeVersion}.crate`,
+    ...contrib.map((name) => `${name}-${spec.runtimeVersion}.crate`),
+    `${TOOLS_PACKAGE}-${spec.toolsVersion}.crate`,
+    `${TOOLS_AOT_PACKAGES[targetId]}-${spec.toolsVersion}.crate`,
+  ];
   assert.deepEqual(
-    Object.keys(byName).sort(),
-    [
-      `${RUNTIME_PACKAGE}-${spec.runtimeVersion}.crate`,
-      `${wasixExtensionPackageName(PRODUCT)}-${spec.runtimeVersion}.crate`,
-      `${wasixExtensionAotPackageName(PRODUCT, spec.target)}-${spec.runtimeVersion}.crate`,
-      `${TOOLS_PACKAGE}-${spec.toolsVersion}.crate`,
-      `${TOOLS_AOT_PACKAGES[targetId]}-${spec.toolsVersion}.crate`,
-    ].sort(),
+    Object.keys(byName)
+      .filter((name) => parents.includes(name))
+      .sort(),
+    parents.sort(),
     'WASIX host smoke requires its exact five canonical parent archives',
   );
+  for (const file of Object.keys(byName).filter((name) => !parents.includes(name)))
+    assert(
+      contrib.some((parent) => {
+        const prefix = `${parent}-part-`;
+        const suffix = `-${spec.runtimeVersion}.crate`;
+        const index = file.slice(prefix.length, -suffix.length);
+        return (
+          file.startsWith(prefix) &&
+          file.endsWith(suffix) &&
+          /^[0-9]{3}$/u.test(index) &&
+          Number(index) > 0
+        );
+      }),
+      'WASIX host smoke has an unexpected archive outside its selected contrib families',
+    );
   return { ...spec, crates: byName };
 }
 
@@ -96,6 +125,23 @@ export function prepareWasixHostAotSmoke(spec: HostSmokeSpec, root: string) {
     (key) => AOT_TARGET_TRIPLES[key] === spec.target,
   );
   assert(targetId, 'WASIX host smoke needs a canonical native target');
+  const contribNames = [
+    wasixExtensionPackageName(PRODUCT),
+    wasixExtensionAotPackageName(PRODUCT, spec.target),
+  ];
+  const contrib = readWasixCargoCarrierSet(
+    contribNames.map((name, index) => ({
+      product: 'liboliphaunt-wasix',
+      ecosystem: 'cargo',
+      name,
+      version: spec.runtimeVersion,
+      role: index === 0 ? 'portable-leaf' : 'aot-leaf',
+      target: index === 0 ? 'wasix-portable' : spec.target,
+    })),
+    Object.values(spec.crates)
+      .filter((file) => contribNames.some((name) => path.basename(file).startsWith(`${name}-`)))
+      .map((file) => realpathSync(file)),
+  );
   const write = (relative: string, bytes: Uint8Array | string) => {
     const file = path.join(root, relative);
     mkdirSync(path.dirname(file), { recursive: true });
@@ -106,9 +152,17 @@ export function prepareWasixHostAotSmoke(spec: HostSmokeSpec, root: string) {
   const crate = (name: string, version: string) => {
     const filename = `${name}-${version}.crate`;
     assert(spec.crates[filename], `WASIX host smoke is missing its exact final ${filename}`);
-    const entries = readPortableArchiveEntries(realpathSync(spec.crates[filename]));
+    const parent = contrib.find((row) => row.name === name);
+    const entries =
+      parent?.entries ?? readPortableArchiveEntries(realpathSync(spec.crates[filename]));
+    const payload = parent ? readWasixCargoCarrierPayload(contrib, parent) : undefined;
     const prefix = `${name}-${version}/`;
     const bytes = (relative: string) => {
+      if (payload && relative.startsWith('payload/files/')) {
+        const data = payload.get(relative.slice('payload/files/'.length));
+        assert(data, `WASIX host smoke needs regular ${filename}:${relative}`);
+        return data;
+      }
       const entry = entries.get(prefix + relative);
       assert(
         entry?.isFile && !entry.isSymbolicLink,

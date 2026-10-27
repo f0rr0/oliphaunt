@@ -10,6 +10,7 @@ import { canonicalWasixAotMetadata } from '../../../src/wasix/runtime/tools/wasi
 import { AOT_TARGET_TRIPLES } from '../../../src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import { createDeterministicTar } from '../../../tools/packaging/cargo-source-package.mts';
 import {
+  canonicalGzipSync,
   readPortableArchiveEntries,
   readPortableTarZstdBufferEntries,
   releaseZstdCompressSync,
@@ -19,7 +20,132 @@ import {
   stageCompiledWasixMember,
   type WasixCompiledCarrierSpec,
 } from '../wasix_carriers.mts';
-import { prepareWasixConsumerInput } from './consumer_inputs.mts';
+import { prepareWasixConsumerInput, readCompletedContribPayload } from './consumer_inputs.mts';
+
+test('held contrib preserves pinned full and chunked portable members across its complete Cargo family', () => {
+  const root = mkdtempSync(path.join(process.env.TEST_TMPDIR ?? os.tmpdir(), 'held-contrib-'));
+  const name = 'oliphaunt-extension-contrib-pg18-wasix';
+  const version = '0.3.2';
+  const publication = {
+    product: 'liboliphaunt-wasix',
+    version,
+    tagName: `liboliphaunt-wasix-v${version}`,
+    publicationSha: 'a'.repeat(40),
+    publicationTree: 'b'.repeat(40),
+    releaseSha: 'c'.repeat(40),
+  };
+  let sequence = 0;
+  const archive = (
+    packageName: string,
+    dependencies: string[],
+    payload: Record<string, Buffer> = {},
+    qualificationOnly = false,
+  ) => {
+    const directory = path.join(root, String(sequence++));
+    const source = path.join(directory, 'source');
+    mkdirSync(source, { recursive: true });
+    writeFileSync(
+      path.join(source, 'Cargo.toml'),
+      `[package]\nname=${JSON.stringify(packageName)}\nversion=${JSON.stringify(version)}\n` +
+        '[build-dependencies]\n' +
+        dependencies.map((name) => `${name}={version="=${version}"}\n`).join('') +
+        (qualificationOnly ? '[package.metadata.oliphaunt]\nqualificationOnly=false\n' : ''),
+    );
+    for (const [relative, bytes] of Object.entries(payload)) {
+      const file = path.join(source, 'payload', relative);
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, bytes);
+    }
+    const file = path.join(directory, `${packageName}-${version}.crate`);
+    const bytes = canonicalGzipSync(
+      createDeterministicTar(source, `${packageName}-${version}`, {
+        fail: (message: string) => {
+          throw new Error(message);
+        },
+      }),
+    );
+    writeFileSync(file, bytes);
+    return {
+      publication,
+      artifact: `cargo:${packageName}`,
+      file: {
+        path: file,
+        size: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+      },
+    };
+  };
+  try {
+    const full = Buffer.from('original fuzzystrmatch portable archive');
+    const chunked = Buffer.from('original btree_gin portable archive');
+    const fullPath = 'extensions/fuzzystrmatch/extension.tar.zst';
+    const chunkPath = 'extensions/btree_gin/extension.tar.zst';
+    const first = `${name}-part-001`;
+    const second = `${name}-part-002`;
+    const original = archive(name, [first, second]);
+    const parts = [
+      archive(first, [], {
+        [`files/${fullPath}`]: full,
+        [`chunks/${chunkPath}.part000000`]: chunked.subarray(0, 12),
+      }),
+      archive(second, [], { [`chunks/${chunkPath}.part000001`]: chunked.subarray(12) }),
+    ];
+    const files = [original, ...parts].map((row) => row.file.path);
+    const payload = readCompletedContribPayload(original, parts, files, version);
+    assert.deepEqual(
+      payload,
+      new Map([
+        [fullPath, full],
+        [chunkPath, chunked],
+      ]),
+    );
+    assert.throws(
+      () => readCompletedContribPayload(original, parts.slice(0, 1), files.slice(0, 2), version),
+      /complete Cargo payload part set/u,
+    );
+    for (const file of [
+      { ...parts[1].file, sha256: 'f'.repeat(64) },
+      { ...parts[1].file, size: parts[1].file.size + 1 },
+    ])
+      assert.throws(
+        () =>
+          readCompletedContribPayload(original, [parts[0], { ...parts[1], file }], files, version),
+        assert.AssertionError,
+      );
+    assert.throws(
+      () => readCompletedContribPayload(original, parts, files, '0.3.3'),
+      assert.AssertionError,
+    );
+    assert.throws(
+      () =>
+        readCompletedContribPayload(
+          original,
+          [parts[0], { ...parts[1], publication: { ...publication, releaseSha: 'd'.repeat(40) } }],
+          files,
+          version,
+        ),
+      /publication differs/u,
+    );
+    const qualification = archive(second, [], {}, true);
+    assert.throws(
+      () =>
+        readCompletedContribPayload(
+          original,
+          [parts[0], qualification],
+          [files[0], files[1], qualification.file.path],
+          version,
+        ),
+      /qualification-only/u,
+    );
+    const unsplit = archive(name, [], { [`files/${fullPath}`]: full });
+    assert.deepEqual(
+      readCompletedContribPayload(unsplit, [], [unsplit.file.path], version).get(fullPath),
+      full,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('compiled contrib members retain canonical basenames within distinct aggregate locators', async () => {
   const root = mkdtempSync(path.join(process.env.TEST_TMPDIR ?? os.tmpdir(), 'wasix-member-'));
@@ -389,6 +515,24 @@ test('installed PostGIS input binds all four delivered controls and only its ori
         return dependency;
       },
     };
+    const selfContainedBytes = archive(
+      Object.fromEntries(
+        sqlMembers.map((name) => [`${prefix}${name}.control`, "default_version = '3.6.4'\n"]),
+      ),
+    );
+    const selfContained = prepareWasixConsumerInput({
+      ...input,
+      frozen: {
+        ...frozen,
+        dependencies: [],
+        wasixInstall: { ...member.wasixInstall, dependencies: [] },
+      },
+      portable: readPortableTarZstdBufferEntries(selfContainedBytes),
+      readDependency: () => {
+        assert.fail('dependency-free members must not authenticate unused held contrib');
+      },
+    });
+    assert.deepEqual(selfContained.dependencies, []);
     for (const document of [
       frozen,
       { ...frozen, schema: 'oliphaunt-extension-ci-artifacts-v2', extensions: [member] },

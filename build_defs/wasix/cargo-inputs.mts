@@ -22,6 +22,10 @@ import {
 } from '../../src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import { stageCargoCarrierInputs } from '../../tools/packaging/frozen-cargo.mts';
 import { readPortableArchiveEntries } from '../../tools/packaging/portable-archive.mts';
+import {
+  readWasixCargoCarrierPayload,
+  readWasixCargoCarrierSet,
+} from '../../tools/packaging/wasix-extension-cargo-family.mts';
 import { projectCargoWorkspace, renderToml } from '../languages/cargo-metadata.mts';
 import { extractRuntimeCargoFamily, readRuntimeCargoFamily } from './cargo.mts';
 
@@ -83,32 +87,55 @@ export function wasixHostSmokeCargoRows(
   const expected = wasixHostSmokeCargoIdentities(sourceRoot, runtimeVersion);
   if (
     !Array.isArray(inputs) ||
-    inputs.length !== expected.length ||
-    new Set(inputs.map((row) => row.name)).size !== inputs.length
+    inputs.length < expected.length ||
+    new Set(inputs.map((row) => row.name)).size !== inputs.length ||
+    expected.some((identity) => !inputs.some((row) => row.name === identity.name))
   )
     throw new Error(
-      'WASIX host smoke requires exactly the ten canonical contrib/tools Cargo archives',
+      'WASIX host smoke requires exactly the ten canonical contrib/tools Cargo parent families',
     );
-  return expected.map((identity) => {
-    const input = inputs.find((row) => row.name === identity.name);
-    if (!input || input.target !== identity.target || !path.isAbsolute(input.file))
-      throw new Error(`WASIX host smoke Cargo target differs: ${identity.name}`);
+  const rows = inputs.map((input) => {
+    const parent = input.name.replace(/-part-[0-9]{3}$/u, '');
+    const identity = expected.find(
+      (row) =>
+        row.name === input.name || (row.product === 'liboliphaunt-wasix' && row.name === parent),
+    );
+    if (!identity || input.target !== identity.target || !path.isAbsolute(input.file))
+      throw new Error(`WASIX host smoke Cargo target differs: ${input.name}`);
     const stat = lstatSync(input.file);
     if (
       !stat.isFile() ||
       stat.isSymbolicLink() ||
-      path.basename(input.file) !== `${identity.name}-${identity.version}.crate`
+      path.basename(input.file) !== `${input.name}-${identity.version}.crate`
     )
-      throw new Error(`WASIX host smoke requires a canonical regular Cargo file: ${identity.name}`);
-    readCargoManifest(input.file, identity.name, identity.version);
+      throw new Error(`WASIX host smoke requires a canonical regular Cargo file: ${input.name}`);
+    readCargoManifest(input.file, input.name, identity.version);
     const bytes = readFileSync(input.file);
     return {
       ...identity,
+      name: input.name,
       path: path.basename(input.file),
       size: bytes.length,
       sha256: sha256(bytes),
     };
   });
+  const contrib = readWasixCargoCarrierSet(
+    expected
+      .filter((identity) => identity.product === 'liboliphaunt-wasix')
+      .map((identity) => ({
+        ...identity,
+        ecosystem: 'cargo',
+        role: identity.target === 'wasix-portable' ? 'portable-leaf' : 'aot-leaf',
+      })),
+    inputs
+      .filter((input) =>
+        rows.some((row) => row.name === input.name && row.product === 'liboliphaunt-wasix'),
+      )
+      .map((input) => input.file),
+  );
+  for (const parent of contrib.filter((row) => row.declared))
+    readWasixCargoCarrierPayload(contrib, parent);
+  return rows.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
 }
 
 function sha256(bytes: Uint8Array) {

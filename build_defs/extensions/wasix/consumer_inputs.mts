@@ -1,6 +1,7 @@
 /** Normalize producer or imported final Files into one installed-consumer input. */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import { extensionControlDefaultVersion } from '../../../src/extensions/artifacts/packages/tools/extension-artifact-inventory.mts';
 import {
   extensionManifestMembers,
@@ -10,6 +11,46 @@ import {
 import { assertWasixExtensionMemberInstall } from '../../../src/extensions/contracts/wasix-extension-install.mts';
 import { extensionControlRequires } from '../../../src/native/sdks/ts/src/native/extension-contract.ts';
 import { readPortableTarZstdBufferEntries } from '../../../tools/packaging/portable-archive.mts';
+import {
+  readWasixCargoCarrierPayload,
+  readWasixCargoCarrierSet,
+} from '../../../tools/packaging/wasix-extension-cargo-family.mts';
+
+export function readCompletedContribPayload(original, parts, inputs: string[], version: string) {
+  const name = 'oliphaunt-extension-contrib-pg18-wasix';
+  assert.equal(original.artifact, `cargo:${name}`);
+  assert.equal(original.publication.product, 'liboliphaunt-wasix');
+  assert.equal(original.publication.version, version);
+  assert.equal(inputs.length, parts.length + 1, 'held contrib inputs differ from original pins');
+  const produced = [original, ...parts].map((row, index) => {
+    assert.deepEqual(row.publication, original.publication, 'held contrib publication differs');
+    if (index)
+      assert.match(row.artifact, /^cargo:oliphaunt-extension-contrib-pg18-wasix-part-[0-9]{3}$/u);
+    return {
+      name: row.artifact.slice('cargo:'.length),
+      target: 'wasix-portable',
+      size: row.file.size,
+      sha256: row.file.sha256,
+    };
+  });
+  const carriers = readWasixCargoCarrierSet(
+    [
+      {
+        product: 'liboliphaunt-wasix',
+        ecosystem: 'cargo',
+        name,
+        version,
+        target: 'wasix-portable',
+        role: 'portable-leaf',
+      },
+    ],
+    inputs.map((file) => realpathSync(file)),
+    produced,
+  );
+  const parent = carriers.find((row) => row.declared);
+  assert(parent, 'held contrib requires its original portable parent');
+  return readWasixCargoCarrierPayload(carriers, parent);
+}
 
 export function prepareWasixConsumerInput({
   frozen,

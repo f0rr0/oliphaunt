@@ -1,14 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import {
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -21,15 +13,24 @@ import { assertWasixAotArtifactPayloads } from '../../../src/wasix/runtime/tools
 import { assertCanonicalWasixAotManifest } from '../../../src/wasix/runtime/tools/wasix-aot-manifest.mts';
 import { AOT_TARGET_TRIPLES } from '../../../src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import { readPortableArchiveEntries } from '../../../tools/packaging/portable-archive.mts';
+import {
+  readWasixCargoCarrierPayload,
+  readWasixCargoCarrierSet,
+} from '../../../tools/packaging/wasix-extension-cargo-family.mts';
 
 assert(
-  [9, 13].includes(process.argv.length),
-  'contrib installed test requires seven inputs or its four additional incremental inputs',
+  [18, 22].includes(process.argv.length),
+  'contrib installed test requires its five declared parents, five parts Trees and optional incremental inputs',
 );
 const [specInput, npmInput, cargoInput, frozenInput, coreInput, coreManifestInput, binary] =
   process.argv.slice(2);
-const [toolsSpecInput, toolsPortableInput, toolsAotInput, serverBinary] = process.argv.slice(9);
-const incremental = process.argv.length === 13;
+const incremental = process.argv.length === 22;
+const [toolsSpecInput, toolsPortableInput, toolsAotInput, serverBinary] = incremental
+  ? process.argv.slice(9, 13)
+  : [];
+const cargoInputs = process.argv.slice(incremental ? 13 : 9);
+const parentInputs = [cargoInput, ...cargoInputs.slice(0, Object.keys(AOT_TARGET_TRIPLES).length)];
+const partInputs = cargoInputs.slice(Object.keys(AOT_TARGET_TRIPLES).length);
 if (incremental)
   assert([toolsSpecInput, toolsPortableInput, toolsAotInput, serverBinary].every(Boolean));
 const spec = JSON.parse(readFileSync(specInput, 'utf8'));
@@ -138,27 +139,23 @@ try {
       assert.deepEqual(carrier.install, member.wasixInstall);
     }
   }
-  const crates = readdirSync(path.dirname(cargoInput))
-    .filter((name) => name.endsWith('.crate'))
-    .map((name) => path.join(path.dirname(cargoInput), name));
-  const cargoRows = crates.map((file) => {
-    const entries = readPortableArchiveEntries(realpathSync(file));
-    const prefix = path.basename(file, '.crate');
-    const cargo = Bun.TOML.parse(entries.get(`${prefix}/Cargo.toml`)!.data().toString());
-    assert.equal(cargo.package.version, spec.version);
-    return { name: cargo.package.name, prefix, entries };
-  });
   const base = spec.carriers.filter((row: { ecosystem: string }) => row.ecosystem === 'cargo');
+  const cargoRows = readWasixCargoCarrierSet(base, [
+    ...parentInputs.map((file) => realpathSync(file)),
+    ...partInputs,
+  ]);
   assert.deepEqual(
-    cargoRows.map((row) => row.name).sort(),
+    cargoRows
+      .filter((row) => row.declared)
+      .map((row) => row.name)
+      .sort(),
     base.map((row: { name: string }) => row.name).sort(),
   );
   const portable = cargoRows.find((row) => row.name.endsWith('-wasix'))!;
+  const portablePayload = readWasixCargoCarrierPayload(cargoRows, portable);
   for (const archive of archives)
     assert.deepEqual(
-      portable.entries
-        .get(`${portable.prefix}/payload/files/extensions/${archive.sqlName}/extension.tar.zst`)!
-        .data(),
+      portablePayload.get(`extensions/${archive.sqlName}/extension.tar.zst`),
       readFileSync(archive.path),
       'Cargo and npm contrib portable bytes differ',
     );
@@ -167,10 +164,7 @@ try {
     const row = base.find((row: { target: string }) => row.target === target);
     assert(row, 'missing canonical contrib AOT identity');
     const owner = cargoRows.find((carrier) => carrier.name === row.name)!;
-    const files = new Map<string, Buffer>();
-    for (const [name, entry] of owner.entries)
-      if (name.startsWith(`${owner.prefix}/payload/files/`) && entry.isFile)
-        files.set(name.slice(`${owner.prefix}/payload/files/`.length), Buffer.from(entry.data()));
+    const files = readWasixCargoCarrierPayload(cargoRows, owner);
     const manifests = spec.expectedMembers.map((sqlName: string) => {
       const manifest = JSON.parse(
         owner.entries.get(`${owner.prefix}/manifests/${sqlName}.json`)!.data().toString(),

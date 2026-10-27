@@ -15,6 +15,10 @@ def _archive_names():
         "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu-" + tools + ".crate",
     ]
 
+def _contrib_names():
+    suffix = "-" + PRODUCTS["liboliphaunt-wasix"]["version"] + ".crate"
+    return [name.removesuffix(suffix) for name in _archive_names()[1:3]]
+
 def _fixtures_impl(ctx):
     files = [ctx.actions.declare_file(ctx.label.name + "/" + name) for name in _archive_names()[1:]]
     for file in files:
@@ -22,6 +26,15 @@ def _fixtures_impl(ctx):
     family = ctx.actions.declare_directory(ctx.label.name + ".packages")
     ctx.actions.run_shell(outputs = [family], command = 'mkdir -p "$1"; printf fixture > "$1/$2"', arguments = [family.path, _archive_names()[0]])
     files.append(family)
+    for parent in _contrib_names():
+        parts = ctx.actions.declare_directory(ctx.label.name + "/cargo-parts/" + parent)
+        part = parent + "-part-001-" + PRODUCTS["liboliphaunt-wasix"]["version"] + ".crate"
+        command = 'mkdir -p "$1"' if parent == _contrib_names()[0] else 'mkdir -p "$1"; printf fixture > "$1/$2"'
+        ctx.actions.run_shell(outputs = [parts], command = command, arguments = [parts.path, part])
+        files.append(parts)
+        imported = ctx.actions.declare_file(ctx.label.name + "/" + parent + "-part-002-" + PRODUCTS["liboliphaunt-wasix"]["version"] + ".crate")
+        ctx.actions.write(imported, "analysis-only imported part fixture")
+        files.append(imported)
     binary = ctx.actions.declare_file(ctx.label.name + ".binary")
     ctx.actions.write(binary, "analysis-only executable fixture", is_executable = True)
     return [DefaultInfo(files = depset(files), executable = binary, runfiles = ctx.runfiles(files = files))]
@@ -49,11 +62,15 @@ def _arguments_impl(ctx):
     runfiles = analysistest.target_under_test(env)[DefaultInfo].default_runfiles.files.to_list()
     for name in _archive_names()[1:]:
         asserts.true(env, name in [file.basename for file in runfiles])
-    families = [file for file in runfiles if file.is_directory and file.basename == "host_aot_smoke_argument_files.packages"]
-    asserts.equals(env, 1, len(families))
+    families = [file for file in runfiles if file.is_directory and file.basename in ["host_aot_smoke_argument_files.packages"] + _contrib_names()]
+    asserts.equals(env, 3, len(families))
     manifests = [action for action in actions if action.mnemonic == "FileWrite" and archives in [file.basename for file in action.outputs.to_list()]]
     asserts.equals(env, 1, len(manifests))
-    asserts.true(env, families[0] in manifests[0].inputs.to_list())
+    for family in families:
+        asserts.true(env, family in manifests[0].inputs.to_list())
+    for parent in _contrib_names():
+        part = parent + "-part-002-" + PRODUCTS["liboliphaunt-wasix"]["version"] + ".crate"
+        asserts.true(env, part in [file.basename for file in runfiles])
     return analysistest.end(env)
 
 _arguments_test = analysistest.make(_arguments_impl)

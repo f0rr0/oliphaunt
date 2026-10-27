@@ -10,7 +10,11 @@ import { packageDeclaredWasixExtensionCargo } from '../../../src/wasix/runtime/t
 import { AOT_TARGET_TRIPLES } from '../../../src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import { readPortableArchiveEntries } from '../../../tools/packaging/portable-archive.mts';
 import { extensionCompatibilityMetadata } from '../../../tools/release/extension-release-metadata.mts';
-import { stageCompiledWasixMember, type WasixCompiledCarrierSpec } from '../wasix_carriers.mts';
+import {
+  stageCompiledWasixMember,
+  stageWasixCargoCarrierSet,
+  type WasixCompiledCarrierSpec,
+} from '../wasix_carriers.mts';
 
 interface WasixContribMemberSpec extends WasixCompiledCarrierSpec {
   owner: string;
@@ -188,19 +192,7 @@ export async function packageWasixContribCarriers(spec: WasixContribCarrierSpec)
       },
       { outputDir: path.join(root, 'cargo-stage'), workDir: path.join(root, 'cargo-work') },
     );
-    const expectedCargo = spec.carriers
-      .filter((row) => row.ecosystem === 'cargo')
-      .map((row) => row.name)
-      .sort();
-    assert.deepEqual(
-      cargo.map((row) => row.name).sort(),
-      expectedCargo,
-      'measured contrib carriers must retain exactly five canonical Cargo identities; split parts require declared outputs',
-    );
-    mkdirSync(spec.outputs.cargo, { recursive: true });
-    for (const row of cargo) {
-      copyFileSync(row.cratePath, path.join(spec.outputs.cargo, path.basename(row.cratePath)));
-    }
+    stageWasixCargoCarrierSet(spec.carriers, cargo, spec.outputs);
     for (const [source, destination] of [
       [path.join(root, assets[0].path), spec.outputs.github],
       [frozen, spec.outputs.frozen],

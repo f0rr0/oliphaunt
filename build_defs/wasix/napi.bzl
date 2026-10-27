@@ -68,10 +68,18 @@ def _inputs_impl(ctx):
         record = json.decode(ctx.attr.archive_records[role])
         candidates = target[DefaultInfo].files.to_list()
         family_tree = len(candidates) == 1 and candidates[0].is_directory and role in ["portableArchive", "coreAotArchive"]
+        contrib_family = role in ["contribPortable", "contribAot"] and not WASIX_NAPI_IMPORT_FINAL_INPUTS
         originals = record.get("family", [record])
-        files = candidates if family_tree else [file for file in candidates if file.basename in [original["package"] + "-" + ctx.attr.runtime_version + ".crate" for original in originals]]
-        if not files or (not family_tree and (len(files) != len(originals) or any([file.is_directory for file in files]))):
-            fail("WASIX addon needs its exact original constructed Cargo family for " + role)
+        if contrib_family:
+            parents = [file for file in candidates if not file.is_directory and file.basename == record["package"] + "-" + ctx.attr.runtime_version + ".crate"]
+            parts = [file for file in candidates if file.is_directory and file.basename == record["package"]]
+            if len(parents) != 1 or len(parts) != 1:
+                fail("WASIX addon needs its original contrib parent File and parts Tree for " + role)
+            files = parents + parts
+        else:
+            files = candidates if family_tree else [file for file in candidates if file.basename in [original["package"] + "-" + ctx.attr.runtime_version + ".crate" for original in originals]]
+            if not files or (not family_tree and (len(files) != len(originals) or any([file.is_directory for file in files]))):
+                fail("WASIX addon needs its exact original constructed Cargo family for " + role)
         archives[role] = [file.path for file in files]
         for file in files:
             matching = [original for original in originals if file.basename == original["package"] + "-" + ctx.attr.runtime_version + ".crate"]
@@ -136,7 +144,7 @@ def wasix_napi_inputs(name, cargo_facts):
                 if original:
                     source = original["file"]["path"]
                     record = dict(original, package = package)
-                    if role == "coreAotArchive":
+                    if role in ["coreAotArchive", "contribPortable", "contribAot"]:
                         prefix = "liboliphaunt-wasix/" + runtime_version + "/cargo:" + package + "-part-"
                         family = [dict(original, package = package)] + [
                             dict(value, package = key.split("/cargo:")[1])

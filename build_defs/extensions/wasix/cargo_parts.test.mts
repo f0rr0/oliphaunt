@@ -14,7 +14,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDeterministicTar } from '../../../tools/packaging/cargo-source-package.mts';
 import { canonicalGzipSync } from '../../../tools/packaging/portable-archive.mts';
-import { readWasixCargoCarrierPayload, readWasixCargoCarrierSet } from '../wasix_carriers.mts';
+import {
+  readWasixCargoCarrierPayload,
+  readWasixCargoCarrierSet,
+  stageWasixCargoCarrierSet,
+} from '../wasix_carriers.mts';
 
 test('canonical Cargo parents bind their complete bounded parts and reconstructed physical payload', () => {
   const root = mkdtempSync(path.join(process.env.TEST_TMPDIR ?? tmpdir(), 'wasix-cargo-parts-'));
@@ -97,6 +101,34 @@ test('canonical Cargo parents bind their complete bounded parts and reconstructe
       size: row.size,
       sha256: row.sha256,
     }));
+    const output = {
+      cargo: path.join(root, 'declared', 'cargo'),
+      cargoParts: { [parent.name]: path.join(root, 'declared', 'parts', parent.name) },
+    };
+    stageWasixCargoCarrierSet(
+      [parent],
+      produced.map((row, index) => ({ ...row, cratePath: files[index] })),
+      output,
+    );
+    const retained = readWasixCargoCarrierSet(
+      [parent],
+      [path.join(output.cargo, path.basename(base)), output.cargoParts[parent.name]],
+    );
+    const retainedParent = retained.find((row) => row.declared);
+    assert(retainedParent);
+    assert.deepEqual(
+      readWasixCargoCarrierPayload(retained, retainedParent),
+      readWasixCargoCarrierPayload(rows, declared),
+    );
+    assert.throws(
+      () =>
+        stageWasixCargoCarrierSet(
+          [parent],
+          produced.map((row, index) => ({ ...row, cratePath: files[index] })),
+          { cargo: path.join(root, 'undeclared') },
+        ),
+      /require their declared parent outputs/u,
+    );
     assert.throws(
       () =>
         readWasixCargoCarrierSet(

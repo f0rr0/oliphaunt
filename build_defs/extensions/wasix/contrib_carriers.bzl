@@ -84,20 +84,27 @@ def _carriers_impl(ctx):
                        "aot": [{"target": image.target, "profile": image.profile, "image": image.image.path, "module": module.path, "name": "extension:" + sql_name} for image in member_images]})
         member_inputs += [module, link]
     outputs = {"npm": [], "cargo": []}
+    cargo_parts = {}
     carrier_groups = {}
     for index, row in enumerate(spec["carriers"]):
         suffix = ".tgz" if row["ecosystem"] == "npm" else ".crate"
         filename = row["name"].replace("@", "").replace("/", "-") + "-" + spec["version"] + suffix
         file = ctx.actions.declare_file(ctx.label.name + "/" + row["ecosystem"] + "/" + filename)
         outputs[row["ecosystem"]].append(file)
-        carrier_groups["carrier_" + str(index)] = depset([file])
+        group = [file]
+        if row["ecosystem"] == "cargo":
+            parts = ctx.actions.declare_directory(ctx.label.name + "/cargo-parts/" + row["name"])
+            cargo_parts[row["name"]] = parts
+            group.append(parts)
+        carrier_groups["carrier_" + str(index)] = depset(group)
     if len(outputs["npm"]) != 1 or len(outputs["cargo"]) != len(WASIX_AOT_TARGETS) + 1:
         fail("WASIX contrib requires its canonical npm portable and Cargo portable/AOT carriers")
     outputs["github"] = [ctx.actions.declare_file(ctx.label.name + "/release-assets/" + spec["product"] + "-" + spec["version"] + "-wasix-wasix-portable-bundle.tar.gz")]
     outputs["manifest"] = [ctx.actions.declare_file(ctx.label.name + "/" + spec["product"] + "-" + spec["version"] + "-manifest.json")]
     outputs["frozen"] = [ctx.actions.declare_file(ctx.label.name + "/extension-artifacts.json")]
-    output_files = [file for files in outputs.values() for file in files]
+    output_files = [file for files in outputs.values() for file in files] + cargo_parts.values()
     spec.update({"operation": "contrib", "outputs": {name: files[0].dirname if name in ["npm", "cargo"] else files[0].path for name, files in outputs.items()}})
+    spec["outputs"]["cargoParts"] = {name: file.path for name, file in cargo_parts.items()}
     for member in spec["members"]:
         member["outputs"] = spec["outputs"]
     inputs = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
@@ -107,8 +114,8 @@ def _carriers_impl(ctx):
     suppliers = merge_shipping_suppliers([target[ShippingSupplierInfo] for target in ctx.attr.modules + ctx.attr.aot + [ctx.attr.host]])
     return [DefaultInfo(files = depset(output_files)), suppliers,
             ExtensionFinalLeafInfo(product = spec["product"], owner = owner.id, version = owner.version, family = "wasix", target = "wasix-portable", metadata = spec,
-                                   github = outputs["github"], npm = outputs["npm"], cargo = outputs["cargo"], manifest = outputs["manifest"][0], frozen = outputs["frozen"][0], spec = inputs, validation = None, receipt = None, origin = None),
-            OutputGroupInfo(**{name: depset(files) for name, files in outputs.items()} | carrier_groups | {"spec": depset([inputs]), "link": depset(links)})]
+                                   github = outputs["github"], npm = outputs["npm"], cargo = outputs["cargo"] + cargo_parts.values(), manifest = outputs["manifest"][0], frozen = outputs["frozen"][0], spec = inputs, validation = None, receipt = None, origin = None),
+            OutputGroupInfo(**{name: depset(files + (cargo_parts.values() if name == "cargo" else [])) for name, files in outputs.items()} | carrier_groups | {"spec": depset([inputs]), "link": depset(links)})]
 
 _wasix_contrib_carriers = rule(implementation = _carriers_impl, toolchains = BUN_SOURCE_TOOLCHAINS, attrs = {
     "modules": attr.label_list(mandatory = True, providers = [WasmModuleInfo, ShippingSupplierInfo], cfg = WASIX_PORTABLE_TRANSITION),
@@ -148,9 +155,12 @@ def _installed_impl(ctx):
     leaf = ctx.attr.leaf[ExtensionFinalLeafInfo]
     host = ctx.attr.host[WasixExtensionHostInfo]
     binary = ctx.attr.binary[DefaultInfo].files_to_run.executable
-    if len(leaf.cargo) != len(WASIX_AOT_TARGETS) + 1 or any([file.is_directory for file in leaf.cargo]):
-        fail("contrib installed test requires its exact five regular Cargo carriers")
-    arguments = [leaf.spec, leaf.npm[0], leaf.cargo[0], leaf.frozen, host.module, host.manifest, binary]
+    parents = [file for file in leaf.cargo if not file.is_directory]
+    parts = [file for file in leaf.cargo if file.is_directory]
+    expected = [row["name"] for row in leaf.metadata["carriers"] if row["ecosystem"] == "cargo"]
+    if len(parents) != len(WASIX_AOT_TARGETS) + 1 or sorted([file.basename for file in parents]) != sorted([name + "-" + leaf.version + ".crate" for name in expected]) or sorted([file.basename for file in parts]) != sorted(expected):
+        fail("contrib installed test requires its exact five Cargo parents and declared parts Trees")
+    arguments = [leaf.spec, leaf.npm[0], parents[0], leaf.frozen, host.module, host.manifest, binary]
     files = leaf.github + leaf.npm + leaf.cargo + [leaf.spec, leaf.frozen, host.module, host.manifest, binary] + ctx.files._helpers
     runfiles = ctx.attr.binary[DefaultInfo].default_runfiles
     incremental = ctx.attr.server_binary != None
@@ -172,7 +182,7 @@ def _installed_impl(ctx):
         runfiles = runfiles.merge(ctx.attr.server_binary[DefaultInfo].default_runfiles)
     elif ctx.files.additional_helpers:
         fail("ordinary contrib lifecycle proof must not carry unused incremental helpers")
-    return bun_test_entrypoint(ctx, ctx.file._runner, arguments, files,
+    return bun_test_entrypoint(ctx, ctx.file._runner, arguments + parents[1:] + parts, files,
         source_files = [ctx.file._runner] + ctx.files._helpers + ctx.files.additional_helpers, additional_runfiles = runfiles)
 
 _wasix_contrib_installed_test = rule(implementation = _installed_impl, test = True, toolchains = BUN_SOURCE_TOOLCHAINS,

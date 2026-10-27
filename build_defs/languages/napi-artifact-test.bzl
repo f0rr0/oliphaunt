@@ -109,7 +109,8 @@ def _payload_profile_impl(ctx):
     for target in ctx.attr.public_archives:
         for file in target[DefaultInfo].files.to_list():
             if file.basename in ctx.attr.archive_names:
-                asserts.false(env, file.is_directory, "Cargo archive must be its original regular File")
+                asserts.equals(env, not file.basename.endswith(".crate"), file.is_directory,
+                               "Cargo inputs must retain their original parent Files and parts Trees")
                 asserts.false(env, file.basename in expected, "ambiguous original Cargo archive")
                 expected[file.basename] = file.path
     for target, parent in ctx.attr.public_archive_families.items():
@@ -185,7 +186,7 @@ def napi_artifact_tests():
         parts = [
             original
             for key, original in (NATIVE_CURRENT_ARTIFACTS or {}).items()
-            if key.startswith("liboliphaunt-wasix/" + version + "/cargo:" + packages[1] + "-part-")
+            if any([key.startswith("liboliphaunt-wasix/" + version + "/cargo:" + package + "-part-") for package in packages[1:]])
         ] if WASIX_NAPI_IMPORT_FINAL_INPUTS else []
         archives[condition] = [
             original["file"]["path"]
@@ -197,7 +198,7 @@ def napi_artifact_tests():
             "//src/wasix/runtime/crates/assets:crate": packages[0] + "-" + version + ".crate",
             "//src/wasix/runtime/crates/aot/" + row["triple"] + ":crate": packages[1] + "-" + version + ".crate",
         }
-        names[condition] = [package + "-" + version + ".crate" for package in packages] + [original["artifact"].removeprefix("cargo:") + "-" + version + ".crate" for original in parts]
+        names[condition] = [package + "-" + version + ".crate" for package in packages] + ([original["artifact"].removeprefix("cargo:") + "-" + version + ".crate" for original in parts] if WASIX_NAPI_IMPORT_FINAL_INPUTS else packages[2:])
         if not WASIX_NAPI_IMPORT_FINAL_INPUTS:
             aot_payloads[condition] = "//src/wasix/runtime:aot_" + row["target"].replace("-", "_") + "_payload"
     _payload_profile_test(name = "napi_payload_profile_test", target_under_test = "//src/wasix/node-addon:release_addon",

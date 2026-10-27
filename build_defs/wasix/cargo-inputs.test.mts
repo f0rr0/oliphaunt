@@ -19,6 +19,7 @@ import { packageRuntimeCargo, type RuntimeCargoSpec } from './cargo.mts';
 import {
   extractWasixCargoConstructionInputs,
   wasixHostSmokeCargoIdentities,
+  wasixHostSmokeCargoRows,
   wasixRuntimeCargoParent,
   writeWasixCargoConstructionReceipt,
 } from './cargo-inputs.mts';
@@ -234,16 +235,56 @@ test('imports genuine canonical crate envelopes and rejects receipt substitution
     // foreign Cargo libraries or used to start a foreign WASIX producer.
     const toolsManifestPath = 'src/wasix/postgres-tools/crates/tools/Cargo.toml';
     copyFile(packed[0].sourceRoot, toolsManifestPath, path.resolve(toolsManifestPath));
-    const hostSmokeInputs = await Promise.all(
-      wasixHostSmokeCargoIdentities(packed[0].sourceRoot, version).map(async (identity) => {
-        const file = path.join(inputDirectory, `${identity.name}-${identity.version}.crate`);
-        const envelope = new Bun.Archive({
-          [`${identity.name}-${identity.version}/Cargo.toml`]: `[package]\nname="${identity.name}"\nversion="${identity.version}"\n`,
-        });
-        writeFileSync(file, gzipSync(Buffer.from(await envelope.bytes())));
-        return { file, name: identity.name, target: identity.target };
-      }),
-    );
+    const supportArchive = async (
+      identity: ReturnType<typeof wasixHostSmokeCargoIdentities>[number],
+      name = identity.name,
+      {
+        dependencies = {},
+        payload = {},
+        metadata = {},
+        archiveVersion = identity.version,
+      } = {} as {
+        dependencies?: Record<string, unknown>;
+        payload?: Record<string, string>;
+        metadata?: Record<string, unknown>;
+        archiveVersion?: string;
+      },
+    ) => {
+      const file = path.join(inputDirectory, `${name}-${identity.version}.crate`);
+      const prefix = `${name}-${archiveVersion}`;
+      const envelope = new Bun.Archive({
+        [`${prefix}/Cargo.toml`]: renderToml({
+          package: { name, version: archiveVersion, metadata },
+          'build-dependencies': dependencies,
+        }),
+        ...Object.fromEntries(
+          Object.entries(payload).map(([name, bytes]) => [`${prefix}/payload/${name}`, bytes]),
+        ),
+      });
+      writeFileSync(file, gzipSync(Buffer.from(await envelope.bytes())));
+      return { file, name, target: identity.target };
+    };
+    const supportIdentities = wasixHostSmokeCargoIdentities(packed[0].sourceRoot, version);
+    const hostSmokeInputs = (
+      await Promise.all(
+        supportIdentities.map(async (identity) => {
+          if (identity.product !== 'liboliphaunt-wasix') return [await supportArchive(identity)];
+          const names = ['001', '002'].map((part) => `${identity.name}-part-${part}`);
+          return Promise.all([
+            supportArchive(identity, identity.name, {
+              dependencies: Object.fromEntries(
+                names.map((name) => [name, { version: `=${identity.version}` }]),
+              ),
+            }),
+            ...names.map((name, index) =>
+              supportArchive(identity, name, {
+                payload: { [`chunks/example.part00000${index}`]: String(index) },
+              }),
+            ),
+          ]);
+        }),
+      )
+    ).flat();
     const supportReceipt = writeWasixCargoConstructionReceipt(inputs, {
       sourceCommit: '1'.repeat(40),
       sourceTree: '2'.repeat(40),
@@ -266,6 +307,69 @@ test('imports genuine canonical crate envelopes and rejects receipt substitution
         sourceRoot: packed[0].sourceRoot,
       });
     importSupport(supportReceipt, supportOutput);
+    assert.equal(supportReceipt.hostSmokeCrates?.length, 20);
+    const contribIdentity = supportIdentities.find((row) => row.target === 'wasix-portable');
+    assert(contribIdentity);
+    const firstPart = `${contribIdentity.name}-part-001`;
+    const secondPart = `${contribIdentity.name}-part-002`;
+    const supportRows = (values = hostSmokeInputs) =>
+      wasixHostSmokeCargoRows(values, packed[0].sourceRoot, version);
+    assert.throws(
+      () => supportRows(hostSmokeInputs.filter((row) => row.name !== firstPart)),
+      /contiguous|complete/u,
+    );
+    assert.throws(() => supportRows([...hostSmokeInputs, hostSmokeInputs[0]]), /ten canonical/u);
+    assert.throws(
+      () =>
+        supportRows(
+          hostSmokeInputs.map((row) =>
+            row.name === firstPart ? { ...row, target: 'different-target' } : row,
+          ),
+        ),
+      /target differs/u,
+    );
+    for (const suffix of ['000', '1000']) {
+      const invalid = await supportArchive(
+        contribIdentity,
+        `${contribIdentity.name}-part-${suffix}`,
+      );
+      assert.throws(() => supportRows([...hostSmokeInputs, invalid]), /1-based|target differs/u);
+    }
+    const toolsIdentity = supportIdentities.find((row) => row.product === 'postgres-tools-wasix');
+    assert(toolsIdentity);
+    assert.throws(
+      () =>
+        supportRows([
+          ...hostSmokeInputs,
+          { ...hostSmokeInputs[0], name: `${toolsIdentity.name}-part-001` },
+        ]),
+      /target differs/u,
+    );
+    const additional = await supportArchive(contribIdentity, `${contribIdentity.name}-part-003`);
+    assert.throws(() => supportRows([...hostSmokeInputs, additional]), /complete/u);
+    for (const [key, name, options, error] of [
+      ['version', firstPart, { archiveVersion: '9.9.9' }, /version|identity/u],
+      [
+        'qualification',
+        firstPart,
+        { metadata: { oliphaunt: { qualificationOnly: true } } },
+        /qualification-only/u,
+      ],
+      ['chunk', secondPart, { payload: { 'chunks/example.part000002': '2' } }, /non-contiguous/u],
+      [
+        'pin',
+        contribIdentity.name,
+        { dependencies: { [firstPart]: { version }, [secondPart]: { version: `=${version}` } } },
+        /AssertionError|exact/u,
+      ],
+    ] as const) {
+      const original = hostSmokeInputs.find((row) => row.name === name);
+      assert(original);
+      const bytes = readFileSync(original.file);
+      await supportArchive(contribIdentity, name, options);
+      assert.throws(() => supportRows(), error, key);
+      writeFileSync(original.file, bytes);
+    }
     const reordered = structuredClone(supportReceipt);
     assert(reordered.hostSmokeCrates);
     reordered.hostSmokeCrates = reordered.hostSmokeCrates.map(

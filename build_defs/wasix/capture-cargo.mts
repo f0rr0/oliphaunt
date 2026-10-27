@@ -15,6 +15,7 @@ import {
   RUNTIME_PACKAGE,
 } from '../../src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import { requireSafeDirectoryChain } from '../../tools/packaging/release-directory-safety.mts';
+import { readWasixCargoCarrierSet } from '../../tools/packaging/wasix-extension-cargo-family.mts';
 import { buildShippingInputView } from '../../tools/release/bazel-shipping-inputs.mts';
 import {
   type NativeRoot,
@@ -87,12 +88,9 @@ export function captureWasixCargoConstructionInputs({
   const runtimeVersion = Bun.TOML.parse(
     readFileSync(path.join(ROOT, 'src/wasix/runtime/crates/assets/Cargo.toml'), 'utf8'),
   ).package.version;
-  const targets = new Map([
-    ...TARGETS,
-    ...wasixHostSmokeCargoIdentities(ROOT, runtimeVersion).map(
-      (row) => [row.name, row.target] as const,
-    ),
-  ]);
+  const support = wasixHostSmokeCargoIdentities(ROOT, runtimeVersion);
+  const contrib = new Set(support.filter((row) => row.product === PRODUCT).map((row) => row.name));
+  const targets = new Map([...TARGETS, ...support.map((row) => [row.name, row.target] as const)]);
   const carriers = new Map(
     catalog.carriers
       .filter((carrier) => carrier.ecosystem === 'cargo' && targets.has(carrier.name))
@@ -108,7 +106,12 @@ export function captureWasixCargoConstructionInputs({
       if (!path.basename(file).endsWith(suffix)) continue;
       const name = path.basename(file).slice(0, -suffix.length);
       if (name !== parent.name && !name.startsWith(`${parent.name}-part-`)) continue;
-      if (name !== parent.name && wasixRuntimeCargoParent(name) !== parent.name) continue;
+      if (
+        name !== parent.name &&
+        wasixRuntimeCargoParent(name) !== parent.name &&
+        !contrib.has(parent.name)
+      )
+        continue;
       const actual = resolveActualCarrier(catalog, 'cargo', name, 'WASIX Cargo capture');
       if (actual.id !== parent.id && actual.parentCarrier !== parent.id) continue;
       return { file, name, target: targets.get(parent.name)!, parent: parent.name };
@@ -134,12 +137,29 @@ export function captureWasixCargoConstructionInputs({
         pkg.version !== carrier.version ||
         pkg.role !== carrier.role ||
         pkg.configuration !== targets.get(pkg.name) ||
-        pkg.outputs?.length !== 1
+        pkg.outputs?.length !== (contrib.has(pkg.name) ? 2 : 1)
       )
         throw new Error(`WASIX Cargo root differs from its canonical final carrier: ${root.label}`);
-      const files = cargoFiles(nativeOutputPath(cohort.executionRoot, pkg.outputs[0].path)).map(
-        identify,
+      const outputs = pkg.outputs.map((output) =>
+        nativeOutputPath(cohort.executionRoot, output.path),
       );
+      if (contrib.has(pkg.name)) {
+        const parent = outputs.filter(
+          (file) => path.basename(file) === `${pkg.name}-${pkg.version}.crate`,
+        );
+        const parts = outputs.filter((file) => path.basename(file) === pkg.name);
+        if (
+          parent.length !== 1 ||
+          parts.length !== 1 ||
+          !lstatSync(parent[0]).isFile() ||
+          !lstatSync(parts[0]).isDirectory()
+        )
+          throw new Error(
+            `WASIX Cargo contrib requires its original parent File and parts Tree: ${root.label}`,
+          );
+        readWasixCargoCarrierSet([carrier], outputs);
+      }
+      const files = outputs.flatMap(cargoFiles).map(identify);
       if (
         !files.some((file) => file.name === pkg.name) ||
         files.some((file) => file.parent !== pkg.name)

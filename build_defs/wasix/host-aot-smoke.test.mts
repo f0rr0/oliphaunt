@@ -13,6 +13,8 @@ import {
   wasixExtensionAotPackageName,
   wasixExtensionPackageName,
 } from '../../src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
+import { renderCargoToml } from '../../tools/packaging/cargo-manifest.mts';
+import { readPortableArchiveEntries } from '../../tools/packaging/portable-archive.mts';
 import { releaseNoticeRows, stageReleaseNotices } from '../../tools/packaging/release-notices.mts';
 import { wasixHostSmokeCargoIdentities, wasixHostSmokeCargoRows } from './cargo-inputs.mts';
 import {
@@ -163,6 +165,74 @@ async function fixture(targetId: string, mutation: string = '') {
   };
 }
 
+async function repack(file: string, update: (files: Record<string, Uint8Array | string>) => void) {
+  const entries = readPortableArchiveEntries(file);
+  const prefix = path.basename(file, '.crate');
+  const files = Object.fromEntries(
+    [...entries.values()]
+      .filter((entry) => entry.isFile)
+      .map((entry) => [entry.name.slice(prefix.length + 1), entry.data()]),
+  );
+  update(files);
+  const archive = new Bun.Archive(
+    Object.fromEntries(Object.entries(files).map(([name, bytes]) => [`${prefix}/${name}`, bytes])),
+  );
+  writeFileSync(file, gzipSync(Buffer.from(await archive.bytes())));
+}
+
+/** Use the extension's actual complete-file/chunk layout without constructing a WASIX module. */
+async function splitContrib(spec: HostSmokeSpec) {
+  for (const name of [
+    wasixExtensionPackageName(product),
+    wasixExtensionAotPackageName(product, spec.target),
+  ]) {
+    const file = spec.crates[`${name}-${version}.crate`];
+    const entries = readPortableArchiveEntries(file);
+    const prefix = `${name}-${version}/payload/files/`;
+    const payload = [...entries.values()].filter(
+      (entry) => entry.isFile && entry.name.startsWith(prefix),
+    );
+    expect(payload.length).toBeGreaterThan(0);
+    const parts: string[] = [];
+    for (let index = 0; index < 2; index++) {
+      const part = `${name}-part-${String(index + 1).padStart(3, '0')}`;
+      parts.push(part);
+      const chunks = Object.fromEntries(
+        payload.map((entry) => {
+          const bytes = entry.data();
+          const middle = Math.ceil(bytes.length / 2);
+          return [
+            `payload/chunks/${entry.name.slice(prefix.length)}.part${String(index).padStart(6, '0')}`,
+            bytes.subarray(index ? middle : 0, index ? bytes.length : middle),
+          ];
+        }),
+      );
+      const filename = `${part}-${version}.crate`;
+      const destination = path.join(path.dirname(file), name, filename);
+      mkdirSync(path.dirname(destination), { recursive: true });
+      const archive = new Bun.Archive(
+        Object.fromEntries(
+          Object.entries({
+            'Cargo.toml': renderCargoToml({ package: { name: part, version } }),
+            ...chunks,
+          }).map(([member, bytes]) => [`${part}-${version}/${member}`, bytes]),
+        ),
+      );
+      writeFileSync(destination, gzipSync(Buffer.from(await archive.bytes())));
+      spec.crates[filename] = destination;
+    }
+    await repack(file, (files) => {
+      const manifest = Bun.TOML.parse(files['Cargo.toml'].toString());
+      manifest.dependencies = Object.fromEntries(
+        parts.map((name) => [name, { version: `=${version}` }]),
+      );
+      files['Cargo.toml'] = renderCargoToml(manifest);
+      for (const member of Object.keys(files))
+        if (member.startsWith('payload/')) delete files[member];
+    });
+  }
+}
+
 for (const [targetId, target] of Object.entries(AOT_TARGET_TRIPLES)) {
   test(`prepares exactly UUID-OSSP and split tools for ${target}`, async () => {
     const { root, spec } = await fixture(targetId);
@@ -180,7 +250,81 @@ for (const [targetId, target] of Object.entries(AOT_TARGET_TRIPLES)) {
     expect(readFileSync(tools.psql.wasm)).toEqual(module);
     expect(JSON.parse(readFileSync(tools.psql.manifest, 'utf8'))['target-triple']).toEqual(target);
   });
+  test(`prepares declared portable and AOT contrib parts for ${target}`, async () => {
+    const { root, spec } = await fixture(targetId);
+    await splitContrib(spec);
+    const specification = path.join(root, 'split.inputs.json');
+    const { crates, ...metadata } = spec;
+    writeFileSync(specification, JSON.stringify(metadata));
+    const resolved = readWasixHostAotSmokeSpec(specification, Object.values(crates));
+    expect(Object.keys(resolved.crates)).toHaveLength(9);
+    const packets = prepareWasixHostAotSmoke(resolved, path.join(root, 'prepared'));
+    const extension = JSON.parse(readFileSync(packets.extensionPacket, 'utf8'));
+    expect(extension.coreModuleSha256).toEqual(sha(module));
+    expect(extension.aotArtifacts).toHaveLength(1);
+    expect(readFileSync(extension.aotArtifacts[0].source)).toEqual(
+      zstdCompressSync(Buffer.from('independent serialized hash fixture extension:uuid-ossp')),
+    );
+    const tools = JSON.parse(readFileSync(packets.toolsPacket, 'utf8'));
+    expect(readFileSync(tools.pgDump.wasm)).toEqual(module);
+    expect(readFileSync(tools.psql.wasm)).toEqual(module);
+  });
 }
+test('contrib families reject missing, duplicate, foreign, unpinned and corrupt part inputs', async () => {
+  for (const mutation of ['missing', 'loose-pin', 'qualification-only', 'corrupt', 'chunk-gap']) {
+    const { root, spec } = await fixture('windows-x64-msvc');
+    await splitContrib(spec);
+    const parent = wasixExtensionAotPackageName(product, spec.target);
+    const filename = `${parent}-part-001-${version}.crate`;
+    const part = spec.crates[filename];
+    if (mutation === 'missing') delete spec.crates[filename];
+    else if (mutation === 'loose-pin')
+      await repack(spec.crates[`${parent}-${version}.crate`], (files) => {
+        const manifest = Bun.TOML.parse(files['Cargo.toml'].toString());
+        manifest.dependencies[`${parent}-part-001`].version = version;
+        files['Cargo.toml'] = renderCargoToml(manifest);
+      });
+    else
+      await repack(part, (files) => {
+        if (mutation === 'qualification-only') {
+          const manifest = Bun.TOML.parse(files['Cargo.toml'].toString());
+          manifest.package.metadata = { oliphaunt: { qualificationOnly: true } };
+          files['Cargo.toml'] = renderCargoToml(manifest);
+        } else {
+          const chunk = Object.keys(files).find((name) => name.startsWith('payload/chunks/'))!;
+          if (mutation === 'chunk-gap') {
+            files[chunk.replace('.part000000', '.part000002')] = files[chunk];
+            delete files[chunk];
+          } else {
+            const changed = Buffer.from(files[chunk]);
+            changed[0] ^= 1;
+            files[chunk] = changed;
+          }
+        }
+      });
+    expect(() => prepareWasixHostAotSmoke(spec, path.join(root, 'rejected'))).toThrow();
+  }
+  const { root, spec } = await fixture('linux-x64-gnu');
+  await splitContrib(spec);
+  const specification = path.join(root, 'host.inputs.json');
+  const { crates, ...metadata } = spec;
+  writeFileSync(specification, JSON.stringify(metadata));
+  const inputs = Object.values(crates);
+  const part = inputs.find((file) => path.basename(file).includes('-part-001-'))!;
+  expect(() => readWasixHostAotSmokeSpec(specification, [...inputs, part])).toThrow(/unique/u);
+  expect(() =>
+    readWasixHostAotSmokeSpec(specification, [
+      ...inputs,
+      path.join(root, `oliphaunt-extension-contrib-pg18-aot-linux-arm64-part-001-${version}.crate`),
+    ]),
+  ).toThrow(/unexpected archive/u);
+  expect(() =>
+    readWasixHostAotSmokeSpec(specification, [
+      ...inputs,
+      path.join(root, `${TOOLS_PACKAGE}-part-001-${toolsVersion}.crate`),
+    ]),
+  ).toThrow(/unexpected archive/u);
+});
 test('resolved main and external runfiles preserve exact host envelope inputs', async () => {
   const { root, spec } = await fixture('linux-arm64-gnu');
   const runfiles = path.join(root, 'runfiles');
@@ -210,7 +354,7 @@ test('resolved main and external runfiles preserve exact host envelope inputs', 
   );
   expect(() =>
     readWasixHostAotSmokeSpec(specification, [...leaves, 'unrelated.crate'], runfiles),
-  ).toThrow(/five resolved/u);
+  ).toThrow(/unexpected archive/u);
   expect(() =>
     readWasixHostAotSmokeSpec(
       specification,
