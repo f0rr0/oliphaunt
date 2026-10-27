@@ -470,6 +470,10 @@ Applications enable the companions with `CREATE EXTENSION postgis_raster`,
 `CREATE EXTENSION postgis_topology`, and `CREATE EXTENSION postgis_tiger_geocoder`
 after enabling their prerequisites. Mobile carriers register the combined
 core/raster/topology archive. Desktop and WASIX carriers ship separate modules.
+Extension artifact `nativeModuleStems` records the logical owned module closure
+on every target. Mobile runtime-resource and static-registry manifests record
+the merged primary module; mobile SQL and control files refer to that module.
+Frozen carriers retain their original declared closure.
 GDAL includes GTiff/VRT and GeoJSON/Shapefile drivers. Shared lifecycle fixtures
 verify GeoTIFF pixel values, dimensions, and SRID, persistent topology, and
 address normalization after creation, restart, and backup/restore.

@@ -1,0 +1,10 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/extensions:sdk_projections.bzl", "sdk_extension_metadata")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["ios-static-dependencies.json"])
+
+sdk_extension_metadata(name = "metadata", out = "extensions.json")
+
+source_quality_files()

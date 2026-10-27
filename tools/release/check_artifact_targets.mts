@@ -36,7 +36,6 @@ import {
   nativeToolsOptionalPackageProducts,
   rawArtifactTargetRows,
   registryPackageRows,
-  releaseMetadata,
   sdkPackageProducts,
   typescriptOptionalRuntimePackageProducts,
 } from './release-artifact-targets.mts';

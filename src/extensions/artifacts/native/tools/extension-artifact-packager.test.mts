@@ -132,14 +132,15 @@ for (const [target, suffix] of [
         }
       }
       if (mobile) {
-        assert(manifest.includes('nativeModuleStems=postgis-3\n'));
-        assertExtensionArtifactClosure(
-          { ...metadata, nativeModuleStems: ['postgis-3'] },
-          target,
-          target,
-        );
+        assert(manifest.includes(`nativeModuleStems=${[...stems].sort().join(',')}\n`));
+        assertExtensionArtifactClosure(metadata, target, target);
         assert.throws(
-          () => assertExtensionArtifactClosure(metadata, target, target),
+          () =>
+            assertExtensionArtifactClosure(
+              { ...metadata, nativeModuleStems: ['postgis-3'] },
+              target,
+              target,
+            ),
           /source-owned closure/,
         );
         for (const name of controls)

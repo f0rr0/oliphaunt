@@ -10,6 +10,7 @@ import {
 } from './platform-binary-contract.mts';
 import {
   OLIPHAUNT_WINDOWS_IMPORT_SYMBOLS,
+  arFixture as ar,
   windowsImportLibraryFixture,
 } from './testdata/release-fixture-utils.mts';
 
@@ -79,20 +80,6 @@ function fatMacho(slices) {
   return buffer;
 }
 
-function ar(members) {
-  const chunks = [Buffer.from('!<arch>\n', 'ascii')];
-  for (const [name, data] of members) {
-    const encodedName = `${name}/`.padEnd(16, ' ');
-    const header = Buffer.from(
-      `${encodedName}${'0'.padEnd(12, ' ')}${'0'.padEnd(6, ' ')}${'0'.padEnd(6, ' ')}${'100644'.padEnd(8, ' ')}${String(data.length).padEnd(10, ' ')}\`\n`,
-      'ascii',
-    );
-    chunks.push(header, data);
-    if (data.length % 2 !== 0) chunks.push(Buffer.from('\n', 'ascii'));
-  }
-  return Buffer.concat(chunks);
-}
-
 function elf({
   machine = 62,
   bits = 64,
@@ -101,6 +88,9 @@ function elf({
   truncateSectionTable = false,
   androidApi = null,
   type = 3,
+  loadAlignment = 16_384,
+  loadVirtualAddress = 0,
+  loadSegments = true,
 } = {}) {
   const versionBytes = Buffer.from(`\0${versions.join('\0')}\0`, 'ascii');
   const note = androidApi === null ? null : Buffer.alloc(24);
@@ -111,9 +101,13 @@ function elf({
     note.write('Android\0', 12, 'ascii');
     note.writeUInt32LE(androidApi, 20);
   }
-  const noteOffset = align(64 + versionBytes.length, 4);
+  const programSize = androidApi !== null && type !== 1 && loadSegments ? 56 : 0;
+  const dataOffset = 64 + programSize;
+  const noteOffset = align(dataOffset + versionBytes.length, 4);
   const sectionOffset = note === null ? 0 : align(noteOffset + note.length, 8);
-  const buffer = Buffer.alloc(note === null ? 64 + versionBytes.length : sectionOffset + 128);
+  const buffer = Buffer.alloc(
+    note === null ? dataOffset + versionBytes.length : sectionOffset + 128,
+  );
   Buffer.from([0x7f, 0x45, 0x4c, 0x46]).copy(buffer, 0);
   buffer[4] = bits === 64 ? 2 : 1;
   buffer[5] = littleEndian ? 1 : 2;
@@ -127,7 +121,18 @@ function elf({
     buffer.writeUInt16LE(64, 58);
     buffer.writeUInt16LE(2, 60);
   }
-  versionBytes.copy(buffer, 64);
+  versionBytes.copy(buffer, dataOffset);
+  if (programSize) {
+    buffer.writeBigUInt64LE(64n, 32);
+    buffer.writeUInt16LE(56, 54);
+    buffer.writeUInt16LE(1, 56);
+    buffer.writeUInt32LE(1, 64);
+    buffer.writeUInt32LE(5, 68);
+    buffer.writeBigUInt64LE(BigInt(loadVirtualAddress), 80);
+    buffer.writeBigUInt64LE(BigInt(buffer.length), 96);
+    buffer.writeBigUInt64LE(BigInt(buffer.length), 104);
+    buffer.writeBigUInt64LE(BigInt(loadAlignment), 112);
+  }
   if (note !== null) {
     note.copy(buffer, noteOffset);
     buffer.writeBigUInt64LE(BigInt(sectionOffset), 40);
@@ -344,7 +349,6 @@ describe('Mach-O platform compatibility', () => {
     expect(
       inspectPlatformBinaryEntries(entries, {
         target: 'ios-xcframework',
-        requiredApplePlatforms: [1, 2, 7],
       }).slices,
     ).toBe(3);
     const malformed = Buffer.from(entries[1].data);
@@ -371,9 +375,20 @@ describe('Mach-O platform compatibility', () => {
     expect(() =>
       inspectPlatformBinaryEntries(entries.slice(1), {
         target: 'ios-xcframework',
-        requiredApplePlatforms: [1, 2, 7],
       }),
     ).toThrow(/missing macOS/u);
+  });
+
+  test('rejects invalid programmatic Apple platform overrides with a contract error', () => {
+    for (const requiredApplePlatforms of [[], [99], ['macos'], 'macos']) {
+      expect(() =>
+        inspectPlatformBinaryEntries([entry('macos/lib.a', ar([['macos.o', macho()]]))], {
+          target: 'ios-xcframework',
+          // @ts-expect-error Exercise malformed callers at the runtime boundary.
+          requiredApplePlatforms,
+        }),
+      ).toThrow(/required Apple platforms must be a nonempty array of Mach-O platform IDs/u);
+    }
   });
 });
 
@@ -456,6 +471,49 @@ describe('ELF platform and GNU symbol-version compatibility', () => {
         label: 'wrong-api.so',
       }),
     ).toThrow(/API level 26 does not match.*24/u);
+  });
+
+  test('rejects Android linked images with 4 KiB, invalid or incongruent load alignment', () => {
+    for (const machine of [62, 183]) {
+      const target = machine === 62 ? 'android-x86_64' : 'android-arm64-v8a';
+      for (const loadAlignment of [4096, 24576])
+        expect(() =>
+          inspectPlatformBinaryBuffer(elf({ machine, androidApi: 24, loadAlignment }), { target }),
+        ).toThrow(/PT_LOAD alignment.*power of two at least 16384/u);
+      expect(() =>
+        inspectPlatformBinaryBuffer(elf({ machine, androidApi: 24, loadVirtualAddress: 4096 }), {
+          target,
+        }),
+      ).toThrow(/PT_LOAD.*incongruent/u);
+      expect(() =>
+        inspectPlatformBinaryBuffer(elf({ machine, androidApi: 24, loadSegments: false }), {
+          target,
+        }),
+      ).toThrow(/must contain a PT_LOAD/u);
+      expect(() =>
+        inspectPlatformBinaryBuffer(elf({ machine, type: 1 }), { target }),
+      ).not.toThrow();
+    }
+  });
+
+  test('requires the Android RELRO end to follow the same 16 KiB page contract', () => {
+    const binary = elf({ androidApi: 24 });
+    const originalSize = binary.length;
+    const withRelro = Buffer.concat([binary, Buffer.alloc(56)]);
+    binary.copy(withRelro, originalSize, 64, 120);
+    withRelro.writeBigUInt64LE(BigInt(originalSize), 32);
+    withRelro.writeUInt16LE(2, 56);
+    const relro = originalSize + 56;
+    // Add room for two program headers without altering the valid note/sections.
+    const image = Buffer.concat([withRelro, Buffer.alloc(56)]);
+    image.writeUInt32LE(0x6474e552, relro);
+    image.writeBigUInt64LE(4096n, relro + 16);
+    image.writeBigUInt64LE(12_288n, relro + 40);
+    expect(() => inspectPlatformBinaryBuffer(image, { target: 'android-x86_64' })).not.toThrow();
+    image.writeBigUInt64LE(4096n, relro + 40);
+    expect(() => inspectPlatformBinaryBuffer(image, { target: 'android-x86_64' })).toThrow(
+      /GNU_RELRO end must align to 16384/u,
+    );
   });
 });
 

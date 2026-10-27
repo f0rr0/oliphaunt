@@ -30,14 +30,6 @@ project:
   release:
     component: liboliphaunt-wasix
     packagePath: src/wasix/runtime
-    artifactTargets:
-      preset: liboliphaunt-wasix
-      targets:
-        - portable
-        - linux-arm64-gnu
-        - linux-x64-gnu
-        - macos-arm64
-        - windows-x64-msvc
 owners:
   defaultOwner: "@oliphaunt/wasix"
   paths:
@@ -64,6 +56,9 @@ fileGroups:
     - /src/query/rust/src/lib.rs
     - /src/test-fixtures/**/*
     - tools/runtime-smoke.sh
+    - tools/source-server-qualification.mts
+    - /tools/packaging/cargo-manifest.mts
+    - /src/wasix/node-addon/Cargo.toml
     - tools/wasix-extension-features.mts
     - tools/wasix-aot-manifest.mts
     - tools/wasix-cargo-artifact-contract.mts

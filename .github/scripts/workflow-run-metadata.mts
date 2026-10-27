@@ -75,6 +75,13 @@ switch (command) {
   case 'run-row': {
     const run = await Bun.stdin.json();
     if (
+      process.env.NATIVE_QUALIFICATION_REQUEST === 'true' &&
+      (run.head_branch !== 'main' ||
+        run.path !== '.github/workflows/bazel.yml' ||
+        !['push', 'workflow_dispatch'].includes(run.event))
+    )
+      throw new Error('Native qualification requires an eligible main-source run');
+    if (
       !/^[0-9A-Fa-f]{40}$/u.test(run.head_sha ?? '') ||
       !Number.isSafeInteger(run.workflow_id) ||
       run.workflow_id <= 0 ||
@@ -218,6 +225,15 @@ switch (command) {
     }
     break;
   }
+  case 'native-run-kind': {
+    const jobs = JSON.parse(fs.readFileSync(args[0], 'utf8'));
+    if (!Array.isArray(jobs)) throw new Error('Native job inventory must be a list');
+    const required = jobs.filter((job) => job?.name === 'Required');
+    if (required.length !== 1)
+      throw new Error('Native job inventory requires exactly one Required gate');
+    console.log(required[0].conclusion === 'skipped' ? 'source' : 'full');
+    break;
+  }
   case 'workflow-id': {
     const expected = process.env.WORKFLOW_NAME;
     let rows;
@@ -278,6 +294,18 @@ switch (command) {
         process.exit(1);
       }
       ids.add(row.id);
+      if (
+        process.env.NATIVE_QUALIFICATION_REQUEST === 'true' &&
+        (typeof row.head_branch !== 'string' || typeof row.path !== 'string')
+      )
+        throw new Error('Native run inventory is missing branch/path metadata');
+      if (
+        process.env.NATIVE_QUALIFICATION_REQUEST === 'true' &&
+        (row.head_branch !== 'main' ||
+          row.path !== '.github/workflows/bazel.yml' ||
+          !['push', 'workflow_dispatch'].includes(row.event))
+      )
+        continue;
       rendered.push([row.id, row.status, conclusion, row.html_url, row.event].join('\t'));
       if (process.env.QUALIFICATION_REQUEST_KEY) {
         const requested =

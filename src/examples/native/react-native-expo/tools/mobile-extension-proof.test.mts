@@ -96,9 +96,10 @@ test('the successful pg_textsearch producer supplies every semantic PASS fact', 
       extensionCatalogSha256: 'a'.repeat(64),
       catalogProfile: 'icu',
       icuRuntimeProof: true,
+      lifecycleResume: false,
     }),
   );
-  assert.equal(receipt.schema, 'oliphaunt-expo-smoke-pass-v4');
+  assert.equal(receipt.schema, 'oliphaunt-expo-smoke-pass-v5');
   assert.equal(receipt.catalogProfile, 'icu');
   assert.equal(receipt.allExtensionsActivated, true);
   assert.equal(receipt.extensionCatalogComplete, true);

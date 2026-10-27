@@ -140,6 +140,44 @@ test('rejects duplicate coordinates, malformed licenses, missing artifacts, and 
   expect(() => parseMavenArtifactManifest(value.manifest)).toThrow(/non-symlink/u);
 });
 
+test('stages versioned conventional dependencies and keeps legacy ten-column rows readable', async () => {
+  const value = fixture();
+  const original = readFileSync(value.manifest, 'utf8').trimEnd();
+  expect(parseMavenArtifactManifest(value.manifest)[0].dependencies).toEqual([]);
+  const dependency = {
+    groupId: 'dev.oliphaunt.extensions',
+    artifactId: 'oliphaunt-extension-contrib-pg18-android-arm64-v8a',
+    version: '4.5.6',
+    type: 'tar.gz',
+    scope: 'runtime',
+  };
+  writeFileSync(value.manifest, `${original}\t${JSON.stringify([dependency])}\n`);
+  expect(parseMavenArtifactManifest(value.manifest)[0].dependencies).toEqual([dependency]);
+  const [publication] = await stageMavenArtifactManifest(value.manifest, value.output);
+  const pom = readFileSync(
+    path.join(publication.directory, `${publication.artifactId}-${publication.version}.pom`),
+    'utf8',
+  );
+  expect(pom).toContain(
+    `<dependencies>\n    <dependency>\n      <groupId>${dependency.groupId}</groupId>\n      <artifactId>${dependency.artifactId}</artifactId>\n      <version>4.5.6</version>\n      <type>tar.gz</type>\n      <scope>runtime</scope>\n    </dependency>\n  </dependencies>`,
+  );
+  for (const [dependencies, pattern] of [
+    [[dependency, dependency], /repeats Maven dependency/u],
+    [[{ ...dependency, version: '' }], /must be non-empty/u],
+    [[{ ...dependency, version: 'latest' }], /exact stable SemVer/u],
+    [[{ ...dependency, scope: 'compile' }], /type=tar.gz and scope=runtime/u],
+    [[{ ...dependency, classifier: 'unowned' }], /exactly groupId/u],
+    [
+      [{ ...dependency, artifactId: 'oliphaunt-extension-example-android-arm64-v8a' }],
+      /must not depend on its own/u,
+    ],
+    [{}, /must be a JSON array/u],
+  ] as const) {
+    writeFileSync(value.manifest, `${original}\t${JSON.stringify(dependencies)}\n`);
+    expect(() => parseMavenArtifactManifest(value.manifest)).toThrow(pattern);
+  }
+});
+
 test('rejects coordinate dot segments before staging any path', async () => {
   const value = fixture();
   const fields = readFileSync(value.manifest, 'utf8').trimEnd().split('\t');

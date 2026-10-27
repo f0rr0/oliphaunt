@@ -1,19 +1,18 @@
 #!/usr/bin/env bun
 import { describe, expect, test } from 'bun:test';
-
-import { loadProducts } from './release-graph.mts';
-import { loadPublicationCatalog, resolveActualCarrier } from './publication-catalog.mts';
-import {
-  exactExtensionProducts,
-  extensionReleaseProduct,
-  extensionWasixAotMemberSqlNames,
-} from './release-artifact-targets.mts';
 import {
   EXTENSION_AOT_PACKAGE_SUFFIXES,
   EXTENSION_PORTABLE_TARGET,
   wasixExtensionAotPackageName,
   wasixExtensionPackageName,
 } from '../../src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
+import { loadPublicationCatalog, resolveActualCarrier } from './publication-catalog.mts';
+import {
+  exactExtensionProducts,
+  extensionReleaseProduct,
+  extensionWasixAotMemberSqlNames,
+} from './release-artifact-targets.mts';
+import { loadProducts } from './release-graph.mts';
 
 function catalogForArtifactProducts(products) {
   return loadPublicationCatalog('publication-catalog.test', {
@@ -36,6 +35,55 @@ test('normalizes every declared product into uniquely owned versioned carriers',
     expect(carrier.declared).toBe(true);
     expect(carrier.version).toBe(products[carrier.product].version);
   }
+});
+
+test('the Windows engine family retains one SDK owner and its canonical source and payload roles', () => {
+  const product = 'oliphaunt-wasix-rust';
+  const catalog = loadPublicationCatalog('Windows engine publication roles', {
+    products: [product],
+  });
+  const version = loadProducts('Windows engine publication roles')[product].version;
+  const sources = [
+    'oliphaunt-wasmer',
+    'oliphaunt-wasmer-journal',
+    'oliphaunt-wasmer-wasix',
+    'oliphaunt-wasmer-wasix-types',
+  ];
+  const delivery = 'oliphaunt-wasmer-v8-windows-x64-msvc';
+  expect(catalog.products.map(({ id }) => id)).toEqual([product]);
+  expect(catalog.carriers.map(({ name }) => name).sort()).toEqual(
+    ['oliphaunt-wasix', delivery, ...sources].sort(),
+  );
+  for (const name of sources) {
+    expect(resolveActualCarrier(catalog, 'cargo', name)).toMatchObject({
+      product,
+      version,
+      role: 'facade',
+      target: null,
+      declared: true,
+    });
+    expect(() => resolveActualCarrier(catalog, 'cargo', `${name}-part-001`)).toThrow(
+      /non-splittable parent role facade/u,
+    );
+  }
+  expect(resolveActualCarrier(catalog, 'cargo', delivery)).toMatchObject({
+    product,
+    version,
+    role: 'platform-leaf',
+    target: 'windows-x64-msvc',
+  });
+  for (const part of [1, 2])
+    expect(
+      resolveActualCarrier(catalog, 'cargo', `${delivery}-part-${String(part).padStart(3, '0')}`),
+    ).toMatchObject({
+      product,
+      version,
+      role: 'payload-part',
+      target: 'windows-x64-msvc',
+      parentCarrier: `cargo:${delivery}`,
+      part,
+      declared: false,
+    });
 });
 
 test('native tool target leaves admit exact payload parts while facades remain non-splittable', () => {

@@ -15,6 +15,7 @@ Executable configuration is authoritative. Documentation explains intent and ope
 | Extension support and packaging | `extension-packaging-policy.md` | extension catalog, global target profiles, native-component contract, release catalog |
 | SDK contracts | `sdk-products-policy.md`, `sdk-parity-policy.md`, `sdk-api-surface.md` | SDK manifests, package manifests, generated extension metadata, clean-consumer tests |
 | Product, task, qualification, and release boundaries | `../architecture/final-product-source-architecture.md` | Moon graph, release metadata, and workflows |
+| Proposed native Bazel migration and audited coverage | [Migration strategy](../architecture/bazel-migration-strategy.md), [coverage inventory](../architecture/bazel-migration-inventory.md) | Proposed replacement and acceptance gates; current architecture above remains active |
 | Repository layout | `repo-structure.md` | Moon projects and ecosystem manifests |
 
 The repository-local skills under `.codex/skills/` are the procedural entry

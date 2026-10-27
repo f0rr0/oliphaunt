@@ -218,6 +218,11 @@ mod tests {
     #[test]
     fn arguments_match_the_canonical_contract() {
         let owner = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let owner = std::env::var_os("TEST_SRCDIR")
+            .zip(std::env::var_os("TEST_WORKSPACE"))
+            .filter(|_| !owner.is_absolute())
+            .map(|(root, workspace)| std::path::PathBuf::from(root).join(workspace).join(owner))
+            .unwrap_or_else(|| owner.to_path_buf());
         let source = owner.join("../../../../test-fixtures/postgres/logical-tools.json");
         let fixture = if source.is_file() {
             source

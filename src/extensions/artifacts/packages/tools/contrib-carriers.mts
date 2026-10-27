@@ -7,10 +7,10 @@ function fail(prefix, message) {
   throw new Error(`${prefix}: ${message}`);
 }
 
-function toml(root, relativePath, prefix) {
+function toml(root, relativePath, prefix, readText) {
   const file = path.join(root, relativePath);
   if (!existsSync(file)) fail(prefix, `missing ${relativePath}`);
-  const value = Bun.TOML.parse(readFileSync(file, 'utf8'));
+  const value = Bun.TOML.parse(readText(relativePath));
   if (value === null || Array.isArray(value) || typeof value !== 'object') {
     fail(prefix, `${relativePath} must contain a TOML table`);
   }
@@ -23,15 +23,19 @@ function string(value, context, prefix) {
   return value;
 }
 
-export function loadContribCarriers(root, prefix = 'contrib-carriers') {
-  const descriptor = toml(root, CONTRIB_CARRIERS_PATH, prefix);
+export function loadContribCarriers(
+  root,
+  prefix = 'contrib-carriers',
+  { readText = (relativePath) => readFileSync(path.join(root, relativePath), 'utf8') } = {},
+) {
+  const descriptor = toml(root, CONTRIB_CARRIERS_PATH, prefix, readText);
   const artifactProduct = string(descriptor.logical_product, 'logical_product', prefix);
   const memberManifest = string(descriptor.member_manifest, 'member_manifest', prefix);
   const source = string(descriptor.source, 'source', prefix);
   const contract = string(descriptor.contract, 'contract', prefix);
   const nativeOwner = string(descriptor.native_owner, 'native_owner', prefix);
   const wasixOwner = string(descriptor.wasix_owner, 'wasix_owner', prefix);
-  const members = toml(root, memberManifest, prefix).extensions;
+  const members = toml(root, memberManifest, prefix, readText).extensions;
   if (
     !Array.isArray(members) ||
     members.some(
@@ -56,6 +60,7 @@ export function loadContribCarriers(root, prefix = 'contrib-carriers') {
   ];
   for (const file of inputFiles) {
     if (!existsSync(path.join(root, file))) fail(prefix, `missing contrib carrier input ${file}`);
+    readText(file);
   }
   return {
     artifactProduct,

@@ -1,24 +1,24 @@
 #!/usr/bin/env bun
-import { IOS_CARRIER_FILENAME } from '../../swift/tools/ios-carrier-manifest.mts';
+import { readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import {
-  PREFIX,
   archiveTarNames,
   fail,
   inspectSdkProduct,
   isFile,
+  PREFIX,
   rejectSdkRuntimePayload,
   rel,
   tarReadBytes,
 } from '../../../../../tools/packaging/release-carrier.mts';
-import { validateSelectionNeutralSwiftCarrierIdentity } from '../../swift/tools/swift-source-carrier-contract.mts';
-import { readFileSync, readdirSync } from 'node:fs';
-import path from 'node:path';
-import { compareText } from '../../../../../tools/release/release-artifact-targets.mts';
 import {
-  SOURCE_ONLY_NPM_PROFILES,
   assertSourceOnlyNpmArchive,
+  SOURCE_ONLY_NPM_PROFILES,
 } from '../../../../../tools/packaging/source-only-sdk-package.mts';
+import { compareText } from '../../../../../tools/release/release-artifact-targets.mts';
 import { productDependencyCompatibilityVersion } from '../../../../../tools/release/release-graph.mts';
+import { IOS_CARRIER_FILENAME } from '../../swift/tools/ios-carrier-manifest.mts';
+import { validateSelectionNeutralSwiftCarrierIdentity } from '../../swift/tools/swift-source-carrier-contract.mts';
 
 /**
  * Prove that the selection-neutral Apple carrier users receive in the React
@@ -30,6 +30,7 @@ export function validateReactNativePackagedCarrier({
   expectedNativeVersion,
   memberBytes,
   names,
+  sourceBasis = undefined,
 }) {
   const member = `package/${IOS_CARRIER_FILENAME}`;
   const matches = names.filter((name) => name === member);
@@ -54,10 +55,11 @@ export function validateReactNativePackagedCarrier({
     carrier,
     expectedNativeVersion,
     label: `${rel(artifact)} packaged React Native Apple carrier`,
+    sourceBasis,
   });
 }
 
-export async function checkReactNativePackage(root) {
+export async function checkReactNativePackage(root, { nativeSourceBasis = undefined } = {}) {
   const product = 'oliphaunt-react-native';
   let checked = false;
 
@@ -100,6 +102,7 @@ export async function checkReactNativePackage(root) {
           ),
           memberBytes: tarReadBytes(tarball, carrierMember),
           names,
+          sourceBasis: nativeSourceBasis,
         });
       } catch (error) {
         fail(error instanceof Error ? error.message : String(error));

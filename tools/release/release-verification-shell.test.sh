@@ -56,4 +56,8 @@ FAIL_GATE="$first_gate" run release-check-registries.sh --products-json "$produc
 [[ "$status" == 2 ]]
 head -n 1 "$scratch/registry-success" > "$scratch/expected"
 cmp "$scratch/expected" "$CALL_LOG"
+run release-check-registries.sh --native-preparation --products-json "$products" --head-ref "$head_commit"
+record tools/release/check_release_versions.mts --native-preparation --products-json "$products" \
+  --head-ref "$head_commit" --check-registries > "$scratch/expected"
+cmp "$scratch/expected" "$CALL_LOG"
 echo 'Release verification: receipt arguments preserved and failed gates stop subsequent work'

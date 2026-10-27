@@ -1,0 +1,9 @@
+{
+  "schema": "oliphaunt-installed-cargo-fixture-v1",
+  "cargo": "1.96.0",
+  "repository": "index.crates.io-1949cf8c6b5b557f",
+  "target": "x86_64-unknown-linux-gnu",
+  "archives": [],
+  "config": {},
+  "indexes": []
+}

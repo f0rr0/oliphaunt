@@ -192,13 +192,21 @@ logs_have_lifecycle_ready() {
   esac
 }
 
+run_ios_lifecycle_command() {
+  local status=0
+  printf '\n==> iOS lifecycle [%s]: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"
+  "$@" || status=$?
+  printf '==> iOS lifecycle [%s]: exit %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$status"
+  return "$status"
+}
+
 exercise_ios_lifecycle() {
   local device_udid="$1"
   echo
-  echo "==> iOS lifecycle: open Safari, wait ${background_seconds}s, foreground $app_id"
-  run xcrun simctl openurl "$device_udid" "https://example.com/liboliphaunt-lifecycle-background"
+  echo "==> iOS lifecycle: launch Safari, wait ${background_seconds}s, foreground $app_id"
+  run_ios_lifecycle_command xcrun simctl launch "$device_udid" com.apple.mobilesafari || return $?
   sleep "$background_seconds"
-  run xcrun simctl launch "$device_udid" "$app_id"
+  run_ios_lifecycle_command xcrun simctl launch "$device_udid" "$app_id"
 }
 
 exercise_ios_device_lifecycle() {
@@ -320,7 +328,7 @@ exercise_ios_crash_recovery() {
   echo
   echo "==> iOS crash recovery: write phase"
   run xcrun simctl terminate "$device_udid" "$app_id" || true
-  launch_output="$(xcrun simctl launch "$device_udid" "$app_id" --initialUrl "$write_url")"
+  launch_output="$(launch_ios_simulator_runner "$device_udid" "$write_url")"
   printf '%s\n' "$launch_output"
   launch_pid="$(printf '%s\n' "$launch_output" | awk -F': ' -v app_id="$app_id" '$1 == app_id {print $2; exit}')"
   write_line="$(wait_for_ios_tag "$device_udid" OLIPHAUNT_EXPO_CRASH_WRITE_READY "$failure_tag" "$scratch_offset" "$dev_offset")" ||
@@ -336,7 +344,7 @@ exercise_ios_crash_recovery() {
   scratch_offset="$(file_bytes "$scratch_root/metro.log")"
   dev_offset="$(file_bytes "$metro_dev_log")"
   verify_url="$(ios_runner_url crash-verify "$crash_storage")"
-  launch_output="$(xcrun simctl launch "$device_udid" "$app_id" --initialUrl "$verify_url")"
+  launch_output="$(launch_ios_simulator_runner "$device_udid" "$verify_url")"
   printf '%s\n' "$launch_output"
   launch_pid="$(printf '%s\n' "$launch_output" | awk -F': ' -v app_id="$app_id" '$1 == app_id {print $2; exit}')"
   pass="$(wait_for_ios_tag "$device_udid" "$success_tag" "$failure_tag" "$scratch_offset" "$dev_offset")" ||
@@ -410,6 +418,8 @@ wait_for_ios_device_runner() {
     fi
     pass="$(latest_metro_runner_pass "$scratch_offset" "$dev_offset")"
     if [ -n "$pass" ]; then
+      [ "$lifecycle_smoke" != 1 ] || [ "$lifecycle_exercised" = 1 ] ||
+        fail "iOS smoke PASS preceded the requested lifecycle exercise"
       printf '\n%s\n' "$pass"
       write_runner_report "$pass"
       write_ios_device_process_metrics "$device_id"
@@ -492,6 +502,15 @@ wait_for_ios_tag_from_metro() {
   return 1
 }
 
+launch_ios_simulator_runner() {
+  local device_udid="$1" url="$2"
+  if uses_ios_metro; then
+    xcrun simctl launch "$device_udid" "$app_id" --initialUrl "$url"
+  else
+    xcrun simctl launch "$device_udid" "$app_id" -liboliphauntLaunchURL "$url"
+  fi
+}
+
 install_and_launch() {
   local app="$1"
   if [ "${OLIPHAUNT_EXPO_IOS_BUILD_ONLY:-0}" = "1" ]; then
@@ -560,14 +579,21 @@ install_and_launch() {
   dev_metro_offset="$(file_bytes "$metro_dev_log")"
   local app_process_name
   app_process_name="$(resolve_ios_app_process_name "$app")" || fail "missing iOS executable"
+  if [ "$lifecycle_smoke" = 1 ]; then
+    # Prepare the auxiliary app before the tested launch starts its lifecycle
+    # deadline. Switching apps needs neither URL dispatch nor network access.
+    run_ios_lifecycle_command xcrun simctl launch "$device_udid" com.apple.mobilesafari ||
+      fail "failed to prepare the iOS lifecycle background app"
+  fi
   start_ios_simulator_log_capture "$device_udid" "$app_process_name" ||
     fail "failed to start exact-launch iOS unified-log capture"
   local url
   url="$(ios_runner_url "$runner")"
   local launch_output launch_pid
   echo
-  echo "==> xcrun simctl launch $device_udid $app_id --initialUrl $url"
-  launch_output="$(xcrun simctl launch "$device_udid" "$app_id" --initialUrl "$url")"
+  printf '==> iOS initial launch [%s]\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  launch_output="$(launch_ios_simulator_runner "$device_udid" "$url")"
+  printf '==> iOS initial launch returned [%s]\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   printf '%s\n' "$launch_output"
   launch_pid="$(printf '%s\n' "$launch_output" | awk -F': ' -v app_id="$app_id" '$1 == app_id {print $2; exit}')"
   if [ "${OLIPHAUNT_EXPO_IOS_OPENURL_FALLBACK:-0}" = "1" ]; then
@@ -576,9 +602,9 @@ install_and_launch() {
   fi
 
   local logs pass
+  mobile_app_is_alive() { [ -n "$launch_pid" ] && kill -0 "$launch_pid" 2>/dev/null; }
   if [ "$runner" = smoke ] && [ "$lifecycle_smoke" != 1 ]; then
     local receipt_status=0
-    mobile_app_is_alive() { [ -n "$launch_pid" ] && kill -0 "$launch_pid" 2>/dev/null; }
     pass="$(wait_for_mobile_receipt "$ios_simulator_log_file" "$ios_simulator_log_pid")" || receipt_status=$?
     stop_ios_simulator_log_capture || receipt_status=3
     mobile_log_has_failure "$ios_simulator_log_file" && receipt_status=2
@@ -593,16 +619,29 @@ install_and_launch() {
   fi
 
   local deadline=$((SECONDS + timeout_seconds))
-  local fail_line lifecycle_exercised=0
+  local fail_line lifecycle_exercised=0 receipt_status
   while [ "$SECONDS" -lt "$deadline" ]; do
+    receipt_status=0
     logs="$(cat "$ios_simulator_log_file")"
+    mobile_log_has_failure "$ios_simulator_log_file" && receipt_status=2
+    ios_simulator_log_capture_is_alive || receipt_status=3
+    mobile_app_is_alive || receipt_status=4
+    if [ "$receipt_status" != 0 ]; then
+      if [ "$lifecycle_smoke" = 1 ]; then
+        xcrun simctl io "$device_udid" screenshot "$scratch_root/logs/$runner-lifecycle-failure.png" >&2 || true
+        grep -F 'OLIPHAUNT_EXPO_SMOKE_' "$ios_simulator_log_file" | tail -40 >&2 || true
+      fi
+      tail -200 "$ios_simulator_log_file" >&2 || true
+      fail "iOS smoke receipt failed (status $receipt_status: timeout=1, failure=2, capture=3, app=4)"
+    fi
     if [ "$lifecycle_smoke" = "1" ] && [ "$lifecycle_exercised" = "0" ]; then
       if {
         printf '%s\n' "$logs"
         file_from_offset "$scratch_root/metro.log" "$scratch_metro_offset"
         file_from_offset "$metro_dev_log" "$dev_metro_offset"
       } | logs_have_lifecycle_ready; then
-        exercise_ios_lifecycle "$device_udid"
+        printf '==> iOS lifecycle readiness observed [%s]\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+        exercise_ios_lifecycle "$device_udid" || fail "failed to exercise the iOS lifecycle transition"
         lifecycle_exercised=1
         sleep 2
         continue
@@ -610,6 +649,8 @@ install_and_launch() {
     fi
     pass="$(printf '%s\n' "$logs" | grep -F "$success_tag" | tail -1 || true)"
     if [ -n "$pass" ]; then
+      [ "$lifecycle_smoke" != 1 ] || [ "$lifecycle_exercised" = 1 ] ||
+        fail "iOS smoke PASS preceded the requested lifecycle exercise"
       printf '\n%s\n' "$pass"
       write_runner_report "$pass"
       write_ios_process_metrics "$launch_pid"
@@ -618,16 +659,13 @@ install_and_launch() {
     if uses_ios_metro; then
       pass="$(latest_metro_runner_pass "$scratch_metro_offset" "$dev_metro_offset")"
       if [ -n "$pass" ]; then
+        [ "$lifecycle_smoke" != 1 ] || [ "$lifecycle_exercised" = 1 ] ||
+          fail "iOS smoke PASS preceded the requested lifecycle exercise"
         printf '\n%s\n' "$pass"
         write_runner_report "$pass"
         write_ios_process_metrics "$launch_pid"
         return
       fi
-    fi
-    fail_line="$(printf '%s\n' "$logs" | grep -E "$failure_tag|Fatal error|terminating" | tail -20 || true)"
-    if [ -n "$fail_line" ]; then
-      printf '%s\n' "$fail_line" >&2
-      fail "Expo iOS $runner failed"
     fi
     if uses_ios_metro; then
       fail_line="$(latest_metro_runner_failure "$scratch_metro_offset" "$dev_metro_offset")"
@@ -639,7 +677,10 @@ install_and_launch() {
     sleep 2
   done
 
-  xcrun simctl spawn "$device_udid" log show --style compact --last 2m 2>/dev/null | tail -200 >&2 || true
+  if [ "$lifecycle_smoke" = 1 ]; then
+    grep -F 'OLIPHAUNT_EXPO_SMOKE_' "$ios_simulator_log_file" | tail -40 >&2 || true
+  fi
+  tail -200 "$ios_simulator_log_file" >&2 || true
   file_from_offset "$scratch_root/metro.log" "$scratch_metro_offset" | tail -120 >&2 || true
   file_from_offset "$metro_dev_log" "$dev_metro_offset" | tail -120 >&2 || true
   fail "timed out waiting for $success_tag"

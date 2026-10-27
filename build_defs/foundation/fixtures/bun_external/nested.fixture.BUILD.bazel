@@ -1,0 +1,6 @@
+load("//:test-entries.bzl", "external_bun_entries")
+
+package(default_visibility = ["//visibility:public"])
+
+# Entrypoints and their imports belong to the repository root package.
+external_bun_entries()

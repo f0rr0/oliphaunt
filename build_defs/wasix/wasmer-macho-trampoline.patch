@@ -1,0 +1,59 @@
+diff --git a/src/compiler.rs b/src/compiler.rs
+index f3ab421..595f629 100644
+--- a/src/compiler.rs
++++ b/src/compiler.rs
+@@ -599,6 +599,15 @@ impl Compiler for LLVMCompiler {
+                 let got_data: Vec<u8> = vec![0; got_targets.len() * 8];
+                 let mut got_relocs = vec![];
+ 
++                // Randomized set iteration must not become serialized GOT offsets.
++                let mut got_targets = got_targets.into_iter().collect::<Vec<_>>();
++                got_targets.sort_unstable_by_key(|target| match target {
++                    RelocationTarget::LocalFunc(index) => (0_u8, index.as_u32()),
++                    RelocationTarget::DynamicTrampoline(index) => (1, index.as_u32()),
++                    RelocationTarget::LibCall(libcall) => (2, *libcall as u16 as u32),
++                    RelocationTarget::CustomSection(index) => (3, index.as_u32()),
++                });
++
+                 for (i, target) in got_targets.into_iter().enumerate() {
+                     got_relocs.push(wasmer_compiler::types::relocation::Relocation {
+                         kind: RelocationKind::Abs8,
+diff --git a/src/translator/trampoline.rs b/src/translator/trampoline.rs
+index 61ebaed..f3fb497 100644
+--- a/src/translator/trampoline.rs
++++ b/src/translator/trampoline.rs
+@@ -50,6 +50,16 @@ const FUNCTION_SECTION_ELF: &str = "__TEXT,wasmer_trmpl"; // Needs to be between
+ const FUNCTION_SECTION_MACHO: &str = "wasmer_trmpl"; // Needs to be between 1 and 16 chars
+ 
+ impl FuncTrampoline {
++    // LLVM requires a segment and section for Mach-O; the object loader below
++    // still looks up the unqualified section name stored in func_section.
++    fn llvm_function_section(&self) -> String {
++        if matches!(self.binary_fmt, BinaryFormat::Macho) {
++            format!("__TEXT,{}", self.func_section)
++        } else {
++            self.func_section.clone()
++        }
++    }
++
+     pub fn new(
+         target_machine: TargetMachine,
+         target_triple: Triple,
+@@ -117,7 +127,7 @@ impl FuncTrampoline {
+         if !config.experimental_artifact {
+             trampoline_func
+                 .as_global_value()
+-                .set_section(Some(&self.func_section));
++                .set_section(Some(&self.llvm_function_section()));
+         }
+         trampoline_func
+             .as_global_value()
+@@ -282,7 +292,7 @@ impl FuncTrampoline {
+         if !config.experimental_artifact {
+             trampoline_func
+                 .as_global_value()
+-                .set_section(Some(&self.func_section));
++                .set_section(Some(&self.llvm_function_section()));
+         }
+         trampoline_func
+             .as_global_value()

@@ -1,0 +1,49 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/extensions:external.bzl", "native_external_extension_modules")
+load("//build_defs/extensions:extensions.bzl", "NATIVE_EXTENSION_CONFIGURATION", "extension_default_version", "extension_identity", "extension_member_payload", "extension_member_validation_test")
+load("//build_defs/release:shipping.bzl", "shipping_package")
+load("//build_defs/extensions:native_carriers.bzl", "native_external_extension_carriers")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["upstream-license-data.json", "release.toml", "source.toml", "recipe.toml"])
+
+native_external_extension_carriers(
+    sql_name = "pg_textsearch",
+    additional_qualification = select({
+        "//build_defs/native:linux_x86_64": ["//src/extensions/external/pg_textsearch/tests:native_upstream_test"],
+        "//conditions:default": [],
+    }),
+)
+
+native_external_extension_modules(name = "pg_textsearch")
+
+filegroup(
+    name = "sql_resources",
+    srcs = [
+        "@pg_textsearch//:pg_textsearch.control",
+        "@pg_textsearch//:sql/pg_textsearch--" + extension_default_version("pg_textsearch") + ".sql",
+        "@pg_textsearch//:sql_upgrade_resources",
+    ],
+)
+
+extension_member_payload(
+    name = "native_payload",
+    sql_name = "pg_textsearch",
+    owner = extension_identity("pg_textsearch"),
+    resources = [":sql_resources"],
+    server_module = ":pg_textsearch_server_module",
+    embedded_module = ":pg_textsearch_embedded_module",
+    construction_licenses = select({
+        "//build_defs/native:linux_x86_64_gnu_2_28": {
+            "@pgvector_compiler_rt//:LICENSE.TXT": "share/licenses/llvm-compiler-rt/LICENSE.TXT",
+            "@pgvector_compiler_rt//:SOURCE.json": "share/licenses/llvm-compiler-rt/SOURCE.json",
+        },
+        "//conditions:default": {},
+    }),
+)
+
+shipping_package(name = "native_member", owner = extension_identity("pg_textsearch"), artifacts = [":native_payload"], ecosystem = "internal", package_name = "pg_textsearch", configuration = NATIVE_EXTENSION_CONFIGURATION, role = "extension-member", suppliers = ":native_payload")
+extension_member_validation_test(name = "native_payload_test", payload = ":native_payload", sql_name = "pg_textsearch")
+
+source_quality_files()

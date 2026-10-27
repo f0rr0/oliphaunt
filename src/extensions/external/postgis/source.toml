@@ -9,3 +9,6 @@ sql-name = "postgis"
 source-path = "extensions/postgis/postgis.control.in"
 source-default-version = "@EXTVERSION@"
 default-version = "3.6.4"
+
+[archive]
+sha256 = "8df008472ba1e0af19a184aaa92244cfd7c65954002e338dde76e60d5269f000"

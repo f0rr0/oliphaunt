@@ -1,0 +1,1 @@
+pub const SHIPPING_SUPPLIER_FIXTURE: u8 = 1;

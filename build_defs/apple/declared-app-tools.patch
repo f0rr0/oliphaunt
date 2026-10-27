@@ -1,0 +1,41 @@
+diff --git a/tools/wrapper_common/BUILD b/tools/wrapper_common/BUILD
+--- a/tools/wrapper_common/BUILD
++++ b/tools/wrapper_common/BUILD
+@@ -9,6 +9,10 @@ py_library(
+         "__init__.py",
+         "execute.py",
+     ],
++    data = select({
++        "@platforms//os:macos": ["@@//build_defs/apple:licensed_app_tools"],
++        "//conditions:default": [],
++    }),
+     srcs_version = "PY3",
+     visibility = [
+         "//tools/bitcode_strip:__pkg__",
+diff --git a/apple/internal/xcframework_rules.bzl b/apple/internal/xcframework_rules.bzl
+--- a/apple/internal/xcframework_rules.bzl
++++ b/apple/internal/xcframework_rules.bzl
+@@ -925,6 +925,12 @@
+         xcode_config = xcode_config,
+     )
+ 
++    # These are the identical selected Files consumed by the final bundle.
++    framework_output_groups.append({
++        "apple_slice_" + identifier: depset([output.binary])
++        for identifier, output in link_outputs_by_library_identifier.items()
++    })
++
+     processor_output = [
+         # Limiting the contents of AppleBundleInfo to what is necessary for testing and validation.
+         new_applebundleinfo(
+@@ -1357,6 +1363,10 @@
+         DefaultInfo(
+             files = depset([outputs_archive]),
+         ),
++        OutputGroupInfo(**{
++            "apple_slice_" + identifier: depset([output.binary])
++            for identifier, output in link_outputs_by_library_identifier.items()
++        }),
+     ]
+ 
+ apple_static_xcframework = rule_factory.create_apple_rule(

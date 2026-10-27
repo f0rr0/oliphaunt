@@ -4,12 +4,7 @@ import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import {
-  packageNativeToolsCargoArtifacts,
-  renderUnsupportedToolsTargetGuard,
-} from '../../postgres-tools/tools/package-cargo-artifacts.mts';
 import { createDeterministicTar } from '../../../../tools/packaging/cargo-source-package.mts';
-import { NATIVE_CARGO_CARRIER_LICENSES } from '../../../../tools/packaging/native-cargo-payload.mts';
 import {
   canonicalGzipSync,
   extractPortableArchiveTree,
@@ -17,9 +12,14 @@ import {
 } from '../../../../tools/packaging/portable-archive.mts';
 import {
   assertReleaseNoticesInArchive,
+  releaseProfilePackageLicense,
   stageReleaseNotices,
 } from '../../../../tools/packaging/release-notices.mts';
 import { elfFixture } from '../../../../tools/packaging/testdata/release-fixture-utils.mts';
+import {
+  packageNativeToolsCargoArtifacts,
+  renderUnsupportedToolsTargetGuard,
+} from '../../postgres-tools/tools/package-cargo-artifacts.mts';
 import { requiredCoreRuntimePaths } from './native-runtime-payload.mts';
 import { packageNativeCargoArtifacts } from './package-liboliphaunt-cargo-artifacts.mts';
 
@@ -146,7 +146,7 @@ test('freezes deterministic .crate bytes and prepares an extracted native consum
     );
     assert.equal(
       Bun.TOML.parse(packedManifest).package.license,
-      NATIVE_CARGO_CARRIER_LICENSES[expectedProfile],
+      releaseProfilePackageLicense(expectedProfile, { sourceRoot: ROOT }).spdx,
       `${item.name} must declare its exact role license closure`,
     );
     assertReleaseNoticesInArchive(path.resolve(ROOT, item.cratePath), {
@@ -187,12 +187,13 @@ test('freezes deterministic .crate bytes and prepares an extracted native consum
     path.resolve(ROOT, packedAggregator.cratePath),
     `${packedAggregator.name}-9.8.7/Cargo.toml`,
   );
-  assert.doesNotMatch(packedManifest, /oliphaunt-package-deps|registry\s*=/u);
-  assert.doesNotMatch(
-    packedManifest,
-    /\[build-dependencies[.]liboliphaunt-native-linux-x64-gnu-part-001\][\s\S]*?path\s*=/u,
+  assert.doesNotMatch(packedManifest, /oliphaunt-package-deps/u);
+  assert.deepEqual(
+    Bun.TOML.parse(packedManifest)['build-dependencies'][
+      'liboliphaunt-native-linux-x64-gnu-part-001'
+    ],
+    { version: '=9.8.7' },
   );
-  assert.match(packedManifest, /version\s*=\s*"=9[.]8[.]7"/u);
 
   const facade = manifest.packages.find(({ role }) => role === 'facade');
   assert.ok(facade);

@@ -1,0 +1,108 @@
+"""Import immutable external extension sources from the canonical metadata."""
+
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+load("@oliphaunt_metadata//:extension-sources.bzl", "EXTENSION_DEPENDENCIES", "EXTENSION_SOURCES")
+load("//build_defs/native:repositories.bzl", "source_string_values")
+
+_BUILD = """
+package(default_visibility = ["//visibility:public"])
+exports_files(glob(["**"], exclude = ["BUILD", "BUILD.bazel", "WORKSPACE", "WORKSPACE.bazel", "MODULE.bazel"], allow_empty = True))
+filegroup(
+    name = "sql_inputs",
+    srcs = glob(["*.control", "sql/*.sql", "sql/*.sql.in", "compat/install-*.patch", "compat/gencore", "Makefile"], allow_empty = True),
+)
+filegroup(name = "headers", srcs = glob(["src/**/*.h"], allow_empty = True))
+filegroup(name = "sql_resources", srcs = glob(["*.control", "*--*.sql", "sql/*--*.sql"], allow_empty = True))
+filegroup(name = "sql_upgrade_resources", srcs = glob(["*--*--*.sql", "sql/*--*--*.sql"], allow_empty = True))
+filegroup(name = "test_inputs", srcs = glob(["Makefile", "test/sql/*.sql", "test/expected/*.out", "test/scripts/gen*_bm25vector.py"], allow_empty = True))
+"""
+
+_DEPENDENCY_BUILD = """
+package(default_visibility = ["//visibility:public"])
+exports_files(glob(["**"], exclude = ["BUILD", "BUILD.bazel", "WORKSPACE", "WORKSPACE.bazel", "MODULE.bazel"], allow_empty = True))
+filegroup(name = "all_sources", srcs = glob(["**"], exclude = ["BUILD", "BUILD.bazel", "WORKSPACE", "WORKSPACE.bazel", "MODULE.bazel"], allow_empty = True))
+filegroup(name = "headers", srcs = glob(["**/*.h", "**/*.hpp", "**/*.inl", "**/*.inc"], allow_empty = True))
+"""
+
+_DEPENDENCY_INPUTS = {
+    "geos": '\nfilegroup(name = "native_sources", srcs = glob(["src/**/*.cpp", "capi/*.cpp"]))\nfilegroup(name = "native_c_sources", srcs = glob(["src/deps/**/*.c"]))\nfilegroup(name = "native_core_sources", srcs = glob(["src/**/*.cpp"]))\nfilegroup(name = "native_capi_sources", srcs = glob(["capi/*.cpp"]))\n',
+    "proj": '\nfilegroup(name = "native_sources", srcs = glob(["src/*.cpp", "src/projections/*.cpp", "src/conversions/*.cpp", "src/transformations/*.cpp", "src/iso19111/**/*.cpp"]))\nfilegroup(name = "native_c_sources", srcs = glob(["src/*.c"], exclude = ["src/embedded_resources.c", "src/memvfs.c"]))\n',
+}
+
+_POSTGIS_INPUTS = """
+filegroup(name = "postgis_headers", srcs = glob(["**/*.h", "**/*.hpp", "**/*.inl", "**/*.inc"], allow_empty = True))
+filegroup(name = "postgis_sql_inputs", srcs = glob(["Version.config", "postgis/*.sql.in", "postgis/*.sql.in.*", "postgis/*.sql", "postgis/*.h", "libpgcommon/*.h", "extensions/**/*.sql", "extensions/**/*.sql.in", "extensions/**/Makefile.in", "extensions/upgrade-paths-rules.mk", "utils/*.pl", "raster/rt_pg/*.sql.in", "raster/rt_pg/*.sql.in.*", "raster/rt_pg/*.sql", "postgis/Makefile.in", "raster/rt_pg/Makefile.in", "topology/**/*.sql.in", "topology/*.sql.in.*", "topology/Makefile.in", "extras/tiger_geocoder/**/*.sql"], allow_empty = True))
+"""
+
+def _git_source_archive(name, source, build_file_content = None, build_file = None, patches = []):
+    archive = source["archive"]
+    attributes = {"build_file": build_file} if build_file else {"build_file_content": build_file_content}
+    if patches:
+        attributes.update({"patches": patches, "patch_args": ["-p1"]})
+    http_archive(
+        name = name,
+        urls = [archive["url"]],
+        sha256 = archive["sha256"],
+        strip_prefix = archive["strip_prefix"],
+        type = "tar.gz",
+        **attributes
+    )
+
+def _extension_sources_impl(module_ctx):
+    for sql_name, source in EXTENSION_SOURCES.items():
+        _git_source_archive(
+            name = source["name"],
+            source = source,
+            build_file_content = _BUILD + (_POSTGIS_INPUTS if sql_name == "postgis" else ""),
+        )
+    for sql_name, dependencies in EXTENSION_DEPENDENCIES.items():
+        for directory, source in dependencies.items():
+            name = sql_name.replace("-", "_") + "_" + directory.replace("-", "_")
+            kind = source.get("kind", "git")
+            if kind == "git":
+                _git_source_archive(
+                    name = name,
+                    source = source,
+                    build_file_content = _DEPENDENCY_BUILD + _DEPENDENCY_INPUTS.get(directory, ""),
+                    build_file = Label("//build_defs/extensions/gdal:source.BUILD.bazel") if directory == "gdal" else None,
+                    patches = [Label("//build_defs/extensions/gdal:rasterio-avx2-dispatch.patch")] if directory == "gdal" else [],
+                )
+            elif kind == "archive":
+                digest = source.get("sha256", "")
+                if len(digest) != 64 or any([character not in "0123456789abcdef" for character in digest.elems()]):
+                    fail("dependency %s/%s requires an immutable archive SHA256" % (sql_name, directory))
+                http_archive(
+                    name = name,
+                    urls = [source["url"]] + ([source["mirror_url"]] if source.get("mirror_url") else []),
+                    sha256 = digest,
+                    strip_prefix = source["strip_prefix"],
+                    build_file_content = _DEPENDENCY_BUILD + _DEPENDENCY_INPUTS.get(directory, ""),
+                )
+            else:
+                fail("unsupported dependency source kind %s for %s/%s" % (kind, sql_name, directory))
+
+extension_sources = module_extension(implementation = _extension_sources_impl)
+
+def _extension_test_source_impl(ctx):
+    source = source_string_values(ctx.read(ctx.attr.source_manifest))
+    commit = source.get("commit", "")
+    digest = source.get("sha256", "")
+    remote = source.get("url", "")
+    parts = (remote[:-4] if remote.endswith(".git") else remote).split("/")
+    if len(commit) != 40 or len(digest) != 64 or any([character not in "0123456789abcdef" for character in (commit + digest).elems()]):
+        fail("extension test source requires exact commit and archive SHA256")
+    if len(parts) != 5 or parts[:3] != ["https:", "", "github.com"] or any([not part or part in [".", ".."] for part in parts[3:]]):
+        fail("extension test source requires its declared canonical GitHub origin")
+    ctx.download_and_extract(
+        url = "https://codeload.github.com/%s/%s/tar.gz/%s" % (parts[3], parts[4], commit),
+        sha256 = digest,
+        stripPrefix = parts[4] + "-" + commit,
+        type = "tar.gz",
+    )
+    ctx.file("BUILD.bazel", _BUILD.replace("package(default_visibility", "package(default_testonly = True, default_visibility"), executable = False)
+
+# An old upgrade input is source-only test material, never another release product.
+extension_test_source = repository_rule(
+    implementation = _extension_test_source_impl,
+    attrs = {"source_manifest": attr.label(mandatory = True, allow_single_file = True)},
+)

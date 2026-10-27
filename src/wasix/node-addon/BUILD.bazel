@@ -1,0 +1,70 @@
+load("//build_defs/quality:sources.bzl", "rust_quality_files", "source_quality_files")
+load("//build_defs/languages:rust.bzl", "cargo_generator", "cargo_generator_test", "cargo_napi_library", "cargo_library_test", "cargo_package_env", "napi_artifact")
+load("//build_defs/languages:napi-noop.bzl", "napi_unit_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
+load("@native_cargo_metadata//:cargo.bzl", "CARGO")
+load("@cargo_crates//:defs.bzl", "crate_deps")
+load("//build_defs/wasix:napi.bzl", "WASIX_NAPI_IMPORT_FINAL_INPUTS", "wasix_napi_carriers", "wasix_napi_inputs", "wasix_napi_installed_test", "wasix_napi_release")
+load("//build_defs/native/carriers:release-family.bzl", "native_release_checksum_family")
+
+load("//build_defs/extensions:declared_final_inputs.bzl", "native_extension_declared_final_import")
+
+package(default_visibility = ["//visibility:public"])
+
+native_release_checksum_family(product = "oliphaunt-wasix-napi")
+exports_files(["Cargo.toml", "package.json"] + glob(["tools/*.mts", "packages/*/package.json", "packages/*/README.md"]))
+
+PATH_DEPS = {
+    "oliphaunt-pgwire-server": "//src/wasix/pgwire-server:napi_lib",
+    "oliphaunt-wasix": "//src/wasix/sdks/rust:napi_lib",
+    "liboliphaunt-wasix-portable": "@wasix_runtime_carriers//src/wasix/runtime/crates/assets:lib",
+}
+
+cargo_package_env()
+cargo_generator_test()
+cargo_generator(path_dependencies = PATH_DEPS, proc_macro_names = ["napi-derive"], cargo_facts = CARGO, crate_dependencies = crate_deps)
+cargo_napi_library(name = "addon_library", path_dependencies = PATH_DEPS, proc_macro_names = ["napi-derive"], build_script = ":build_script", cargo_facts = CARGO, crate_dependencies = crate_deps)
+napi_artifact(name = "addon", library = ":addon_library", out = "oliphaunt_wasix_napi.node")
+rust_clippy_test(name = "clippy_test", targets = [":addon_library", ":unit_test", ":build_script_"], transitive = False, size = "small")
+
+wasix_napi_inputs(name = "release_inputs", cargo_facts = CARGO)
+_RELEASE_PATH_DEPS = PATH_DEPS | {
+    "oliphaunt-pgwire-server": "//src/wasix/pgwire-server:napi_release_lib",
+    "oliphaunt-wasix": "//src/wasix/sdks/rust:napi_release_lib",
+    "liboliphaunt-wasix-portable": "//src/wasix/runtime/crates/assets:napi_release_lib",
+}
+cargo_library_test(crate = None, srcs = glob(["src/**/*.rs"]), crate_root = "src/lib.rs", features = ["extensions", "test-noop"], default_features = False,
+                   path_dependencies = _RELEASE_PATH_DEPS, proc_macro_names = ["napi-derive"], build_script = ":build_script",
+                   cargo_facts = CARGO, crate_dependencies = napi_unit_crate_deps, size = "small")
+cargo_generator(name = "release_build_script", path_dependencies = _RELEASE_PATH_DEPS, proc_macro_names = ["napi-derive"], features = ["release"],
+                cargo_facts = CARGO, crate_dependencies = crate_deps, data = [":release_inputs"], build_script_env = {
+    "OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD": "1",
+    "OLIPHAUNT_ARTIFACT_CRATE_EMIT_CARGO_MANIFEST": "0",
+    "OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR": "$(execpath :release_inputs)/portable",
+    "OLIPHAUNT_WASM_GENERATED_AOT_DIR": "$(execpath :release_inputs)/aot",
+    "OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT": "$(execpath :release_inputs)/extensions",
+    "OLIPHAUNT_WASIX_NAPI_BUILD_INPUTS": "$(execpath :release_inputs)/build-inputs.json",
+})
+cargo_napi_library(name = "release_addon_library", path_dependencies = _RELEASE_PATH_DEPS, proc_macro_names = ["napi-derive"], features = ["release"],
+              build_script = ":release_build_script", cargo_facts = CARGO, crate_dependencies = crate_deps)
+wasix_napi_release(name = "release_addon", library = ":release_addon_library", inputs = ":release_inputs")
+# Unit tests and ordinary Clippy follow the real local SDK payloads; qualify them once where
+# the Linux WASIX execution platform is already configured.
+wasix_napi_carriers(producer = ":release_addon", qualification = [":release_installed_test", ":generator_test", "//build_defs/wasix:napi_envelopes_test", "//build_defs/languages:napi_payload_profile_test"] + select({
+    "//build_defs/native:linux_x86_64": [":clippy_test", ":unit_test"],
+    "//conditions:default": [],
+}))
+# Existing host staging imports this run's qualified Linux constructor Files.
+native_extension_declared_final_import(name = "postgis_host_input", product = "oliphaunt-extension-postgis", family = "wasix", target = "wasix-portable")
+_EXTERNAL_HOST_INPUT = ":postgis_host_input" if WASIX_NAPI_IMPORT_FINAL_INPUTS else None
+wasix_napi_installed_test(name = "release_installed_test", producer = ":release_addon", carrier = ":release_carriers",
+                         extension = _EXTERNAL_HOST_INPUT, size = "large", timeout = "long", tags = ["manual", "installed-consumer"])
+
+source_quality_files()
+
+rust_quality_files()
+
+# Source-only inputs for the existing SDK package policy tests.
+exports_files([
+    "tools/carrier-contract.mts",
+], visibility = ["//visibility:public"])

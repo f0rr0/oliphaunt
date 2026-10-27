@@ -1,0 +1,64 @@
+load("@oliphaunt_metadata//:metadata.bzl", "DATABASE_RESOURCE_ARTIFACTS")
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/resources:resources.bzl", "linux_resource_slice", "linux_resource_test", "native_resource_test", "resource_compile_data", "wasix_resource_slice", "wasix_resource_test")
+load("//build_defs/resources:mobile.bzl", "android_resource_slice", "ios_resource_slice", "mobile_resource_test", "native_abi_receipt")
+load("//build_defs/android:toolchain.bzl", "android_artifact")
+load("//build_defs/native/carriers:release-family.bzl", "native_release_checksum_family")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "VERSION",
+    "seeds/carrier-identities.mts",
+] + glob(["contracts/*.mts", "contracts/*.json", "seeds/*.mts", "seeds/native/tools/*.mts"]))
+
+filegroup(
+    name = "cluster_seed_contract_fixtures",
+    srcs = glob(["contracts/fixtures/*.properties", "contracts/fixtures/*.json"]),
+)
+
+# rules_rust stages authored Rust sources beneath bazel-out. These symlinks
+# preserve the existing relative include_str! paths to the exact contracts.
+resource_compile_data(name = "contract_compile_data", src = "contracts/contract.json", out = "contracts/contract.json")
+resource_compile_data(name = "profile_probe_compile_data", src = "contracts/profile-probe.json", out = "contracts/profile-probe.json")
+
+native_abi_receipt(name = "native_target_abi")
+
+[android_artifact(
+    name = "android_" + architecture + "_abi",
+    artifact = ":native_target_abi",
+    platform = "//build_defs/android:android_" + architecture,
+) for architecture in ["arm64", "x86_64"]]
+
+linux_resource_slice(name = "linux_shipping_export", qualification = [":native_resource_test"], templates = {
+    "//src/database-resources/icu:npm/package.json": "npm/package.json",
+    "//src/database-resources/icu:npm/README.md": "npm/README.md",
+    "//src/database-resources/icu:npm/OliphauntICU.podspec": "npm/OliphauntICU.podspec",
+    "//src/database-resources/icu:npm/react-native.config.cts": "npm/react-native.config.cts",
+    "//src/database-resources/icu:cargo/Cargo.toml": "cargo/Cargo.toml",
+    "//src/database-resources/icu:cargo/README.md": "cargo/README.md",
+    "//src/database-resources/icu:cargo/build.rs": "cargo/build.rs",
+    "//src/database-resources/icu:cargo/build-support.rs": "cargo/build-support.rs",
+    "//src/database-resources/icu:cargo/src/lib.rs": "cargo/src/lib.rs",
+})
+
+android_resource_slice(name = "android_shipping_export", qualification = [":android_resource_test", ":native_resource_test"])
+ios_resource_slice(name = "ios_shipping_export", qualification = [":ios_resource_test", ":native_resource_test"])
+mobile_resource_test(name = "android_resource_test", target = "android-datum64")
+mobile_resource_test(name = "ios_resource_test", target = "ios-datum64")
+
+wasix_resource_slice(name = "wasix_shipping_export", qualification = [":wasix_resource_test"])
+wasix_resource_test(name = "wasix_resource_test")
+
+linux_resource_test(name = "linux_resource_test")
+native_resource_test(name = "native_resource_test")
+
+native_release_checksum_family(product = "database-resources", artifact_rows = DATABASE_RESOURCE_ARTIFACTS)
+
+source_quality_files()
+
+# Source-only inputs for the existing SDK package policy tests.
+exports_files([
+    "contracts/contract.json",
+    "contracts/native-manifest.mts",
+], visibility = ["//visibility:public"])

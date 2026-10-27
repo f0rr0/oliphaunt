@@ -47,7 +47,10 @@ class AndroidTemporaryRootTest {
       val staging = context.cacheDir.listFiles()!!.single { it.name.startsWith(".oliphaunt-root-") }
       // Model the complete tree published by a concurrent initializer while
       // the first attempt is waiting for its seed. No native backend is mocked.
-      val fixture = JSONObject(File("../../../../test-fixtures/storage/database-root.json").readText())
+      val fixture = JSONObject(File(
+        System.getProperty("oliphaunt.storage.fixture")
+          ?: "../../../../test-fixtures/storage/database-root.json",
+      ).readText())
       val descriptors = fixture.getJSONArray("validDescriptors")
       val descriptor = (0 until descriptors.length()).map(descriptors::getJSONObject)
         .first { it.getString("engineFamily") == "native" }

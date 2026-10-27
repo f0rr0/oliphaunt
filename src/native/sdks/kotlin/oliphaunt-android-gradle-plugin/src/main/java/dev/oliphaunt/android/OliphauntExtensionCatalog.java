@@ -6,7 +6,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -68,14 +67,10 @@ final class OliphauntExtensionCatalog {
   static List<Owner> resolveOwners(
       List<String> requestedSqlNames, Map<String, String> overrides, String runtimeVersion) {
     validateVersion(runtimeVersion, "liboliphaunt runtime");
-    LinkedHashSet<String> closure = new LinkedHashSet<>();
-    LinkedHashSet<String> visiting = new LinkedHashSet<>();
-    for (String sqlName : requestedSqlNames) {
-      addClosure(sqlName, closure, visiting);
-    }
-
     TreeMap<String, OwnerBuilder> builders = new TreeMap<>();
-    for (String sqlName : closure) {
+    // Published module metadata owns transitive acquisition. The bundled
+    // catalog maps requested SQL names to coordinates, never release history.
+    for (String sqlName : requestedSqlNames) {
       Entry entry = require(sqlName);
       String coordinate = entry.mavenCoordinate();
       OwnerBuilder builder = builders.computeIfAbsent(coordinate, ignored -> new OwnerBuilder(entry));
@@ -92,7 +87,7 @@ final class OliphauntExtensionCatalog {
       }
     }
 
-    Map<OwnerBuilder, String> overrideValues = new LinkedHashMap<>();
+    Map<String, String> overrideValues = new LinkedHashMap<>();
     for (Map.Entry<String, String> override : overrides.entrySet()) {
       String releaseProduct = override.getKey().trim();
       String version = override.getValue().trim();
@@ -104,12 +99,12 @@ final class OliphauntExtensionCatalog {
                 + " does not identify a selected extension release owner");
       }
       validateVersion(version, "Oliphaunt extension release owner " + owner.entry.releaseProduct());
-      overrideValues.put(owner, version);
+      overrideValues.put(releaseProduct, version);
     }
 
     List<Owner> result = new ArrayList<>();
     for (OwnerBuilder builder : builders.values()) {
-      String version = overrideValues.get(builder);
+      String version = overrideValues.get(builder.entry.releaseProduct());
       if (version == null) {
         if (!builder.entry.runtimeBound()) {
           throw new GradleException(
@@ -235,21 +230,27 @@ final class OliphauntExtensionCatalog {
     return load(OliphauntExtensionCatalog.class.getResourceAsStream(RESOURCE));
   }
 
-  private static void addClosure(
-      String sqlName, LinkedHashSet<String> closure, LinkedHashSet<String> visiting) {
-    if (closure.contains(sqlName)) {
-      return;
+  static Entry mavenArtifactOwner(String group, String artifact) {
+    Entry result = null;
+    for (Entry entry : ENTRIES.values()) {
+      if (entry.mavenGroup().equals(group)
+          && List.of("android-arm64-v8a", "android-x86_64").stream()
+              .anyMatch(target -> artifact.equals(entry.mavenArtifact() + "-" + target))) {
+        if (result != null
+            && (!result.releaseProduct().equals(entry.releaseProduct())
+                || !result.artifactProduct().equals(entry.artifactProduct())
+                || result.runtimeBound() != entry.runtimeBound())) {
+          throw new GradleException(
+              "ambiguous Oliphaunt Maven release owner for " + group + ":" + artifact);
+        }
+        result = entry;
+      }
     }
-    if (!visiting.add(sqlName)) {
+    if (result == null) {
       throw new GradleException(
-          "cyclic generated Oliphaunt extension dependency involving " + sqlName);
+          "unknown Oliphaunt Maven extension artifact " + group + ":" + artifact);
     }
-    Entry entry = require(sqlName);
-    for (String dependency : entry.dependencies()) {
-      addClosure(dependency, closure, visiting);
-    }
-    visiting.remove(sqlName);
-    closure.add(sqlName);
+    return result;
   }
 
   private static List<String> portableList(String raw) {

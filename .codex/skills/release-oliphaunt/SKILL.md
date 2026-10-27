@@ -11,19 +11,17 @@ The `publish` operation prepares the complete candidate once, conditionally
 runs frozen installed consumers, requires Publication ready, bootstraps missing names, and publishes it. Dependent jobs install the same
 immutable candidate and verify its complete contents against the lock.
 
-Qualification may be exhaustive or selected through CI's
-`release_products_json` input with every platform selector at `all`. The
-existing candidate record binds product scope, required tasks and exact SHA;
-publication rejects a product outside that scope. Generated release PRs and
-their main merge derive scope automatically from the actual manifest transition;
-only main push or eligible main dispatch can produce publishable evidence.
-Publication first reuses covering completed CI or awaits an active main/requested
-run. If none exists, a separate dispatch-only job requests CI for the selected
-products, provided main still equals the exact candidate SHA. Failed causal
-runs stop with their URL; resume by rerunning that run. An ambiguous dispatch
-is never retried automatically. Pre-publication recovery may reuse an explicit
-exact-source CI run after allowlisted release-control fixes; source and binary
-identities remain unchanged.
+Native qualification records configured shipping roots, required tests and
+original final archives for the exact source SHA/tree and producing Actions
+run. Preparation requires complete product/platform coverage before choosing
+release scope. Generated release PR qualification imports its source-bound
+Prepare inputs; an ordinary source run imports one immutable public-input pool.
+Only exact-main qualification can admit publication. PR evidence remains
+construction evidence. Publication reuses authenticated original files and
+rejects missing, failed or wrong-source coverage. Pre-publication recovery may
+reuse an explicit exact-source run after allowlisted release-control fixes;
+source and binary identities remain unchanged. During migration, legacy CI is
+retained for parity until the complete native run and seed adoption anchor pass.
 
 Local checks use `bash tools/release/release-check.sh` for source
 metadata/release-tool tests and `bash tools/release/release-check-registries.sh
@@ -72,11 +70,12 @@ and do not treat target/ecosystem carriers as additional products.
    solo-release blocker. The bootstrap job still checks required credentials
    against the approved lock immediately before it publishes.
 7. Generate trusted-publisher work from the approved publication lock with `bash tools/release/trusted-publisher-config.sh`. Its default mode is offline/read-only. Use authenticated `--audit` before considering `--apply`; mutation additionally requires the exact printed lock digest. Run npm audit and apply directly in a terminal because each classification pass starts with a discarded read-only TTY authentication warm-up before the bounded captured reads, and supply a fresh `--output` path for the atomically created mode-`0600` JSON evidence. Configure the direct workflow `release.yml` and `release-publish` environment. Keep release credentials only in their protected environments; do not add repository-level copies or a reusable-workflow secret bridge.
-8. On a generated release PR, treat Release Please as the candidate authority
-   and `sync-release-pr.mts` as the deterministic selected-candidate metadata
-   closer. The pinned Release Please library selects shared-contrib candidates
-   through the declared release-ownership graph; sync chooses no new versions
-   or changelogs. Ordinary task dependencies are not automatic release bumps.
+8. On a generated release PR, native preparation supplies delivery and necessary
+   compatibility-adoption selection. Pinned Release Please owns version and
+   changelog calculation; `sync-release-pr.mts` closes the selected candidate's
+   metadata and chooses no new versions or changelogs. Contrib follows its
+   actual native/WASIX shipping owners. Ordinary build or test dependencies are
+   not automatic release bumps.
    In an isolated clean checkout, `bash tools/release/prepare-release-pr.sh OUTPUT_DIR`
    generates locally. If `OUTPUT_DIR/required` is `true`,
    `bash tools/release/close-release-candidate.sh OUTPUT_DIR` commits locally,
@@ -125,8 +124,10 @@ another repository mutation.
 - Prepare: synchronize release-owned files, run release checks, create the generated release PR, and stop for review.
 - Bootstrap: use the dedicated bootstrap environment only for identities that cannot use trusted publishing until their first package exists, including generated part identities introduced by a future lock. For npm, require a short-lived granular token with explicit `@oliphaunt` scope selection, Packages and scopes `Read and write`, and 2FA bypass, owned by a 2FA-enabled actor with scope write access; an ordinary token can authenticate yet fail the noninteractive publish with `EOTP`. The `publish` operation prepares `oliphaunt-publication-lock` and `oliphaunt-publication-candidate` first, then passes immutable artifact IDs to this conditional job. Publish only those frozen Cargo/npm bytes without rebuilding. Inventory the exact lock first and freeze only wholly absent names into the carrier-level bootstrap ledger; leave existing names awaiting the locked version for normal trusted publication. Provision only the registry token required by that scope. On rerun, a scoped name that exists without the exact version is a conflict. Model crates.io's documented token bucket; never accept an unverifiable numeric capacity assertion. Execute one sequential Cargo lane and one sequential npm lane, overlap only independent carriers, and preserve dependencies within the absent-name scope. A scoped npm package may leave an optional dependency on an existing name to the normal trusted-publication graph; other unavailable locked dependencies fail closed. If one hosted job cannot finish, drain in-flight uploads, reconcile receipts, upload the canonical hash-chained checkpoint, and fail as incomplete with the exact manual rerun command and not-before time. The maintainer reruns the failed job of that original workflow run; the rerun restores only the same release/lock/candidate identity and skips byte-matching public versions. A valid `429 Retry-After` may defer; ambiguous uploads, timeouts, integrity mismatches, malformed responses, and checkpoint failures remain hard failures. After every scoped identity has a receipt, use that exact lock with `tools/release/trusted-publisher-config.sh`: its default plan has no network access, `--audit` is read-only, and mutation requires both `--apply` and the exact `--confirm-lock-digest`. Run npm audit/apply in a real TTY and retain each fresh `--output` JSON report, never the discarded authentication warm-up display. Require workflow `release.yml`, environment `release-publish`, and npm publish-only permission; reject extra or mismatched configurations. Publication continues automatically. Configure trusted publishers and revoke bootstrap credentials before the next release.
 - Publish: prepare the frozen candidate, bootstrap absent Cargo/npm names if
-  needed, then publish in the same run. Require a successful exact-SHA `Qualified` gate, complete artifact
-  set, frozen publication lock, and exact Release Please PR markability proof.
+  needed, then publish in the same run. Require the exact-source
+  `Native Bazel qualification` workflow with its successful `Required` gate,
+  complete artifacts, frozen publication lock and exact Release Please PR
+  markability proof.
   Pin the immutable transport, stage GitHub drafts/assets/attestations, attempt
   the complete dependency-ordered registry plan once, verify public consumers,
   and promote last in one protected job. Do not predict registry capacity or
@@ -168,15 +169,16 @@ bash tools/release/release-check.sh
 bash src/extensions/tools/check-extension-model.sh --check
 ```
 
-Release Please selects direct candidates from configured product paths. The
-ownership plugin also supplies commits affecting declared shared shipped sources,
-bounded by each product's published history. Review that selection against the
-actual changed behavior; correct missing ownership in the graph rather than
-copying source or adding repository-meta fingerprints to force a candidate.
+Native preparation compares configured production observations and delivered
+payloads with each product's authenticated completed publication. It selects
+changed owners and necessary compatibility adoption, then passes bounded commit
+intent to pinned Release Please for version calculation. Unknown history or
+incomplete carrier coverage blocks preparation. Review the decision against
+actual delivery changes; fix missing production inputs instead of copying source
+or adding repository fingerprints to force a candidate.
 
-For a normalized generated release PR, ordinary Moon task dependencies affect
-qualification; declared release ownership controls shared-source candidate
-selection. Native, WASIX, SDKs, bindings, resources, tools and external extensions are
+For a normalized generated release PR, Bazel dependencies determine construction
+and verification. A dependency edge alone does not select another release. Native, WASIX, SDKs, bindings, resources, tools and external extensions are
 independently versioned. Sync preserves authored requirements and projects the actual input versions for
 selected compiled payloads. Release Please ecosystem updates remain authoritative;
 unselected consumers retain their older published pins. A selected
@@ -220,7 +222,7 @@ External extension host references declare `public_support = true`; private
 references declare `false`. Public host removal requires breaking intent before
 version selection and verification against the previous immutable product tag.
 
-Source `Qualified` and capsule preparation precede final installed consumer
+Source qualification and capsule preparation precede final installed consumer
 checks. Require `Frozen consumers` and `Publication ready` before bootstrap or
 normal mutation. The immutable consumer proof binds the lock, expected cases,
 test configuration, producing run/attempt and resolver/log evidence. Recovery

@@ -6,8 +6,11 @@ import { oramaStaticClient } from 'fumadocs-core/search/client/orama-static';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, '../../..');
-const buildRoot = path.join(repoRoot, 'target', 'docs', 'build');
-const routesPath = path.join(repoRoot, 'target', 'docs', 'generated', 'routes.json');
+const [declaredBuildRoot, declaredRoutesPath, declaredBasePath] = process.argv.slice(2);
+const buildRoot = path.resolve(declaredBuildRoot ?? path.join(repoRoot, 'target/docs/build'));
+const routesPath = path.resolve(
+  declaredRoutesPath ?? path.join(repoRoot, 'target/docs/generated/routes.json'),
+);
 
 function fail(message) {
   console.error(message);
@@ -70,7 +73,7 @@ const idsByPath = new Map(
     new Set([...html.matchAll(/\bid="([^"]+)"/gu)].map((match) => match[1])),
   ]),
 );
-const basePath = process.env.OLIPHAUNT_DOCS_BASE_PATH || '';
+const basePath = declaredBasePath ?? process.env.OLIPHAUNT_DOCS_BASE_PATH ?? '';
 for (const [file, html] of htmlByPath) {
   const pagePath = `/${path.relative(buildRoot, file).split(path.sep).join('/')}`;
   for (const match of html.matchAll(/<a\b[^>]*\bhref="([^"]+)"/gu)) {

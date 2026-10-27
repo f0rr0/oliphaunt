@@ -1,7 +1,20 @@
-CREATE TEMP TABLE oliphaunt_walinspect (value text);
+-- Temporary table inserts do not produce the heap WAL this smoke inspects.
+CREATE TABLE oliphaunt_walinspect (value text);
 -- oliphaunt-statement
-CREATE TEMP TABLE oliphaunt_walinspect_lsn AS SELECT pg_current_wal_lsn() AS before_lsn;
+DO $$
+DECLARE before_lsn pg_lsn := pg_current_wal_insert_lsn();
+BEGIN
+  INSERT INTO oliphaunt_walinspect SELECT 'row ' || i::text FROM generate_series(1, 5) AS i;
+  -- Inspection reads flushed WAL, including when the caller wraps this smoke in BEGIN.
+  PERFORM pg_logical_emit_message(false, 'oliphaunt-walinspect', 'flush', true);
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_get_wal_block_info(before_lsn, pg_current_wal_flush_lsn())
+    WHERE relfilenode = pg_relation_filenode('oliphaunt_walinspect'::regclass)
+      AND reldatabase = (SELECT oid FROM pg_database WHERE datname = current_database())
+      AND resource_manager = 'Heap' AND block_data IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'pg_walinspect did not read the logged table block';
+  END IF;
+END $$;
 -- oliphaunt-statement
-INSERT INTO oliphaunt_walinspect SELECT 'row ' || i::text FROM generate_series(1, 5) AS i;
--- oliphaunt-statement
-SELECT * FROM pg_get_wal_block_info((SELECT before_lsn FROM oliphaunt_walinspect_lsn), pg_current_wal_lsn()) ORDER BY start_lsn, block_id LIMIT 20;
+DROP TABLE oliphaunt_walinspect;

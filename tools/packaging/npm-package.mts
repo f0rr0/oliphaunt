@@ -1,15 +1,7 @@
-import {
-  chmodSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { createDeterministicTar } from './cargo-source-package.mts';
 import { validateNpmTrustedPublishingManifest } from './npm-trusted-publishing.mts';
+import { createDeterministicTar, listArchiveEntries } from './package-archive.mts';
 import { canonicalGzipSync, portableMemberName } from './portable-archive.mts';
 
 if (import.meta.main) {
@@ -27,6 +19,11 @@ function reject(message) {
   throw new Error(message);
 }
 
+export function npmArchiveFileMode(mode, declaredExecutable = false, platform = process.platform) {
+  // Windows stat bits do not describe Unix executability; declarations do.
+  return declaredExecutable || (platform !== 'win32' && (mode & 0o100) !== 0) ? 0o755 : 0o644;
+}
+
 export function packGeneratedNpmCarrier(packageDir, tarballRoot) {
   const manifest = JSON.parse(readFileSync(path.join(packageDir, 'package.json'), 'utf8'));
   validateNpmTrustedPublishingManifest(manifest, `${packageDir}/package.json`);
@@ -35,20 +32,33 @@ export function packGeneratedNpmCarrier(packageDir, tarballRoot) {
   const packDir = path.join(tarballRoot, safeNpmPackageFilenamePrefix(manifest.name));
   const filename = `${safeNpmPackageFilenamePrefix(manifest.name)}-${manifest.version}.tgz`;
   portableMemberName(filename, 'file', packageDir);
-  for (const member of manifest.publishConfig?.executableFiles ?? []) {
-    chmodSync(path.join(packageDir, portableMemberName(member, 'file', packageDir)), 0o755);
+  const executableFiles = new Set(
+    (manifest.publishConfig?.executableFiles ?? []).map((member) =>
+      portableMemberName(member, 'file', packageDir),
+    ),
+  );
+  const files = new Set(listArchiveEntries(packageDir).filter((file) => statSync(file).isFile()));
+  for (const member of executableFiles) {
+    if (!files.has(path.join(packageDir, member)))
+      reject(`declared npm executable must be a regular package file: ${member}`);
   }
-  for (const entry of readdirSync(packageDir, { recursive: true, withFileTypes: true })) {
-    if (!entry.isFile()) continue;
-    const file = path.join(entry.parentPath, entry.name);
-    chmodSync(file, statSync(file).mode & 0o100 ? 0o755 : 0o644);
+  for (const file of files) {
+    const member = path.relative(packageDir, file).split(path.sep).join('/');
+    if (npmArchiveFileMode(statSync(file).mode, executableFiles.has(member)) === 0o755)
+      executableFiles.add(member);
   }
   rmSync(packDir, { recursive: true, force: true });
   mkdirSync(packDir, { recursive: true });
   const tarball = path.join(packDir, filename);
   writeFileSync(
     tarball,
-    canonicalGzipSync(createDeterministicTar(packageDir, 'package', { fail: reject })),
+    canonicalGzipSync(
+      createDeterministicTar(packageDir, 'package', {
+        fail: reject,
+        fixedFileMode: 0o644,
+        executableFiles,
+      }),
+    ),
   );
   return tarball;
 }

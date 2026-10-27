@@ -1,0 +1,155 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/foundation:bun.bzl", "bun_script_test", "bun_test")
+load(":postgres-overlay-test.bzl", "postgres_overlay_tests")
+load(":runtime-probe.bzl", "postmaster_runtime_probes")
+load("@postmaster_compile_metadata//:cargo.bzl", "POSTMASTER_CARGO")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["*.bzl", "*.mts", "*.patch"]))
+
+exports_files(["postgres.BUILD.bazel", "libc.BUILD.bazel", "postgres-abi.c"])
+exports_files(["runtime-probe.rs"])
+
+cc_library(name = "linked_unwinder", srcs = ["unwinder.c"], linkstatic = True, alwayslink = True)
+
+cc_test(
+    name = "linked_unwinder_present_test",
+    srcs = ["unwinder-test.c"],
+    defines = ["TEST_LINKED_LIBUNWIND"],
+    deps = [":linked_unwinder"],
+    target_compatible_with = ["@platforms//os:linux"],
+    size = "small",
+)
+
+cc_test(
+    name = "linked_unwinder_absent_test",
+    srcs = ["unwinder-test.c"],
+    deps = [":linked_unwinder"],
+    target_compatible_with = ["@platforms//os:linux"],
+    size = "small",
+)
+
+postmaster_runtime_probes()
+
+bun_test(name = "native_receipts_test", entry_point = "native-receipts.test.mts", data = ["native-receipts.mts"], size = "small")
+
+bun_test(
+    name = "guest_inputs_test",
+    entry_point = "guest-inputs.test.mts",
+    data = ["guest-inputs.mts", "native-receipts.mts", "//:tools/packaging/strict-json.mts",
+            "//src/wasix/postmaster:lib/guest-build-provenance.mts",
+            "//src/wasix/postmaster:wasmer/policies/sealed-side-modules.v1.tsv"],
+    size = "small",
+)
+
+bun_test(
+    name = "receipt_reader_test",
+    entry_point = "receipt-reader.test.mts",
+    data = [
+        "//src/wasix/postmaster:lib/verify-sealed-carrier.mts",
+        "//src/wasix/postmaster:lib/guest-build-provenance.mts",
+        "//src/wasix/postmaster:lib/linear-memory-profile.mts",
+        "//src/wasix/postmaster:lib/receipt-files.mts",
+        "//src/wasix/postmaster:lib/sealed-export-chain.mts",
+        "//src/wasix/postmaster:wasmer/bin/verify-postmaster-concurrency-contract.mts",
+        "//src/wasix/postmaster:wasmer/bin/verify-postmaster-wasm-import.mts",
+        "//src/wasix/postmaster:wasmer/policies/sealed-side-modules.v1.tsv",
+        "//:tools/packaging/strict-json.mts",
+    ],
+    size = "small",
+)
+
+postgres_overlay_tests()
+
+bun_test(
+    name = "qualification_profile_test",
+    entry_point = "qualification-profile.test.mts",
+    data = ["qualification-profile.mts", "//src/wasix/postmaster:lib/common.sh"],
+    size = "small",
+)
+
+bun_test(
+    name = "seal_modules_test",
+    entry_point = "seal-modules.test.mts",
+    data = [
+        "seal-modules.mts",
+        "guest-inputs.mts",
+        "native-receipts.mts",
+        "//:tools/packaging/strict-json.mts",
+        "//src/wasix/postmaster:wasmer/policies/sealed-side-modules.v1.tsv",
+        "//src/wasix/postmaster:lib/linear-memory-profile.mts",
+        "//src/wasix/postmaster:lib/receipt-files.mts",
+        "//src/wasix/postmaster:lib/sealed-export-chain.mts",
+        "//src/wasix/postmaster:wasmer/bin/verify-postmaster-wasm-import.mts",
+        "//src/wasix/postmaster:wasmer/bin/verify-postmaster-concurrency-contract.mts",
+    ],
+    size = "small",
+)
+
+bun_test(
+    name = "libc_metadata_test",
+    entry_point = "libc-metadata.test.mts",
+    data = ["libc-metadata.mts"],
+    size = "small",
+)
+
+bun_test(
+    name = "libc_headers_test",
+    entry_point = "libc-headers.test.mts",
+    data = ["libc-headers.mts", "testdata/mkalltypes.sed"],
+    size = "small",
+)
+
+bun_test(
+    name = "source_modes_test",
+    entry_point = "source-modes.test.mts",
+    data = ["source-modes.mts"],
+    size = "small",
+    target_compatible_with = ["@platforms//os:linux"],
+)
+
+alias(name = "llvm_zstd", actual = POSTMASTER_CARGO["compiler_zstd"])
+
+bun_test(
+    name = "compile_metadata_test",
+    entry_point = "compile-metadata.test.mts",
+    data = ["compile-metadata.mts"],
+    size = "small",
+)
+
+bun_test(
+    name = "runtime_abi_test",
+    entry_point = "runtime-abi.test.mts",
+    data = ["runtime-abi.mts", "compile-metadata.mts"],
+    size = "small",
+)
+
+bun_test(
+    name = "metadata_test",
+    entry_point = "metadata.test.mts",
+    data = ["metadata.mts", "//:tools/packaging/cargo-manifest.mts"],
+    size = "small",
+)
+
+bun_script_test(
+    name = "cargo_source_projection_test",
+    entry_point = "cargo-source-projection-test.mts",
+    data = [
+        "@postmaster_cargo//:cargo-sources.json",
+        "@postmaster_cargo//:executor/Cargo.toml",
+        "@postmaster_cargo//:executor/Cargo.lock",
+        "@postmaster_cargo//:compiler/Cargo.toml",
+        "@postmaster_cargo//:compiler/Cargo.lock",
+        "@postmaster_executor_crates//:cargo-bazel.json",
+        "@postmaster_executor_crates//:crates.bzl",
+        "@postmaster_compiler_crates//:cargo-bazel.json",
+        "@postmaster_compiler_crates//:crates.bzl",
+        "//src/wasix/postmaster:executor/Cargo.toml",
+        "//src/wasix/postmaster:executor/Cargo.lock",
+    ],
+    size = "small",
+)
+
+source_quality_files()

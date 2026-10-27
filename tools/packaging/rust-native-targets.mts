@@ -34,6 +34,35 @@ export function rustNativeTargetCfg(target) {
   return NATIVE_TARGET_CFG[targetId];
 }
 
+export function nativeCargoPackageName(product, target) {
+  if (typeof product !== 'string' || !product)
+    fail('Cargo artifact source product must be nonempty');
+  rustNativeTargetCfg(target);
+  const targetId = typeof target === 'string' ? target : target.target;
+  return `${product}-${targetId}`;
+}
+
+// The Rust surface is the existing native cfg map; registry declarations decide
+// the actual package identity. Mobile carriers use other publication surfaces.
+export function nativeCargoArtifactRows(product, targets, registryPackages) {
+  const declared = new Set(nonEmptyUniqueStrings(registryPackages, `${product} registry packages`));
+  const rows = [];
+  for (const target of nonEmptyUniqueStrings(targets, `${product} artifact targets`)) {
+    if (!(target in NATIVE_TARGET_CFG)) {
+      if (declared.has(`crates:${product}-${target}`)) rustNativeTargetCfg(target);
+      continue;
+    }
+    const packageName = nativeCargoPackageName(product, target);
+    if (!declared.has(`crates:${packageName}`))
+      fail(`${product} is missing declared Cargo artifact ${packageName}`);
+    rows.push({ sourceProduct: product, target, packageKind: 'crates', packageName });
+  }
+  if (!rows.length) fail(`${product} has no declared native Cargo artifacts`);
+  return rows.sort((left, right) =>
+    left.target < right.target ? -1 : left.target > right.target ? 1 : 0,
+  );
+}
+
 export function assertSameNativeTargetSet(label, expected, actual) {
   const expectedTargets = [...nonEmptyUniqueStrings(expected, `${label} expected targets`)].sort();
   const actualTargets = [...nonEmptyUniqueStrings(actual, `${label} actual targets`)].sort();

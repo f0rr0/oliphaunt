@@ -2,6 +2,20 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 
+const native = process.env.FAKE_NATIVE_ORIGIN === 'true';
+const nativeCase = process.env.FAKE_NATIVE_CASE;
+const mixed = nativeCase?.startsWith('mixed') === true;
+const nativeSourceCommit = process.env.FAKE_NATIVE_SOURCE_COMMIT || 'a'.repeat(40);
+const nativeSourceTree = process.env.FAKE_NATIVE_SOURCE_TREE || 'b'.repeat(40);
+const jobCase = process.env.FAKE_JOB_CASE || '';
+let snapshotReads = 0;
+if (nativeCase === 'mixed-pending') {
+  process.env.OLIPHAUNT_GITHUB_READ_BASE_DELAY_MS = '0';
+  process.env.OLIPHAUNT_GITHUB_READ_MAX_DELAY_MS = '0';
+}
+let now = Date.now();
+if (jobCase === 'pending-deadline') Date.now = () => now;
+
 globalThis.fetch = async (input, options) => {
   const url = new URL(input);
   assert.equal(url.origin, 'https://api.github.com');
@@ -40,40 +54,198 @@ globalThis.fetch = async (input, options) => {
     const bytes = fs.readFileSync(process.env.FAKE_ARTIFACT_ARCHIVE);
     const identity = {
       id: Number(process.env.FAKE_ARTIFACT_ID || '101'),
-      name: 'exact-artifact',
+      name: native ? 'native-build-evidence-x86_64' : 'exact-artifact',
       size_in_bytes: bytes.length,
       expired: false,
       digest: 'sha256:' + crypto.createHash('sha256').update(bytes).digest('hex'),
+      created_at: '2026-10-11T01:01:00Z',
+      workflow_run: { id: 77, head_sha: 'a'.repeat(40) },
+      ...(native
+        ? {
+            created_at:
+              nativeCase === 'stale-artifact' ? '2026-10-10T01:00:00Z' : '2026-10-11T01:01:00Z',
+            workflow_run: {
+              id: 77,
+              head_sha: nativeCase === 'artifact-source' ? 'f'.repeat(40) : nativeSourceCommit,
+            },
+          }
+        : {}),
     };
+    if (mixed) {
+      const old = { ...identity, id: 102, name: 'native-build-evidence-aarch64' };
+      const retry = { ...old, id: 103, created_at: '2026-10-11T02:01:00Z' };
+      return Response.json({
+        artifacts: nativeCase === 'mixed-stale' ? [identity, old] : [identity, old, retry],
+      });
+    }
+    if (nativeCase === 'digest') identity.digest = 'sha256:' + 'f'.repeat(64);
+    if (nativeCase === 'artifact-missing') identity.name = 'other-artifact';
+    if (nativeCase === 'artifact-window-missing') delete identity.created_at;
+    if (nativeCase === 'artifact-head-missing') delete identity.workflow_run.head_sha;
     return Response.json({
-      artifacts: [identity, { ...identity, id: 102, name: 'exact-artifact-near-match' }],
+      artifacts: [
+        identity,
+        {
+          ...identity,
+          id: 102,
+          name: nativeCase === 'artifact-ambiguous' ? identity.name : 'exact-artifact-near-match',
+        },
+      ],
     });
   }
   if (/actions\/runs\/77\/jobs/.test(endpoint)) {
+    const pending =
+      jobCase.startsWith('pending-') &&
+      (snapshotReads === 1 || ['pending-timeout', 'pending-deadline'].includes(jobCase));
     const jobs = [
-      { id: 501, name: 'Qualified', status: 'completed', conclusion: 'success', run_attempt: 1 },
+      {
+        id: 501,
+        run_id: 77,
+        head_sha: native ? nativeSourceCommit : 'a'.repeat(40),
+        name: native ? 'Linux runtime (x86_64)' : 'Qualified',
+        status: pending ? 'in_progress' : 'completed',
+        conclusion: pending
+          ? null
+          : nativeCase === 'job-failure' || ['pending-failure', 'failure'].includes(jobCase)
+            ? 'failure'
+            : jobCase === 'cancelled'
+              ? 'cancelled'
+              : 'success',
+        run_attempt: nativeCase === 'job-attempt' ? 2 : 1,
+        created_at: '2026-10-11T00:59:59Z',
+        started_at: '2026-10-11T01:00:00Z',
+        completed_at: pending ? null : '2026-10-11T01:02:00Z',
+      },
     ];
+    if (mixed) {
+      const retry = {
+        ...jobs[0],
+        id: 503,
+        name: 'Linux runtime (aarch64)',
+        run_attempt: 2,
+        created_at: '2026-10-11T01:59:59Z',
+        status: nativeCase === 'mixed-pending' ? 'in_progress' : 'completed',
+        started_at: '2026-10-11T02:00:00Z',
+        completed_at: nativeCase === 'mixed-pending' ? null : '2026-10-11T02:02:00Z',
+        conclusion:
+          nativeCase === 'mixed-pending'
+            ? null
+            : nativeCase === 'mixed-failed'
+              ? 'failure'
+              : nativeCase === 'mixed-cancelled'
+                ? 'cancelled'
+                : 'success',
+      };
+      // Partial reruns inherit completed roles with new IDs/attempts and their original execution window.
+      const inherited = {
+        ...jobs[0],
+        id: 505,
+        run_attempt: 2,
+        created_at: '2026-10-11T02:00:00Z',
+      };
+      const all = [jobs[0], { ...jobs[0], id: 502, name: retry.name }, inherited, retry];
+      if (nativeCase === 'mixed-ambiguous') all.push({ ...retry, id: 504 });
+      return Response.json({
+        jobs: url.searchParams.get('filter') === 'all' ? all : [inherited, retry],
+      });
+    }
+    if (native)
+      jobs.push({
+        id: 502,
+        name: 'Unrelated WASIX lane',
+        status: 'completed',
+        conclusion: 'failure',
+        run_attempt: 1,
+      });
+    if (nativeCase === 'job-window-missing') delete jobs[0].started_at;
+    if (jobCase === 'pending-producer-drift' && snapshotReads > 1) jobs[0].id = 502;
+    if (jobCase.startsWith('cache-other-'))
+      jobs.push({
+        ...jobs[0],
+        id: 502,
+        name: 'Second producer',
+        status: jobCase === 'cache-other-pending' ? 'in_progress' : 'completed',
+        conclusion: jobCase === 'cache-other-pending' ? null : 'success',
+        completed_at: jobCase === 'cache-other-pending' ? null : jobs[0].completed_at,
+      });
+    if (jobCase === 'missing') jobs.length = 0;
     if (process.env.FAKE_DUPLICATE_JOB === 'true') jobs.push({ ...jobs[0], id: 502 });
     return Response.json({ jobs });
   }
   if (/actions\/runs\/77$/.test(endpoint)) {
+    snapshotReads += 1;
+    if (jobCase === 'pending-deadline') now += 160_000;
+    if (jobCase === 'pending-404' && snapshotReads > 1)
+      return new Response('not found', { status: 404 });
     return Response.json({
       id: 77,
-      head_sha: 'a'.repeat(40),
+      head_sha:
+        nativeCase === 'source' || (jobCase === 'pending-source-drift' && snapshotReads > 1)
+          ? 'f'.repeat(40)
+          : native
+            ? nativeSourceCommit
+            : 'a'.repeat(40),
       workflow_id: 9,
-      run_attempt: 1,
+      run_attempt:
+        nativeCase === 'attempt'
+          ? 0
+          : mixed || (jobCase === 'pending-rerun-drift' && snapshotReads > 1)
+            ? 2
+            : 1,
       status: process.env.FAKE_RUN_STATUS || 'completed',
       conclusion: process.env.FAKE_RUN_CONCLUSION || 'success',
+      path: '.github/workflows/ci.yml',
+      event: jobCase === 'event' ? 'push' : 'workflow_dispatch',
+      head_branch: 'main',
+      pull_requests: [],
+      ...(native
+        ? {
+            path:
+              nativeCase === 'run-workflow'
+                ? '.github/workflows/other.yml'
+                : '.github/workflows/bazel.yml',
+            event:
+              nativeCase === 'event'
+                ? 'pull_request'
+                : process.env.FAKE_NATIVE_EVENT || 'workflow_dispatch',
+            head_branch:
+              nativeCase === 'ref' ? 'other' : process.env.FAKE_NATIVE_HEAD_BRANCH || 'main',
+            pull_requests: [],
+          }
+        : {}),
     });
   }
-  if (/actions\/workflows\/9$/.test(endpoint)) return Response.json({ id: 9, name: 'CI' });
-  if (/actions\/artifacts\/101\/zip$/.test(endpoint)) {
+  if (/actions\/workflows\/9$/.test(endpoint))
+    return Response.json({
+      id: 9,
+      name: native ? 'Native Bazel qualification' : 'CI',
+      path: '.github/workflows/ci.yml',
+      ...(native
+        ? {
+            path:
+              nativeCase === 'workflow'
+                ? '.github/workflows/other.yml'
+                : '.github/workflows/bazel.yml',
+          }
+        : {}),
+    });
+  if (/git\/commits\/[0-9a-f]{40}$/.test(endpoint))
+    return Response.json({
+      sha: url.pathname.split('/').at(-1),
+      tree: { sha: nativeCase === 'tree' ? 'f'.repeat(40) : nativeSourceTree },
+    });
+  if (/actions\/artifacts\/(101|103)\/zip$/.test(endpoint)) {
     const state = process.env.FAKE_GH_STATE;
     const count = fs.existsSync(state) ? Number(fs.readFileSync(state, 'utf8')) : 0;
     fs.writeFileSync(state, String(count + 1));
     if (process.env.FAKE_MODE === 'transient' && count === 0)
       return new Response('unavailable', { status: 503 });
     if (process.env.FAKE_MODE === 'permanent') return new Response('not found', { status: 404 });
+    if (native && process.env.FAKE_NATIVE_MUTATE_LOCAL_PACKET)
+      fs.writeFileSync(
+        process.env.FAKE_NATIVE_MUTATE_LOCAL_PACKET,
+        '{"changedAfterAuthenticatedRead":true}',
+      );
     return new Response(fs.readFileSync(process.env.FAKE_ARTIFACT_ARCHIVE));
   }
   throw new Error('unexpected GitHub endpoint ' + endpoint);

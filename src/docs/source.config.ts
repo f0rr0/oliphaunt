@@ -3,7 +3,7 @@ import { defineConfig, defineDocs } from 'fumadocs-mdx/config';
 import indexFile from 'fumadocs-mdx/plugins/index-file';
 
 export const docs = defineDocs({
-  dir: '../../target/docs/site-docs',
+  dir: process.env.OLIPHAUNT_DOCS_CONTENT_ROOT ?? '../../target/docs/site-docs',
   docs: {
     schema: pageSchema,
     postprocess: {

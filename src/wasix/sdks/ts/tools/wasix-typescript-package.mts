@@ -1,6 +1,14 @@
+import { WASIX_NAPI_PLATFORM_PACKAGES as NATIVE_PACKAGES } from '../../../node-addon/tools/carrier-contract.mts';
+export { assertWasixTypescriptNativeCarrier } from '../../../node-addon/tools/carrier-contract.mts';
 import path from 'node:path';
+import {
+  assertNativeBrowserHostProvenance,
+  HOST_FILES,
+  NATIVE_BROWSER_HOST_SCHEMA,
+} from '../../../../../build_defs/wasix/browser/provenance.mts';
 
 import { prepareWasixTypescriptPackage as prepareProductPackage } from './package.mts';
+
 const QUERY_PACKAGE = '@oliphaunt/ts-query';
 
 import { readPortableArchiveEntries } from '../../../../../tools/packaging/portable-archive.mts';
@@ -16,12 +24,7 @@ const RUNTIME_PACKAGE = '@oliphaunt/liboliphaunt-wasix';
 const FZSTD_PACKAGE = 'fzstd';
 const FZSTD_VERSION = '0.1.1';
 const NATIVE_PRODUCT = 'oliphaunt-wasix-napi';
-const NATIVE_PACKAGES = Object.freeze([
-  '@oliphaunt/wasix-napi-darwin-arm64',
-  '@oliphaunt/wasix-napi-linux-arm64-gnu',
-  '@oliphaunt/wasix-napi-linux-x64-gnu',
-  '@oliphaunt/wasix-napi-win32-x64-msvc',
-]);
+
 const NOTICE_OPTIONS = Object.freeze({ profile: 'source-sdk' });
 
 function fail(message) {
@@ -97,36 +100,6 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
   return manifest;
 }
 
-export function assertWasixTypescriptNativeCarrier(manifest, carrier) {
-  const sdk = manifest.oliphaunt;
-  const native = carrier.oliphaunt;
-  if (
-    manifest.name !== PACKAGE_NAME ||
-    sdk?.runtimeProduct !== 'liboliphaunt-wasix' ||
-    sdk?.wasixNapiProduct !== NATIVE_PRODUCT ||
-    !/^\d+\.\d+\.\d+$/u.test(sdk?.runtimeVersion ?? '') ||
-    !/^\d+\.\d+\.\d+$/u.test(sdk?.wasixNapiVersion ?? '') ||
-    !Number.isSafeInteger(sdk?.wasixAddonAbiVersion) ||
-    sdk.wasixAddonAbiVersion < 1 ||
-    !Number.isSafeInteger(sdk?.nodeApiVersion) ||
-    sdk.nodeApiVersion < 1 ||
-    Object.hasOwn(sdk, 'qualificationOnly') ||
-    Object.hasOwn(native ?? {}, 'qualificationOnly') ||
-    !NATIVE_PACKAGES.includes(carrier.name) ||
-    carrier.version !== sdk?.wasixNapiVersion ||
-    manifest.optionalDependencies?.[carrier.name] !== carrier.version ||
-    native?.runtimeProduct !== sdk?.runtimeProduct ||
-    native?.runtimeVersion !== sdk?.runtimeVersion ||
-    native?.addonAbiVersion !== sdk?.wasixAddonAbiVersion ||
-    native?.nodeApiVersion !== sdk?.nodeApiVersion ||
-    JSON.stringify(native?.profiles) !== JSON.stringify(['standard', 'icu'])
-  ) {
-    fail(
-      `${carrier.name}@${carrier.version} is incompatible with ${PACKAGE_NAME}@${manifest.version}: SDK requires N-API ${sdk?.wasixNapiVersion} embedding runtime ${sdk?.runtimeVersion}, carrier embeds runtime ${native?.runtimeVersion}`,
-    );
-  }
-}
-
 export function prepareWasixTypescriptPackage(packageDir) {
   const root = path.resolve(packageDir);
   const manifest = prepareProductPackage(root);
@@ -191,6 +164,13 @@ export function assertWasixTypescriptNpmArchive(archive) {
   for (const name of exportedFiles) {
     requireFile(name);
   }
-  JSON.parse(requireFile('lib/host/provenance.json').toString('utf8'));
+  const hostProvenance = JSON.parse(requireFile('lib/host/provenance.json').toString('utf8'));
+  if (hostProvenance.schema === NATIVE_BROWSER_HOST_SCHEMA) {
+    assertNativeBrowserHostProvenance(hostProvenance, {
+      files: Object.fromEntries(HOST_FILES.map((name) => [name, requireFile(`lib/host/${name}`)])),
+    });
+  } else if (hostProvenance.schema !== undefined) {
+    fail(`Unsupported browser host provenance schema ${hostProvenance.schema}`);
+  }
   return manifest;
 }

@@ -17,9 +17,11 @@ import { Manifest } from 'release-please';
 import { ManifestPlugin } from 'release-please/build/src/plugin.js';
 import { mergeUpdates } from 'release-please/build/src/updaters/composite.js';
 import { Version } from 'release-please/build/src/version.js';
+import { readCommitHistory, readCommitPaths } from './commit-paths.mts';
 import { frozenConsumerMatrix, frozenConsumerPlan } from './frozen-consumer.mts';
 import {
   applyCandidate,
+  bindReleaseSourceHistory,
   includeOwnedSourceCommits,
   useSourceDate,
 } from './prepare-release-candidate.mts';
@@ -29,12 +31,19 @@ import {
   buildPlan,
   compatibilityVersionEntries,
   compatibilityVersionFromText,
-  compatibilityVersionValue,
   declaredSharedSourceImpacts,
   loadGraph,
   productCompatibilityVersion,
   ROOT,
 } from './release-graph.mts';
+import {
+  fixtureCompletionChecker,
+  generateHistoryCandidate,
+  generateProductCandidateForGraph,
+  historyProducts,
+  historyShared,
+  historyVersionUpdates,
+} from './testdata/prepare-release-candidate-fixtures.mts';
 
 const graph = loadGraph('prepare-release-candidate.test');
 const native = 'src/native/runtime';
@@ -55,30 +64,21 @@ test('extension facade generator changes select every product shipping its outpu
   ).toEqual(['liboliphaunt-native', ...products].sort());
 });
 
-test('every binary release includes its compiled sources across product boundaries', () => {
+test('binary releases include local compiled sources and retain independent registry dependencies', () => {
   const mobile = ['oliphaunt-swift', 'oliphaunt-kotlin'];
   for (const [file, products] of [
-    ['src/wasix/sdks/rust/src/oliphaunt/base.rs', ['oliphaunt-wasix-rust', 'oliphaunt-wasix-napi']],
+    ['src/wasix/sdks/rust/src/oliphaunt/base.rs', ['oliphaunt-wasix-rust']],
     ['src/wasix/pgwire-server/src/lib.rs', ['oliphaunt-pgwire-server', 'oliphaunt-wasix-napi']],
-    [
-      'src/query/rust/src/lib.rs',
-      ['oliphaunt-query', 'oliphaunt-broker', 'oliphaunt-wasix-napi', ...mobile],
-    ],
-    ['src/wasix/runtime/crates/assets/src/lib.rs', ['liboliphaunt-wasix', 'oliphaunt-wasix-napi']],
-    ['src/wasix/runtime/toolchain.toml', ['liboliphaunt-wasix', 'oliphaunt-wasix-napi']],
-    [
-      'src/wasix/postgres-tools/crates/tools/build-support.rs',
-      ['postgres-tools-wasix', 'oliphaunt-wasix-napi'],
-    ],
-    ['src/database-resources/icu/cargo/src/lib.rs', ['database-resources', 'oliphaunt-wasix-napi']],
-    [
-      'src/native/rust-bindings/src/lib.rs',
-      ['liboliphaunt-native-bindings', 'oliphaunt-broker', 'oliphaunt-node-direct', ...mobile],
-    ],
-    ['src/native/broker/src/lib.rs', ['oliphaunt-broker', ...mobile]],
+    ['src/query/rust/src/lib.rs', ['oliphaunt-query']],
+    ['src/wasix/runtime/crates/assets/src/lib.rs', ['liboliphaunt-wasix']],
+    ['src/wasix/runtime/toolchain.toml', ['liboliphaunt-wasix']],
+    ['src/wasix/postgres-tools/crates/tools/build-support.rs', ['postgres-tools-wasix']],
+    ['src/database-resources/icu/cargo/src/lib.rs', ['database-resources']],
+    ['src/native/rust-bindings/src/lib.rs', ['liboliphaunt-native-bindings']],
+    ['src/native/broker/src/lib.rs', ['oliphaunt-broker']],
     ['src/native/sdks/rust/src/lib.rs', ['oliphaunt-rust', ...mobile]],
     ['src/native/mobile-bindings/src/lib.rs', mobile],
-    ['src/native/sdks/rust/crates/oliphaunt-build/src/lib.rs', ['oliphaunt-rust', ...mobile]],
+    ['src/native/sdks/rust/crates/oliphaunt-build/src/lib.rs', ['oliphaunt-rust']],
   ]) {
     const plan = buildPlan(graph, [file]);
     expect(plan.releaseProducts.sort()).toEqual(products.sort());
@@ -106,7 +106,6 @@ test('every binary release includes its compiled sources across product boundari
       'oliphaunt-kotlin',
       'oliphaunt-node-direct',
       'oliphaunt-swift',
-      'oliphaunt-wasix-napi',
     ]);
   }
 });
@@ -183,13 +182,15 @@ test('Cargo owns transitive, inherited, renamed, build, target and custom source
   }
 });
 
-test('embedded generated payloads follow private producer ownership for source-pin changes', () => {
-  for (const file of ['src/third-party/postgres/source.toml', 'src/third-party/icu/source.toml']) {
-    expect(existsSync(path.join(ROOT, file))).toBe(true);
-    const plan = buildPlan(graph, [file]);
-    expect(plan.releaseProducts).toContain('liboliphaunt-wasix');
-    expect(plan.releaseProducts).toContain('oliphaunt-wasix-napi');
-  }
+test('upstream source pins retain conservative legacy project scope independently of held payload declarations', () => {
+  const postgres = buildPlan(graph, ['src/third-party/postgres/source.toml']);
+  expect(postgres.releaseProducts).toContain('liboliphaunt-wasix');
+  expect(postgres.releaseProducts).not.toContain('oliphaunt-wasix-napi');
+  const icu = buildPlan(graph, ['src/third-party/icu/source.toml']);
+  expect(icu.releaseProducts).toContain('liboliphaunt-wasix');
+  // Legacy Moon private-project traversal still includes the addon for ICU;
+  // this conservative scope does not retarget its registry-installed payloads.
+  expect(icu.releaseProducts).toContain('oliphaunt-wasix-napi');
 });
 
 async function generate(commits, baselines = { [native]: first, [wasix]: first }) {
@@ -243,10 +244,17 @@ async function generate(commits, baselines = { [native]: first, [wasix]: first }
     },
     {
       separatePullRequests: false,
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: Release Please expands this title pattern.
       groupPullRequestTitlePattern: 'chore(release): prepare ${branch} releases',
     },
   );
-  includeOwnedSourceCommits(manifest, github, graph);
+  includeOwnedSourceCommits(manifest, github, graph, undefined, {
+    assertCompletedPublication: fixtureCompletionChecker(
+      config,
+      manifest.releasedVersions,
+      baselines,
+    ),
+  });
   return manifest.buildPullRequests();
 }
 
@@ -317,60 +325,313 @@ test('shared source qualification respects each owner release boundary and ignor
   ).toEqual([`${native}/VERSION`]);
 });
 
-async function generateProductCandidate(
-  commits,
-  readCompatibility = (product, source) => productCompatibilityVersion(product, source),
-  configure = () => {},
-  { root = ROOT, baseline = first } = {},
-) {
-  const config = JSON.parse(readFileSync(path.join(root, 'release-please-config.json'), 'utf8'));
-  const versions = JSON.parse(
-    readFileSync(path.join(root, '.release-please-manifest.json'), 'utf8'),
-  );
-  const github = {
-    repository: { owner: 'f0rr0', repo: 'oliphaunt', defaultBranch: 'main' },
-    async *releaseIterator() {
-      for (const owner of Object.keys(config.packages))
-        yield {
-          tagName: `${config.packages[owner].component}-v${versions[owner]}`,
-          sha: baseline,
-          notes: 'Existing release',
-        };
-    },
-    async *mergeCommitIterator() {
-      yield* commits;
-      yield { sha: baseline, message: 'chore(release): previous versions', files: [] };
-    },
-    async getFileContentsOnBranch(file) {
-      const local = path.join(root, file);
-      const parsedContent =
-        file === 'release-please-config.json'
-          ? JSON.stringify(config)
-          : file === '.release-please-manifest.json'
-            ? JSON.stringify(versions)
-            : existsSync(local)
-              ? readFileSync(local, 'utf8')
-              : undefined;
-      if (parsedContent === undefined)
-        throw Object.assign(new Error(`missing ${file}`), { status: 404 });
-      return { parsedContent, content: Buffer.from(parsedContent).toString('base64') };
-    },
-    async getFileContents(file) {
-      return this.getFileContentsOnBranch(file);
-    },
-    async getFileJson(file) {
-      return JSON.parse((await this.getFileContentsOnBranch(file)).parsedContent);
-    },
+test('bounded Release Please selection produces zero, one and many owner candidates', async () => {
+  for (const [files, expected] of [
+    [['tools/release/controller.mts', 'products/alpha/README.md'], []],
+    [['products/alpha/src/lib.rs'], ['alpha']],
+    [[historyShared], historyProducts],
+  ]) {
+    const candidates = await generateHistoryCandidate([
+      { sha: head, message: 'fix: change selected delivery', files },
+      { sha: first, message: 'fix: already delivered behavior', files: [historyShared] },
+    ]);
+    expect(historyVersionUpdates(candidates).sort()).toEqual(
+      expected.map((product) => [`products/${product}/VERSION`, '0.2.1']).sort(),
+    );
+  }
+});
+
+test('actual capture retains move-out, move-in and renamed product inputs before Release Please selection', async () => {
+  const fixture = mkdtempSync(path.join(os.tmpdir(), 'release-commit-moves-'));
+  const snapshot = path.join(fixture, 'snapshot');
+  const run = (command, args) => {
+    const result = spawnSync(command, args, {
+      cwd: fixture,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: 'Fixture',
+        GIT_AUTHOR_EMAIL: 'fixture@example.com',
+        GIT_COMMITTER_NAME: 'Fixture',
+        GIT_COMMITTER_EMAIL: 'fixture@example.com',
+      },
+    });
+    if (result.status !== 0) throw new Error(`${command}: ${result.stderr}`);
+    return result.stdout.trim();
   };
-  const manifest = await Manifest.fromManifest(github, 'main');
-  useSourceDate('2026-09-11');
-  includeOwnedSourceCommits(manifest, github, graph, readCompatibility);
-  configure(manifest, github);
-  const candidates = await manifest.buildPullRequests();
-  expect(candidates.length).toBeLessThanOrEqual(1);
-  const [candidate] = candidates;
-  return { candidate, versions };
+  try {
+    run('git', ['init', '-q']);
+    mkdirSync(path.join(fixture, 'products/alpha/src'), { recursive: true });
+    mkdirSync(path.join(fixture, 'products/beta/src'), { recursive: true });
+    mkdirSync(path.join(fixture, 'unowned'), { recursive: true });
+    writeFileSync(path.join(fixture, 'products/alpha/src/source.rs'), 'alpha\n');
+    writeFileSync(path.join(fixture, 'unowned/source.rs'), 'beta\n');
+    run('git', ['add', '.']);
+    run('git', ['commit', '-qm', 'chore: published baseline']);
+    const baseline = run('git', ['rev-parse', 'HEAD']);
+    run('git', ['mv', 'products/alpha/src/source.rs', 'unowned/alpha.rs']);
+    run('git', ['commit', '-qm', 'fix: remove alpha input']);
+    const moveOut = run('git', ['rev-parse', 'HEAD']);
+    run('git', ['mv', 'unowned/source.rs', 'products/beta/src/source.rs']);
+    run('git', ['commit', '-qm', 'fix: install beta input']);
+    const moveIn = run('git', ['rev-parse', 'HEAD']);
+    run('git', ['mv', 'products/beta/src/source.rs', 'products/beta/src/renamed.rs']);
+    run('git', ['commit', '-qm', 'fix: rename beta input']);
+    const rename = run('git', ['rev-parse', 'HEAD']);
+    run('bash', [
+      path.join(ROOT, 'tools/release/snapshot-commit-paths.sh'),
+      fixture,
+      rename,
+      snapshot,
+    ]);
+    const candidates = await generateHistoryCandidate(
+      [
+        { sha: rename, message: 'fix: rename beta input', files: ['products/beta/src/renamed.rs'] },
+        { sha: moveIn, message: 'fix: install beta input', files: ['products/beta/src/source.rs'] },
+        { sha: moveOut, message: 'fix: remove alpha input', files: ['unowned/alpha.rs'] },
+        { sha: baseline, message: 'chore: published baseline', files: [] },
+      ],
+      {
+        baselines: Object.fromEntries(historyProducts.map((product) => [product, baseline])),
+        readCommitFiles: (sha) => readCommitPaths(sha, snapshot),
+        commitHistory: readCommitHistory(snapshot),
+        sourceSha: rename,
+        readSource: async () => ({ object: { sha: rename } }),
+        inspect(selected, calls) {
+          expect(calls.commits.backfillFiles).toBe(false);
+          expect(selected['products/alpha'].map(({ sha }) => sha)).toEqual([moveOut]);
+          expect(selected['products/alpha'][0].files).toEqual([
+            'products/alpha/src/source.rs',
+            'unowned/alpha.rs',
+          ]);
+          expect(selected['products/beta'].map(({ sha }) => sha)).toEqual([rename, moveIn]);
+          expect(selected['products/beta'][0].files).toEqual([
+            'products/beta/src/renamed.rs',
+            'products/beta/src/source.rs',
+          ]);
+          expect(selected['products/gamma']).toEqual([]);
+        },
+      },
+    );
+    expect(historyVersionUpdates(candidates).sort()).toEqual([
+      ['products/alpha/VERSION', '0.2.1'],
+      ['products/beta/VERSION', '0.2.1'],
+    ]);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test('history capture reaches release boundaries beyond pinned library search limits', async () => {
+  const commits = Array.from({ length: 510 }, (_, index) => ({
+    sha: (index + 1000).toString(16).padStart(40, '0'),
+    message: 'docs: controller maintenance',
+    files: ['tools/release/README.md'],
+  }));
+  commits.push(
+    {
+      sha: head,
+      message: 'fix: older unshipped alpha change',
+      files: ['products/alpha/src/lib.rs'],
+    },
+    { sha: first, message: 'chore(release): completed baseline', files: [] },
+  );
+  const candidates = await generateHistoryCandidate(commits, {
+    unrelatedReleaseCount: 410,
+    inspect(_selected, calls) {
+      expect(calls.commits.maxResults).toBe(Number.MAX_SAFE_INTEGER);
+      expect(calls.releases.maxResults).toBe(Number.MAX_SAFE_INTEGER);
+    },
+  });
+  expect(historyVersionUpdates(candidates)).toEqual([['products/alpha/VERSION', '0.2.1']]);
+});
+
+test('missing, skipped, draft and tag-only release boundaries stop preparation', async () => {
+  const baseline = { sha: first, message: 'chore(release): completed baseline', files: [] };
+  const current = {
+    sha: head,
+    message: 'fix: alpha delivery',
+    files: ['products/alpha/src/lib.rs'],
+  };
+  await expect(generateHistoryCandidate([current])).rejects.toThrow('did not reach alpha boundary');
+  await expect(
+    generateHistoryCandidate([current, baseline], { lastReleaseSha: head }),
+  ).rejects.toThrow('did not reach alpha boundary');
+  for (const options of [{ drafts: ['alpha'] }, { tagOnly: ['alpha'] }, { missing: ['alpha'] }])
+    await expect(generateHistoryCandidate([current, baseline], options)).rejects.toThrow(
+      'alpha@0.2.0 has no published release boundary',
+    );
+  await expect(generateHistoryCandidate([current, current, baseline])).rejects.toThrow(
+    'duplicate history commit',
+  );
+  await expect(
+    generateHistoryCandidate([{ sha: head, message: 'fix: unknown file history' }, baseline]),
+  ).rejects.toThrow(/missing.*files/u);
+});
+
+test('first releases consume the complete exclusive bootstrap boundary', async () => {
+  const commits = [
+    { sha: head, message: 'fix: first alpha delivery', files: ['products/alpha/src/lib.rs'] },
+    { sha: first, message: 'fix: legacy shared delivery', files: [historyShared] },
+  ];
+  const options = { unreleased: historyProducts, bootstrapSha: first };
+  expect(historyVersionUpdates(await generateHistoryCandidate(commits, options))).toEqual([
+    ['products/alpha/VERSION', '0.1.0'],
+  ]);
+  await expect(generateHistoryCandidate(commits.slice(0, 1), options)).rejects.toThrow(
+    'did not reach bootstrap boundary',
+  );
+});
+
+test('a new product without bootstrap uses complete history alongside published owners', async () => {
+  const candidates = await generateHistoryCandidate(
+    [
+      { sha: head, message: 'docs: explain beta', files: ['products/beta/README.md'] },
+      { sha: second, message: 'chore(release): existing owners', files: [] },
+      { sha: first, message: 'feat: first gamma delivery', files: ['products/gamma/src/lib.rs'] },
+    ],
+    {
+      baselines: { alpha: second, beta: second },
+      unreleased: ['gamma'],
+      inspect(selected) {
+        expect(selected['products/alpha']).toEqual([]);
+        expect(selected['products/beta']).toEqual([]);
+        expect(selected['products/gamma'].map(({ sha }) => sha)).toEqual([first]);
+      },
+    },
+  );
+  expect(historyVersionUpdates(candidates)).toEqual([['products/gamma/VERSION', '0.1.0']]);
+});
+
+test('seeded histories match independent per-owner published-boundary oracles', async () => {
+  let state = 0x294;
+  const random = () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state;
+  };
+  for (let scenario = 0; scenario < 24; scenario++) {
+    const expectedOwners = [];
+    const commits = Array.from({ length: 32 }, (_, index) => {
+      const choice = random() % 6;
+      const owners = choice < 3 ? [historyProducts[choice]] : choice === 3 ? historyProducts : [];
+      expectedOwners.push(owners);
+      return {
+        sha: (10000 + scenario * 100 + index).toString(16).padStart(40, '0'),
+        message: `fix: scenario ${scenario} input ${index}`,
+        files:
+          choice < 3
+            ? [`products/${historyProducts[choice]}/src/lib.rs`]
+            : [
+                choice === 3
+                  ? historyShared
+                  : choice === 4
+                    ? 'products/alpha/README.md'
+                    : 'tools/controller.mts',
+              ],
+      };
+    });
+    const boundaries = Object.fromEntries(
+      historyProducts.map((product) => [product, 4 + (random() % 28)]),
+    );
+    const expected = Object.fromEntries(
+      historyProducts.map((product) => [
+        `products/${product}`,
+        commits.filter(
+          (_commit, index) =>
+            index < boundaries[product] && expectedOwners[index].includes(product),
+        ),
+      ]),
+    );
+    const captured = mkdtempSync(path.join(os.tmpdir(), 'release-random-ancestry-'));
+    try {
+      writeFileSync(
+        path.join(captured, '.parents'),
+        `head ${commits[0].sha}\n${commits
+          .map(
+            (commit, index) =>
+              `${commit.sha}${commits[index + 1] ? ` ${commits[index + 1].sha}` : ''}\n`,
+          )
+          .join('')}`,
+      );
+      const apiCommits = [...commits];
+      for (let index = apiCommits.length - 1; index > 0; index--) {
+        const other = random() % (index + 1);
+        [apiCommits[index], apiCommits[other]] = [apiCommits[other], apiCommits[index]];
+      }
+      const candidates = await generateHistoryCandidate(apiCommits, {
+        commitHistory: readCommitHistory(captured),
+        baselines: Object.fromEntries(
+          historyProducts.map((product) => [product, commits[boundaries[product]].sha]),
+        ),
+        inspect(selected) {
+          for (const [owner, entries] of Object.entries(expected))
+            expect(selected[owner].map(({ sha }) => sha)).toEqual(entries.map(({ sha }) => sha));
+        },
+      });
+      expect(historyVersionUpdates(candidates).sort()).toEqual(
+        Object.entries(expected)
+          .filter(([, entries]) => entries.length)
+          .map(([owner]) => [`${owner}/VERSION`, '0.2.1'])
+          .sort(),
+      );
+    } finally {
+      rmSync(captured, { recursive: true, force: true });
+    }
+  }
+});
+
+function generateProductCandidate(...args) {
+  return generateProductCandidateForGraph(graph, ...args);
 }
+
+test('one supplied current-source map reaches RP support intent and default-install closure without caller mutation', async () => {
+  const buildBound = new Map(Object.keys(graph.products).map((id) => [id, new Set<string>()]));
+  const addon = 'oliphaunt-wasix-napi';
+  buildBound.get(addon).add('liboliphaunt-wasix');
+  for (const [product, metadata] of Object.entries(graph.products))
+    if (metadata.extension?.class === 'external')
+      buildBound.set(product, new Set(['liboliphaunt-native', 'liboliphaunt-wasix']));
+  const { candidate } = await generateProductCandidate(
+    [
+      {
+        sha: head,
+        message: 'fix: update compiled WASIX host and extension',
+        files: [`${wasix}/toolchain.toml`, 'src/extensions/external/vector/source.toml'],
+      },
+    ],
+    undefined,
+    () => buildBound.get(addon).clear(),
+    { buildBound },
+  );
+  const selected = candidate.body.releaseData.map(({ component }) => component);
+  expect(selected).toContain('liboliphaunt-wasix');
+  expect(selected).toContain(addon);
+  expect(selected).toContain('oliphaunt-wasix-ts');
+  expect(selected).not.toContain('liboliphaunt-native');
+  expect(buildBound.get(addon).size).toBe(0);
+});
+
+test('missing supplied relationships stop RP before source and compatibility reads', async () => {
+  let reads = 0;
+  await expect(
+    generateProductCandidate(
+      [
+        {
+          sha: head,
+          message: 'fix: update extension',
+          files: ['src/extensions/external/vector/source.toml'],
+        },
+      ],
+      () => {
+        reads++;
+        throw new Error('compatibility must not be read');
+      },
+      undefined,
+      { buildBound: new Map() },
+    ),
+  ).rejects.toThrow('buildBound');
+  expect(reads).toBe(0);
+});
 
 for (const scenario of [
   {
@@ -387,15 +648,11 @@ for (const scenario of [
     products: ['oliphaunt-js'],
   },
   {
-    name: 'query updates and native ecosystem dependency bumps',
+    name: 'independent query updates and npm ecosystem dependency bumps',
     files: ['src/query/ts/src/query.ts', 'src/query/rust/src/lib.rs'],
     products: [
       'oliphaunt-query-ts',
       'oliphaunt-query',
-      'oliphaunt-broker',
-      'oliphaunt-kotlin',
-      'oliphaunt-swift',
-      'oliphaunt-wasix-napi',
       'oliphaunt-js',
       'oliphaunt-react-native',
       'oliphaunt-wasix-ts',
@@ -431,35 +688,17 @@ for (const scenario of [
       'src/wasix/sdks/rust/src/oliphaunt/base.rs',
       'src/wasix/sdks/ts/src/index.ts',
     ],
-    products: [
-      'liboliphaunt-wasix',
-      'oliphaunt-wasix-napi',
-      'oliphaunt-wasix-rust',
-      'oliphaunt-wasix-ts',
-    ],
+    products: ['liboliphaunt-wasix', 'oliphaunt-wasix-rust', 'oliphaunt-wasix-ts'],
   },
   {
-    name: 'both runtime families and one extension close all default installs',
+    name: 'a changed WASIX default extension host requires explicit addon adoption before version closure',
     files: [
       `${native}/src/liboliphaunt.c`,
       `${wasix}/toolchain.toml`,
       'src/extensions/external/vector/source.toml',
     ],
-    products: [
-      'liboliphaunt-native',
-      'liboliphaunt-wasix',
-      ...Object.keys(graph.products).filter(
-        (id) => graph.products[id].extension?.class === 'external',
-      ),
-      'oliphaunt-js',
-      'oliphaunt-kotlin',
-      'oliphaunt-swift',
-      'oliphaunt-react-native',
-      'oliphaunt-wasix-rust',
-      'oliphaunt-wasix-ts',
-      'oliphaunt-wasix-napi',
-      'oliphaunt-pgwire-server',
-    ],
+    products: ['liboliphaunt-native', 'liboliphaunt-wasix', 'oliphaunt-extension-vector'],
+    error: 'update its conventional runtime and SDK requirements',
   },
   {
     name: 'shared package writer',
@@ -479,8 +718,13 @@ for (const scenario of [
       'oliphaunt-react-native',
     ],
   },
+  {
+    name: 'local pgwire input changes release the addon while its registry SDK and runtime stay held',
+    files: ['src/wasix/pgwire-server/src/lib.rs'],
+    products: ['oliphaunt-pgwire-server', 'oliphaunt-wasix-napi'],
+  },
 ])
-  test(`release scenario: ${scenario.name} produces coherent versions and exact consumer scope`, async () => {
+  test(`release scenario: ${scenario.name} ${scenario.error ? 'rejects incompatible default installs before application' : 'produces coherent versions and exact consumer scope'}`, async () => {
     if (!scenario.products.length) {
       const { candidate } = await generateProductCandidate([
         { sha: head, message: 'docs: clarify usage', files: scenario.files },
@@ -523,7 +767,14 @@ for (const scenario of [
         encoding: 'utf8',
       });
       expect(changed.status).toBe(0);
-      for (const file of changed.stdout.split('\0').filter(Boolean)) {
+      const untracked = spawnSync('git', ['ls-files', '--others', '--exclude-standard', '-z'], {
+        cwd: ROOT,
+        encoding: 'utf8',
+      });
+      expect(untracked.status).toBe(0);
+      for (const file of new Set(
+        `${changed.stdout}${untracked.stdout}`.split('\0').filter(Boolean),
+      )) {
         const destination = path.join(scratch, file);
         if (existsSync(path.join(ROOT, file))) {
           mkdirSync(path.dirname(destination), { recursive: true });
@@ -534,6 +785,9 @@ for (const scenario of [
       symlinkSync(path.join(ROOT, 'node_modules'), path.join(scratch, 'node_modules'));
       run('git', ['config', 'user.name', 'Release Fixture']);
       run('git', ['config', 'user.email', 'release@example.invalid']);
+      // Copied in-flight source/fixture edits must have their derived evidence
+      // in the source baseline. Closing a release may only change versions.
+      run('bash', ['tools/release/sync-release-pr.sh']);
       run('git', ['add', '-A']);
       run('git', ['commit', '--allow-empty', '-qm', 'test: published release baseline']);
       const baseline = run('git', ['rev-parse', 'HEAD']);
@@ -561,6 +815,32 @@ for (const scenario of [
             : readFileSync(path.join(scratch, entry.path), 'utf8'),
         );
       };
+      const queryManifest = path.join(scratch, 'src/wasix/sdks/rust/Cargo.toml');
+      const declaredQueryRequirement = Bun.TOML.parse(readFileSync(queryManifest, 'utf8'))
+        .dependencies['oliphaunt-query'].version;
+      const addonLockfile = path.join(scratch, 'src/wasix/node-addon/Cargo.lock');
+      const publishedCargoRows = Bun.TOML.parse(readFileSync(addonLockfile, 'utf8')).package.filter(
+        (pkg) => pkg.source,
+      );
+      if (scenario.error) {
+        await expect(
+          generateProductCandidate(
+            [
+              {
+                sha: source,
+                message: 'fix: repair shipped behavior',
+                files: run('git', ['diff', '--name-only', baseline, source]).split('\n'),
+              },
+            ],
+            readCompatibility,
+            undefined,
+            { root: scratch, baseline },
+          ),
+        ).rejects.toThrow(scenario.error);
+        expect(run('git', ['status', '--porcelain', '--untracked-files=all'])).toBe('');
+        expect(run('git', ['rev-parse', 'HEAD'])).toBe(source);
+        return;
+      }
       const { candidate, versions } = await generateProductCandidate(
         [
           {
@@ -574,6 +854,9 @@ for (const scenario of [
         { root: scratch, baseline },
       );
       applyCandidate(scratch, candidate);
+      expect(
+        Bun.TOML.parse(readFileSync(queryManifest, 'utf8')).dependencies['oliphaunt-query'].version,
+      ).toBe(declaredQueryRequirement);
       const declaredRequirements = new Map(
         entries.map((entry) => [
           entry.id,
@@ -586,6 +869,11 @@ for (const scenario of [
       writeFileSync(path.join(metadata, 'title'), `${candidate.title.toString()}\n`);
       writeFileSync(path.join(metadata, 'body.md'), `${candidate.body.toString()}\n`);
       run('bash', ['tools/release/close-release-candidate.sh', metadata]);
+      expect(
+        Bun.TOML.parse(readFileSync(queryManifest, 'utf8')).dependencies['oliphaunt-query'].version,
+      ).toBe(declaredQueryRequirement);
+      const addonCargoRows = Bun.TOML.parse(readFileSync(addonLockfile, 'utf8')).package;
+      expect(addonCargoRows.filter((pkg) => pkg.source)).toEqual(publishedCargoRows);
       const closed = run('git', ['rev-parse', 'HEAD']);
       expect(run('git', ['rev-parse', 'HEAD^'])).toBe(source);
       run('bash', ['tools/release/sync-release-pr.sh']);
@@ -597,6 +885,14 @@ for (const scenario of [
         readFileSync(path.join(scratch, '.release-please-manifest.json'), 'utf8'),
       );
       const changedOwners = Object.keys(after).filter((owner) => after[owner] !== versions[owner]);
+      for (const product of ['oliphaunt-wasix-napi', 'oliphaunt-pgwire-server']) {
+        const cargo = Bun.TOML.parse(
+          readFileSync(path.join(scratch, graph.products[product].path, 'Cargo.toml'), 'utf8'),
+        );
+        expect(
+          addonCargoRows.find((pkg) => pkg.name === cargo.package.name && !pkg.source).version,
+        ).toBe(cargo.package.version);
+      }
       expect(changedOwners.sort()).toEqual(
         scenario.products.map((id) => graph.products[id].path).sort(),
       );
@@ -689,7 +985,7 @@ for (const scenario of [
           ),
         );
         expect(readCompatibility('oliphaunt-wasix-napi', 'liboliphaunt-wasix')).toBe(
-          products['liboliphaunt-wasix'].version,
+          graph.products['liboliphaunt-wasix'].version,
         );
         run('git', ['reset', '--hard', source]);
         applyCandidate(scratch, candidate);
@@ -709,58 +1005,6 @@ for (const scenario of [
     }
   }, 180_000);
 
-test('actual Rust, npm, Swift and Gradle strategy updates apply to one local candidate', async () => {
-  const root = path.resolve(import.meta.dir, '../..');
-  const selected = [
-    'src/native/sdks/rust',
-    'src/native/sdks/ts',
-    'src/native/sdks/swift',
-    'src/native/sdks/kotlin',
-  ];
-  const { candidate, versions } = await generateProductCandidate([
-    {
-      sha: head,
-      message: 'fix: correct the selected SDK behavior',
-      files: selected.map((owner) => `${owner}/src/implementation`),
-    },
-  ]);
-  const scratch = mkdtempSync(path.join(os.tmpdir(), 'release-please-ecosystems-'));
-  try {
-    for (const update of candidate.updates) {
-      const input = path.join(root, update.path);
-      if (existsSync(input)) {
-        const destination = path.join(scratch, update.path);
-        mkdirSync(path.dirname(destination), { recursive: true });
-        writeFileSync(destination, readFileSync(input));
-      }
-    }
-    applyCandidate(scratch, candidate);
-    const after = JSON.parse(
-      readFileSync(path.join(scratch, '.release-please-manifest.json'), 'utf8'),
-    );
-    const read = (file) => readFileSync(path.join(scratch, file), 'utf8');
-    expect(Bun.TOML.parse(read('src/native/sdks/rust/Cargo.toml')).package.version).toBe(
-      after['src/native/sdks/rust'],
-    );
-    expect(
-      Bun.TOML.parse(read('src/native/sdks/rust/crates/oliphaunt-build/Cargo.toml')).package
-        .version,
-    ).toBe(after['src/native/sdks/rust']);
-    expect(JSON.parse(read('src/native/sdks/ts/package.json')).version).toBe(
-      after['src/native/sdks/ts'],
-    );
-    expect(read('src/native/sdks/swift/VERSION').trim()).toBe(after['src/native/sdks/swift']);
-    expect(read('src/native/sdks/kotlin/VERSION').trim()).toBe(after['src/native/sdks/kotlin']);
-    expect(read('src/native/sdks/kotlin/gradle.properties')).toContain(
-      `VERSION_NAME=${after['src/native/sdks/kotlin']}`,
-    );
-    expect(existsSync(path.join(scratch, 'src/native/sdks/rust/Cargo.lock'))).toBe(false);
-    for (const owner of selected) expect(after[owner]).not.toBe(versions[owner]);
-  } finally {
-    rmSync(scratch, { recursive: true, force: true });
-  }
-});
-
 test('runtime and SDK changes retain independent extension releases', async () => {
   for (const sdk of ['oliphaunt-kotlin', 'oliphaunt-wasix-rust', 'oliphaunt-react-native']) {
     const { candidate } = await generateProductCandidate([
@@ -774,125 +1018,6 @@ test('runtime and SDK changes retain independent extension releases', async () =
       candidate.updates.some(({ path: file }) => file.startsWith('src/extensions/external/')),
     ).toBe(false);
   }
-});
-
-test('independent SDK pins do not impose a single global runtime version', async () => {
-  const readCompatibility = (product, source) =>
-    product === 'oliphaunt-react-native' ? '0.2.0' : graph.products[source].version;
-  const { candidate } = await generateProductCandidate(
-    [
-      {
-        sha: head,
-        message: 'fix: repair mobile adapters',
-        files: [
-          'src/native/sdks/kotlin/src/implementation',
-          'src/native/sdks/react-native/ios/OliphauntAdapter.swift',
-        ],
-      },
-    ],
-    readCompatibility,
-  );
-  expect(candidate).toBeDefined();
-  expect(
-    candidate.updates.some(({ path: file }) => file.startsWith('src/extensions/external/')),
-  ).toBe(false);
-});
-
-test('removing published exact host support supplies breaking intent before native version selection', async () => {
-  const vector = graph.products['oliphaunt-extension-vector'];
-  const reads = [];
-  const readCompatibility = (product, source, _prefix, { ref = null } = {}) => {
-    reads.push({ product, source, ref });
-    return ref ? '0.1.0' : graph.products[source].version;
-  };
-  const { candidate, versions } = await generateProductCandidate(
-    [
-      {
-        sha: head,
-        message: 'fix: repair vector packaging',
-        files: [`${vector.path}/source.toml`],
-      },
-    ],
-    readCompatibility,
-  );
-  const update = mergeUpdates(candidate.updates).find(
-    ({ path: file }) => file === '.release-please-manifest.json',
-  );
-  const after = JSON.parse(update.updater.updateContent(JSON.stringify(versions)));
-  const [major, minor] = vector.version.split('.').map(Number);
-  expect(after[vector.path]).toBe(`${major}.${minor + 1}.0`);
-  const changelog = candidate.updates
-    .find(({ path: file }) => file === vector.changelog_path)
-    .updater.updateContent('# Changelog\n');
-  expect(changelog).toContain('replace exact host support');
-  expect(changelog).toContain('repair vector packaging');
-  expect(
-    reads.some(({ product, ref }) => product === 'oliphaunt-extension-vector' && ref !== null),
-  ).toBe(true);
-});
-
-test('unchanged public support permits an ordinary patch release', async () => {
-  const vector = graph.products['oliphaunt-extension-vector'];
-  const { candidate, versions } = await generateProductCandidate([
-    {
-      sha: head,
-      message: 'fix: repair vector SQL',
-      files: [`${vector.path}/source.toml`],
-    },
-  ]);
-  const update = mergeUpdates(candidate.updates).find(
-    ({ path: file }) => file === '.release-please-manifest.json',
-  );
-  const after = JSON.parse(update.updater.updateContent(JSON.stringify(versions)));
-  const [major, minor, patch] = vector.version.split('.').map(Number);
-  expect(after[vector.path]).toBe(`${major}.${minor}.${patch + 1}`);
-});
-
-test('workspace-created candidates receive public support intent through native bump selection', async () => {
-  const vector = graph.products['oliphaunt-extension-vector'];
-  let bump;
-  await generateProductCandidate(
-    [
-      {
-        sha: head,
-        message: 'fix: update build helper API',
-        files: ['src/native/sdks/rust/crates/oliphaunt-build/src/lib.rs'],
-      },
-    ],
-    (_product, source, _prefix, { ref = null } = {}) =>
-      ref ? '0.1.0' : graph.products[source].version,
-    (manifest, github) => {
-      manifest.plugins.push(
-        new (class extends ManifestPlugin {
-          async preconfigure(strategies, _commits, releases) {
-            bump = await strategies[vector.path].versioningStrategy.bump(
-              releases[vector.path].tag.version,
-              [],
-            );
-            return strategies;
-          }
-        })(github, 'main', manifest.repositoryConfig),
-      );
-    },
-  );
-  const [major, minor] = vector.version.split('.').map(Number);
-  expect(bump.toString()).toBe(`${major}.${minor + 1}.0`);
-});
-
-test('docs changes do not read compatibility or create candidates', async () => {
-  const { candidate } = await generateProductCandidate(
-    [
-      {
-        sha: head,
-        message: 'docs: clarify preparation',
-        files: ['src/docs/maintainers/release.md'],
-      },
-    ],
-    () => {
-      throw new Error('unexpected compatibility read');
-    },
-  );
-  expect(candidate).toBeUndefined();
 });
 
 test('regeneration preserves the grouped body and complete update set', async () => {

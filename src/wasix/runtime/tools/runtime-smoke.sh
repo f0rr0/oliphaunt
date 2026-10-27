@@ -81,7 +81,18 @@ if [ "$asset_mode" = "full" ]; then
   # Each extension must pass direct execution, restart, physical backup/restore,
   # server execution and materialization. Tests record only completed modes.
   oliphaunt_wasix_library_tests extension_tests::public_extensions
-  server_command=(cargo test -p oliphaunt-pgwire-server --locked --no-default-features
+  # This full-catalog proof uses current sources, separately from held installed adapters.
+  mkdir -p "$root/target/wasix-smoke"
+  source_server_root="$(mktemp -d "$root/target/wasix-smoke/source-server.XXXXXX")"
+  trap 'rm -rf "$source_server_root"' EXIT
+  source_server_helper="$root/src/wasix/runtime/tools/source-server-qualification.mts"
+  source_server_manifest="$(tools/dev/bun.sh "$source_server_helper" prepare "$root" "$source_server_root")"
+  cargo fetch --manifest-path "$source_server_manifest"
+  cargo metadata --manifest-path "$source_server_manifest" --locked --offline --no-default-features \
+    --features "${full_evidence_features/,tools/}" --format-version 1 > "$source_server_root/metadata.json"
+  tools/dev/bun.sh "$source_server_helper" verify "$root" "$source_server_manifest" "$source_server_root/metadata.json"
+  server_command=(cargo test --manifest-path "$source_server_manifest"
+    --target-dir "${CARGO_TARGET_DIR:-$root/target}" -p oliphaunt-pgwire-server --locked --offline --no-default-features
     --features "${full_evidence_features/,tools/}" --test extensions public_extensions_pass_server_smoke)
   oliphaunt_require_cargo_test_filter public_extensions_pass_server_smoke "${server_command[@]}"
   "${server_command[@]}" -- --ignored --exact --nocapture --test-threads=1

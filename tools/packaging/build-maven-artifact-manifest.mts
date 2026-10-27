@@ -1,31 +1,37 @@
 #!/usr/bin/env bun
 import fs from 'node:fs/promises';
 import path from 'node:path';
-
-import { currentVersion } from '../release/product-version.mts';
+import {
+  assertExtensionUpstreamLicensesInEntries,
+  extensionMavenLicenses,
+  extensionRegistryLicense,
+  nativeExtensionCarrierLegal,
+  nativeExtensionConstructionMavenLicenses,
+} from '../../src/extensions/tools/extension-upstream-licenses.mts';
 import { requireCompatibilityVersionBounds } from '../release/compatibility-version-policy.mts';
 import {
+  extensionManifestMembers,
+  frozenExtensionOwnerRequirements,
+} from '../release/extension-release-metadata.mts';
+import { currentVersion } from '../release/product-version.mts';
+import {
   allArtifactTargets,
-  exactExtensionProducts as logicalExactExtensionProducts,
   extensionArtifactProductRoot,
-  extensionArtifactTargets as releaseExtensionArtifactTargets,
   extensionMetadata,
+  extensionOwnerForSqlName,
   extensionReleaseProduct,
   extensionReleaseVersion,
   extensionSqlNames,
+  exactExtensionProducts as logicalExactExtensionProducts,
   registryPackageRows,
+  extensionArtifactTargets as releaseExtensionArtifactTargets,
 } from '../release/release-artifact-targets.mts';
+import { readPortableArchiveEntries } from './portable-archive.mts';
 import {
   assertReleaseNoticesInEntries,
   releaseProfileMavenLicenses,
   releaseProfilePackageLicense,
 } from './release-notices.mts';
-import {
-  assertExtensionUpstreamLicensesInEntries,
-  extensionMavenLicenses,
-  extensionRegistryLicense,
-} from '../../src/extensions/tools/extension-upstream-licenses.mts';
-import { readPortableArchiveEntries } from './portable-archive.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../..');
 const PREFIX = 'build_maven_artifact_manifest.mts';
@@ -56,17 +62,33 @@ function canonicalMavenPayloadPrefix(file, entries) {
   return expected;
 }
 
-function assertMavenPayloadLegal(file, profile, sqlNames = []) {
+function assertMavenPayloadLegal(
+  file,
+  profile,
+  sqlNames = [],
+  sourceRoot,
+  constructionLicenseFiles = [],
+  target = null,
+) {
   try {
     const entries = readPortableArchiveEntries(file);
     const prefix = canonicalMavenPayloadPrefix(file, entries);
-    assertReleaseNoticesInEntries(entries, { profile, prefix, label: path.basename(file) });
+    assertReleaseNoticesInEntries(entries, {
+      profile,
+      prefix,
+      label: path.basename(file),
+      sourceRoot,
+    });
     if (sqlNames.length > 0) {
       // Native singleton payloads install upstream notices with runtime files
       // below files/, while aggregate bundles stage their combined legal tree
       // directly below the canonical archive root.
       const upstreamPrefix = prefix === '' ? 'files' : prefix;
-      assertExtensionUpstreamLicensesInEntries(sqlNames, entries, { prefix: upstreamPrefix });
+      assertExtensionUpstreamLicensesInEntries(sqlNames, entries, {
+        prefix: upstreamPrefix,
+        constructionLicenseFiles,
+        target,
+      });
     }
   } catch (error) {
     fail(
@@ -76,16 +98,46 @@ function assertMavenPayloadLegal(file, profile, sqlNames = []) {
   return file;
 }
 
+/** Project frozen SQL dependencies to conventional, same-ABI Maven owner edges. */
+export function extensionMavenDependencies({
+  product,
+  releaseProduct,
+  runtimeVersion,
+  target,
+  members,
+  ownerMetadata = undefined,
+}) {
+  return frozenExtensionOwnerRequirements({
+    product,
+    releaseProduct,
+    runtimeProduct: 'liboliphaunt-native',
+    runtimeVersion,
+    members,
+    ownerForSqlName(sqlName) {
+      return extensionOwnerForSqlName(sqlName, 'native', { ownerMetadata, prefix: PREFIX });
+    },
+  }).map((requirement) => ({
+    groupId: 'dev.oliphaunt.extensions',
+    artifactId: `${requirement.product}-${target}`,
+    version: requirement.version,
+    type: 'tar.gz',
+    scope: 'runtime',
+  }));
+}
+
 function repoPath(value) {
   return path.isAbsolute(value) ? value : path.join(ROOT, value);
 }
 
-function productArtifactTargets(product, version) {
-  return allArtifactTargets(
-    {
-      product,
-    },
-    PREFIX,
+function productArtifactTargets(product, version, context) {
+  return (
+    context?.artifactTargets ??
+    allArtifactTargets(
+      {
+        product,
+      },
+      PREFIX,
+    )
   )
     .filter((target) => target.surfaces.includes('maven'))
     .map((target) => ({
@@ -138,9 +190,9 @@ function runtimeMavenArtifactMetadata(target) {
   fail(`unsupported liboliphaunt-native Maven artifact target ${target.id}`);
 }
 
-function productMavenArtifacts(product, version) {
+function productMavenArtifacts(product, version, context) {
   const artifacts = new Map();
-  for (const target of productArtifactTargets(product, version)) {
+  for (const target of productArtifactTargets(product, version, context)) {
     const artifactId = runtimeMavenArtifactId(target);
     if (artifactId === undefined) {
       continue;
@@ -190,6 +242,7 @@ function tsvRow({
   runtimeVersion = '',
   licenseSpdx,
   licenses,
+  dependencies = [],
 }) {
   if (typeof licenseSpdx !== 'string' || !licenseSpdx)
     fail(`Maven artifact ${groupId}:${artifactId} has no package SPDX expression`);
@@ -206,6 +259,7 @@ function tsvRow({
     runtimeVersion,
     licenseSpdx,
     JSON.stringify(licenses),
+    ...(dependencies.length > 0 ? [JSON.stringify(dependencies)] : []),
   ];
   if (values.some((value) => value.includes('\t') || value.includes('\n'))) {
     fail(`Maven artifact manifest value contains a tab or newline: ${JSON.stringify(values)}`);
@@ -213,20 +267,21 @@ function tsvRow({
   return values.join('\t');
 }
 
-async function productRows(assetRoot, product, artifactIds) {
-  const version = await currentVersion(product);
-  const artifacts = productMavenArtifacts(product, version);
+async function productRows(assetRoot, product, artifactIds, context) {
+  const version = context?.version ?? (await currentVersion(product));
+  const artifacts = productMavenArtifacts(product, version, context);
   const rows = [];
   const selected = artifactIds === undefined ? undefined : new Set(artifactIds);
-  for (const coordinate of registryPackageRows(
-    {
-      product,
-      packageKind: 'maven',
-    },
-    PREFIX,
-  )
-    .map((row) => row.packageName)
-    .filter((name) => name.startsWith('dev.oliphaunt.runtime:'))) {
+  for (const coordinate of (
+    context?.registryPackages ??
+    registryPackageRows(
+      {
+        product,
+        packageKind: 'maven',
+      },
+      PREFIX,
+    ).map((row) => row.packageName)
+  ).filter((name) => name.startsWith('dev.oliphaunt.runtime:'))) {
     const [groupId, artifactId] = splitMavenCoordinate(coordinate);
     if (selected && !selected.delete(artifactId)) continue;
     if (groupId !== 'dev.oliphaunt.runtime') {
@@ -237,7 +292,7 @@ async function productRows(assetRoot, product, artifactIds) {
       fail(`${product} Maven artifact ${coordinate} has no release asset mapping`);
     }
     const file = await requireFile(path.join(assetRoot, artifact.filename), artifactId);
-    assertMavenPayloadLegal(file, artifact.licenseProfile);
+    assertMavenPayloadLegal(file, artifact.licenseProfile, [], context?.noticeSourceRoot);
     rows.push(
       tsvRow({
         groupId,
@@ -246,10 +301,13 @@ async function productRows(assetRoot, product, artifactIds) {
         file,
         name: artifact.name,
         description: artifact.description,
-        licenseSpdx: releaseProfilePackageLicense(artifact.licenseProfile).spdx,
+        licenseSpdx: releaseProfilePackageLicense(artifact.licenseProfile, {
+          sourceRoot: context?.noticeSourceRoot,
+        }).spdx,
         licenses: releaseProfileMavenLicenses(artifact.licenseProfile, {
           product,
           version,
+          sourceRoot: context?.noticeSourceRoot,
         }),
       }),
     );
@@ -259,16 +317,38 @@ async function productRows(assetRoot, product, artifactIds) {
   return rows;
 }
 
-async function extensionRows(extensionRoot, selectedProducts) {
+async function extensionRows(extensionRoot, selectedProducts, context) {
+  if (context?.extensions && selectedProducts.length === 0)
+    fail('declared extension Maven inputs require explicit selected products');
   const products =
     selectedProducts.length > 0 ? selectedProducts : logicalExactExtensionProducts(PREFIX);
   const rows = [];
   for (const product of [...products].sort()) {
-    const sqlNames = extensionSqlNames(product, PREFIX);
-    const version = extensionReleaseVersion(product, 'native', PREFIX);
+    const declared = context?.extensions?.[product];
+    if (context?.extensions && !declared)
+      fail(`${product} is absent from declared extension Maven inputs`);
+    if (
+      declared &&
+      (!Array.isArray(declared.sqlNames) ||
+        declared.sqlNames.length === 0 ||
+        !Array.isArray(declared.targets) ||
+        !Array.isArray(declared.registryPackages) ||
+        typeof declared.version !== 'string' ||
+        typeof declared.releaseProduct !== 'string' ||
+        typeof declared.runtimeSourceVersion !== 'string' ||
+        typeof declared.productRoot !== 'string' ||
+        !declared.compatibility)
+    )
+      fail(`${product} has incomplete declared extension Maven inputs`);
+    const sqlNames = declared?.sqlNames ?? extensionSqlNames(product, PREFIX);
+    if (declared && new Set(sqlNames).size !== sqlNames.length)
+      fail(`${product} repeats a declared SQL member`);
+    const version = declared?.version ?? extensionReleaseVersion(product, 'native', PREFIX);
     const registryLicense = extensionRegistryLicense(product, sqlNames);
-    const compatibility = extensionMetadata(product, PREFIX).compatibility;
-    const releaseProduct = extensionReleaseProduct(product, 'native', PREFIX);
+    const compatibility =
+      declared?.compatibility ?? extensionMetadata(product, PREFIX).compatibility;
+    const releaseProduct =
+      declared?.releaseProduct ?? extensionReleaseProduct(product, 'native', PREFIX);
     const runtimeProduct = compatibility.nativeRuntimeProduct;
     const runtimeVersion = compatibility.nativeRuntimeVersion;
     if (
@@ -286,22 +366,42 @@ async function extensionRows(extensionRoot, selectedProducts) {
         id: `${product} native runtime`,
         value: runtimeVersion,
         sourceProduct: runtimeProduct,
-        sourceVersion: await currentVersion(runtimeProduct),
+        sourceVersion: declared?.runtimeSourceVersion ?? (await currentVersion(runtimeProduct)),
       },
       { prefix: PREFIX },
     );
     const productRoot = path.join(
-      extensionArtifactProductRoot(product, 'native', extensionRoot, PREFIX),
+      declared?.productRoot ??
+        extensionArtifactProductRoot(product, 'native', extensionRoot, PREFIX),
       'release-assets',
     );
+    const frozenMembers = declared?.memberContracts
+      ? null
+      : extensionManifestMembers(
+          JSON.parse(
+            await fs.readFile(
+              path.join(productRoot, `${product}-${version}-manifest.json`),
+              'utf8',
+            ),
+          ),
+        );
+    if (
+      frozenMembers &&
+      JSON.stringify(frozenMembers.map((member) => member.sqlName).sort()) !==
+        JSON.stringify([...sqlNames].sort())
+    )
+      fail(`${product} frozen Maven member inventory differs from its selected SQL members`);
     const targets = [
       ...new Map(
-        releaseExtensionArtifactTargets(
-          {
-            product,
-            family: 'native',
-          },
-          PREFIX,
+        (
+          declared?.targets ??
+          releaseExtensionArtifactTargets(
+            {
+              product,
+              family: 'native',
+            },
+            PREFIX,
+          )
         )
           .filter(
             (target) =>
@@ -313,11 +413,26 @@ async function extensionRows(extensionRoot, selectedProducts) {
     if (targets.length === 0) {
       fail(`${product} has no published Android Maven extension targets`);
     }
+    if (
+      declared &&
+      (declared.targets.length !== 2 ||
+        declared.targets.some(
+          (target) => target.family !== 'native' || target.kind !== 'native-static-registry',
+        ) ||
+        JSON.stringify(targets.map((target) => target.target).sort()) !==
+          JSON.stringify(['android-arm64-v8a', 'android-x86_64']))
+    )
+      fail(`${product} declared Maven inputs must cover both canonical Android targets`);
     const declaredCoordinates = new Set(
-      registryPackageRows({ product: releaseProduct, packageKind: 'maven' }, PREFIX)
-        .map((row) => row.packageName)
-        .filter((name) => name.startsWith(`dev.oliphaunt.extensions:${product}-`)),
+      (
+        declared?.registryPackages ??
+        registryPackageRows({ product: releaseProduct, packageKind: 'maven' }, PREFIX).map(
+          (row) => row.packageName,
+        )
+      ).filter((name) => name.startsWith(`dev.oliphaunt.extensions:${product}-`)),
     );
+    if (declared && new Set(declared.registryPackages).size !== declared.registryPackages.length)
+      fail(`${product} repeats a declared Maven coordinate`);
     for (const target of targets) {
       const coordinate = `dev.oliphaunt.extensions:${product}-${target.target}`;
       if (!declaredCoordinates.delete(coordinate)) {
@@ -335,14 +450,26 @@ async function extensionRows(extensionRoot, selectedProducts) {
         path.join(productRoot, filename),
         `${product} ${target.target} Maven artifact`,
       );
-      const licenseProfile =
+      const legacyLicenseProfile =
         product === 'oliphaunt-extension-contrib-pg18'
           ? 'contrib-native-openssl'
           : 'external-native';
+      const memberContracts = declared?.memberContracts?.[target.target] ?? [];
+      const legal = declared
+        ? nativeExtensionCarrierLegal(product, sqlNames, {
+            target: target.target,
+            carriesPayload: true,
+            memberContracts,
+          })
+        : null;
+      const licenseProfile = legal?.profile ?? legacyLicenseProfile;
       assertMavenPayloadLegal(
         file,
         licenseProfile,
         product === 'oliphaunt-extension-contrib-pg18' ? [] : sqlNames,
+        context?.noticeSourceRoot,
+        memberContracts.flatMap((member) => member.nativeConstructionLicenseFiles ?? []),
+        target.target,
       );
       rows.push(
         tsvRow({
@@ -354,14 +481,35 @@ async function extensionRows(extensionRoot, selectedProducts) {
           description: `Package-managed Oliphaunt Android runtime and static-link artifacts for ${memberLabel} on ${target.target}.`,
           runtimeProduct,
           runtimeVersion,
+          dependencies: extensionMavenDependencies({
+            product,
+            releaseProduct,
+            runtimeVersion,
+            target: target.target,
+            members: declared?.memberContracts?.[target.target] ?? frozenMembers,
+            ownerMetadata: declared?.ownerMetadata,
+          }),
           licenseSpdx:
-            product === 'oliphaunt-extension-contrib-pg18'
+            legal?.packageSpdx ??
+            (product === 'oliphaunt-extension-contrib-pg18'
               ? releaseProfilePackageLicense(licenseProfile).spdx
-              : registryLicense.packageSpdx,
-          licenses:
-            product === 'oliphaunt-extension-contrib-pg18'
-              ? releaseProfileMavenLicenses('contrib-native-openssl', { product, version })
-              : extensionMavenLicenses(product, sqlNames, { version }),
+              : registryLicense.packageSpdx),
+          licenses: [
+            ...(product === 'oliphaunt-extension-contrib-pg18'
+              ? releaseProfileMavenLicenses(licenseProfile, {
+                  product,
+                  version,
+                  sourceRoot: context?.noticeSourceRoot,
+                })
+              : extensionMavenLicenses(product, sqlNames, { version })),
+            ...memberContracts.flatMap((member) =>
+              nativeExtensionConstructionMavenLicenses(
+                member.sqlName,
+                target.target,
+                member.nativeConstructionLicenseFiles ?? [],
+              ),
+            ),
+          ],
         }),
       );
     }
@@ -435,16 +583,21 @@ export async function buildMavenArtifactManifest(
     runtime = false,
     extensions = false,
     extensionProducts = [],
+    context,
   } = {},
 ) {
   const includeRuntime = runtime || !extensions;
   const includeExtensions = extensions || extensionProducts.length > 0;
   const rows = [];
   if (includeRuntime) {
-    rows.push(...(await productRows(repoPath(runtimeAssetRoot), artifactProduct, artifactIds)));
+    rows.push(
+      ...(await productRows(repoPath(runtimeAssetRoot), artifactProduct, artifactIds, context)),
+    );
   }
   if (includeExtensions) {
-    rows.push(...(await extensionRows(repoPath(extensionArtifactRoot), extensionProducts)));
+    rows.push(
+      ...(await extensionRows(repoPath(extensionArtifactRoot), extensionProducts, context)),
+    );
   }
   if (rows.length === 0) {
     fail('manifest would be empty');

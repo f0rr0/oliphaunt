@@ -12,7 +12,14 @@ project:
   release:
     component: "oliphaunt-pgwire-server"
     packagePath: "src/wasix/pgwire-server"
+workspace:
+  mergeStrategies:
+    fileGroups: replace
 fileGroups:
+  cargo-workspace:
+    - "/src/wasix/node-addon/Cargo.lock"
+    - "/src/wasix/node-addon/Cargo.toml"
+    - "/rust-toolchain.toml"
   sources: ["src/**/*", "tests/**/*", "Cargo.toml"]
 tasks:
   format:
@@ -23,21 +30,25 @@ tasks:
   format-check:
     command: "cargo fmt --check"
     tags: ["quality", "static", "format", "requires-rust"]
-    inputs: ["@group(sources)"]
+    inputs: ["@group(sources)", "@group(cargo-workspace)"]
   lint:
     deps:
       - target: cargo-sources
         cacheStrategy: hash
     command: "cargo clippy --all-targets --locked -- -D warnings"
     tags: ["quality", "static", "requires-rust"]
-    inputs: ["@group(sources)", "/Cargo.toml", "/Cargo.lock"]
+    inputs: ["@group(sources)", "@group(cargo-workspace)"]
+    env:
+      CARGO_TARGET_DIR: "../../../target"
   build:
     deps:
       - target: cargo-sources
         cacheStrategy: hash
     command: "cargo build --locked"
     tags: ["build", "requires-rust"]
-    inputs: ["@group(sources)", "/Cargo.toml", "/Cargo.lock"]
+    inputs: ["@group(sources)", "@group(cargo-workspace)"]
+    env:
+      CARGO_TARGET_DIR: "../../../target"
     outputs: ["/target/debug/oliphaunt-pgwire-server*", "/target/debug/liboliphaunt_pgwire_server.rlib"]
   test:
     deps:
@@ -45,12 +56,16 @@ tasks:
         cacheStrategy: hash
     command: "cargo test --locked"
     tags: ["quality", "unit", "requires-rust"]
-    inputs: ["@group(sources)", "README.md", "/Cargo.toml", "/Cargo.lock"]
+    inputs: ["@group(sources)", "README.md", "@group(cargo-workspace)"]
+    env:
+      CARGO_TARGET_DIR: "../../../target"
   test-integration:
     command: "cargo test --locked -- --ignored --test-threads=1"
     tags: ["runtime", "integration", "requires-rust", "ci-liboliphaunt-wasix-aot"]
     deps: [{target: "cargo-sources", cacheStrategy: hash}, "liboliphaunt-wasix:runtime-aot"]
-    inputs: ["@group(sources)", "/Cargo.toml", "/Cargo.lock", "/src/extensions/catalog/extensions.source.json", "/src/test-fixtures/extensions/**/*"]
+    inputs: ["@group(sources)", "@group(cargo-workspace)", "/src/extensions/catalog/extensions.source.json", "/src/test-fixtures/extensions/**/*"]
+    env:
+      CARGO_TARGET_DIR: "../../../target"
     options:
       cache: false
   test-aot:
@@ -58,14 +73,14 @@ tasks:
     tags: ["runtime", "integration", "requires-rust", "ci-liboliphaunt-wasix-aot"]
     # Windows cannot rebuild the CLI with extension features while integration tests run it.
     deps: [{target: "cargo-sources", cacheStrategy: hash}, "liboliphaunt-wasix:runtime-aot", "extension-artifacts-wasix:build-aot", "oliphaunt-pgwire-server:test-integration"]
-    inputs: ["@group(sources)", "tools/test-aot.sh", "/Cargo.toml", "/Cargo.lock"]
+    inputs: ["@group(sources)", "tools/test-aot.sh", "@group(cargo-workspace)"]
     options:
       cache: false
       runFromWorkspaceRoot: true
   package:
     command: "bash src/wasix/pgwire-server/tools/package.sh"
     tags: ["release", "artifact-package", "ci-wasix-rust-package"]
-    inputs: ["**/*", "@group(legal-files)", "/Cargo.toml", "/Cargo.lock", "@group(packaging-source)"]
+    inputs: ["**/*", "@group(legal-files)", "@group(cargo-workspace)", "@group(packaging-source)"]
     outputs: ["/target/sdk-artifacts/oliphaunt-pgwire-server/**/*"]
     options:
       runFromWorkspaceRoot: true
@@ -78,6 +93,6 @@ tasks:
       sdk_version="$(bun tools/release/product-version.mts version oliphaunt-wasix-rust)"
       query_version="$(bun tools/release/product-version.mts version oliphaunt-query)"
       bash tools/packaging/check-cargo-package-tests.sh --crate "target/sdk-artifacts/oliphaunt-pgwire-server/oliphaunt-pgwire-server-$version.crate" --dependency-crate "target/sdk-artifacts/oliphaunt-wasix-rust/oliphaunt-wasix-$sdk_version.crate" --dependency-crate "target/sdk-artifacts/oliphaunt-query/oliphaunt-query-$query_version.crate" --path-dependencies-from src/wasix/sdks/rust/Cargo.toml
-    inputs: ["@group(sources)", "/Cargo.toml", "/Cargo.lock", "@group(packaging-source)", "@group(cargo-package-test)"]
+    inputs: ["@group(sources)", "@group(cargo-workspace)", "@group(packaging-source)", "@group(cargo-package-test)"]
     options:
       runFromWorkspaceRoot: true

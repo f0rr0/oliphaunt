@@ -15,11 +15,14 @@ import { createHash } from 'node:crypto';
 import { readPortableArchiveEntries } from './portable-archive.mts';
 import { packGeneratedNpmCarrier } from './npm-package.mts';
 import { validateNpmTrustedPublishingManifest } from './npm-trusted-publishing.mts';
+import { findSdkRuntimePayloadViolation } from './sdk-runtime-payload.mts';
 import {
   WINDOWS_VC_RUNTIME_RECEIPT,
   parseWindowsVcRuntimeReceipt,
   windowsVcRuntimeProfileNames,
 } from './windows-vc-runtime-closure.mts';
+
+export { findSdkRuntimePayloadViolation } from './sdk-runtime-payload.mts';
 
 export const TOOL = 'package-release-carriers.mts';
 
@@ -228,9 +231,8 @@ export function stageNpmPackageDescriptor(
   packageName,
   sourceDir,
   version,
-  { extraDescriptors = [], target = null } = {},
+  { extraDescriptors = [], target = null, stageDir = npmPackageSourceStageDir(packageName) } = {},
 ) {
-  const stageDir = npmPackageSourceStageDir(packageName);
   rmSync(stageDir, { recursive: true, force: true });
   mkdirSync(stageDir, { recursive: true });
   for (const descriptor of ['package.json', 'README.md', ...extraDescriptors]) {
@@ -477,23 +479,6 @@ export function archiveZipNames(file) {
 
 const SDK_ROOT = path.join(ROOT, 'target/sdk-artifacts');
 
-const SDK_RUNTIME_PAYLOAD_PATTERNS = [
-  /(^|\/)assets\/oliphaunt\/runtime\//u,
-  /(^|\/)assets\/oliphaunt\/cluster-seed\//u,
-  /(^|\/)assets\/oliphaunt\/static-registry\/archives\//u,
-  /(^|\/)oliphaunt\/runtime\/files\//u,
-  /(^|\/)runtime\/files\/share\/postgresql\//u,
-  /(^|\/)share\/postgresql\/extension\/[^/]+\.(control|sql)$/u,
-  /(^|\/)release-assets\//u,
-  /(^|\/)extension-artifacts\.json$/u,
-  /(^|\/)liboliphaunt\.(so|dylib|dll|a|lib)$/u,
-  /(^|\/)liboliphaunt_extensions\.(so|dylib|dll|a|lib)$/u,
-  /(^|\/)liboliphaunt_extension_[^/]+\.(so|dylib|dll|a|lib)$/u,
-  /\.xcframework(\/|$)/u,
-];
-
-const KOTLIN_ALLOWED_NATIVE_PAYLOADS = new Set(['liboliphaunt_mobile_bindings.so']);
-
 export function tarReadBytes(file, member) {
   const entry = strictArchiveEntries(file, 'tar.gz').get(member);
   if (!entry?.isFile) fail(`${rel(file)} is missing regular-file member ${member}`);
@@ -590,24 +575,6 @@ export function directoryNames(root) {
 
 function relFrom(root, file) {
   return path.relative(root, file).split(path.sep).join('/');
-}
-
-export function findSdkRuntimePayloadViolation(product, names, allowedNames = new Set()) {
-  for (const name of names) {
-    if (allowedNames.has(name)) {
-      continue;
-    }
-    const basename = path.basename(name);
-    if (product === 'oliphaunt-kotlin' && KOTLIN_ALLOWED_NATIVE_PAYLOADS.has(basename)) {
-      continue;
-    }
-    for (const pattern of SDK_RUNTIME_PAYLOAD_PATTERNS) {
-      if (pattern.test(name)) {
-        return name;
-      }
-    }
-  }
-  return null;
 }
 
 export function rejectSdkRuntimePayload(product, artifact, names, allowedNames = new Set()) {

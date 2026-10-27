@@ -1,0 +1,13 @@
+[package]
+name = "frozen-consumer"
+version = "0.0.0"
+edition = "2024"
+[workspace]
+[dependencies]
+oliphaunt = "=0.3.2"
+liboliphaunt-native-linux-x64-gnu = "=0.3.2"
+[build-dependencies]
+oliphaunt-build = "=0.3.2"
+[package.metadata.oliphaunt]
+runtime = "liboliphaunt-native"
+runtime-version = "0.3.2"

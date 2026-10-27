@@ -10,6 +10,70 @@ globalThis.fetch = async (input, options) => {
     throw new Error('unexpected GitHub request');
   const endpoint = url.pathname.slice(1) + url.search;
   fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify(endpoint) + '\n');
+  if (process.env.FAKE_MODE.startsWith('native-')) {
+    const mode = process.env.FAKE_MODE;
+    const dispatched = fs.existsSync(process.env.FAKE_DISPATCH);
+    const record = (id) => ({
+      id,
+      workflow_id: 9,
+      run_attempt: 1,
+      head_sha: mode === 'native-race' && id === 88 ? 'b'.repeat(40) : process.env.FAKE_NATIVE_SHA,
+      head_branch: mode === 'native-feature' && id === 77 ? 'feature' : 'main',
+      path: '.github/workflows/bazel.yml',
+      event:
+        id === 88 || ['native-feature', 'native-failed', 'native-dispatch-skipped'].includes(mode)
+          ? 'workflow_dispatch'
+          : 'push',
+      status:
+        (id === 88 && process.env.FAKE_NATIVE_COMPLETE !== 'true') || mode === 'native-active'
+          ? 'in_progress'
+          : 'completed',
+      conclusion:
+        (id === 88 && process.env.FAKE_NATIVE_COMPLETE !== 'true') || mode === 'native-active'
+          ? null
+          : mode === 'native-failed'
+            ? 'failure'
+            : 'success',
+      html_url: `https://github.com/f0rr0/oliphaunt/actions/runs/${id}`,
+    });
+    if (/actions\/workflows[?]/.test(endpoint))
+      return Response.json({ workflows: [{ id: 9, name: 'Native Bazel qualification' }] });
+    if (/actions\/workflows\/9$/.test(endpoint))
+      return Response.json({ id: 9, name: 'Native Bazel qualification' });
+    if (/git\/ref\/heads\/main$/.test(endpoint))
+      return Response.json({
+        object: { sha: mode === 'native-advanced' ? 'b'.repeat(40) : process.env.FAKE_NATIVE_SHA },
+      });
+    if (/actions\/workflows\/9\/runs[?]/.test(endpoint)) {
+      const absent = [
+        'native-absent',
+        'native-advanced',
+        'native-race',
+        'native-ambiguous',
+      ].includes(mode);
+      return Response.json({
+        workflow_runs: dispatched ? [record(88)] : absent ? [] : [record(77)],
+      });
+    }
+    const match = endpoint.match(/actions\/runs\/(77|88)(?:\/(jobs))?(?:\?.*)?$/);
+    if (match) {
+      if (match[2])
+        return Response.json({
+          jobs: [
+            {
+              name: 'Required',
+              conclusion: ['native-source', 'native-dispatch-skipped'].includes(mode)
+                ? 'skipped'
+                : mode === 'native-failed'
+                  ? 'failure'
+                  : 'success',
+            },
+          ],
+        });
+      return Response.json(record(Number(match[1])));
+    }
+    throw new Error('unexpected Native qualification endpoint ' + endpoint);
+  }
   if (process.env.FAKE_MODE.startsWith('qualification-')) {
     const mode = process.env.FAKE_MODE;
     const dispatched = fs.existsSync(process.env.FAKE_DISPATCH);

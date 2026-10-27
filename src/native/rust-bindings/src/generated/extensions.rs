@@ -8,6 +8,7 @@ use super::ExtensionRuntimeEnvironment;
 pub struct Extension {
     id: ExtensionId,
     pub(super) package: Option<&'static super::ExtensionPackage>,
+    pub(super) package_dependencies: &'static [Extension],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -97,196 +98,235 @@ impl Extension {
     pub const AMCHECK: Self = Self {
         id: ExtensionId::Amcheck,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `auto_explain` artifact.
     pub const AUTO_EXPLAIN: Self = Self {
         id: ExtensionId::AutoExplain,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `bloom` artifact.
     pub const BLOOM: Self = Self {
         id: ExtensionId::Bloom,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `btree_gin` artifact.
     pub const BTREE_GIN: Self = Self {
         id: ExtensionId::BtreeGin,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `btree_gist` artifact.
     pub const BTREE_GIST: Self = Self {
         id: ExtensionId::BtreeGist,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `citext` artifact.
     pub const CITEXT: Self = Self {
         id: ExtensionId::Citext,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `cube` artifact.
     pub const CUBE: Self = Self {
         id: ExtensionId::Cube,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `dict_int` artifact.
     pub const DICT_INT: Self = Self {
         id: ExtensionId::DictInt,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `dict_xsyn` artifact.
     pub const DICT_XSYN: Self = Self {
         id: ExtensionId::DictXsyn,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `earthdistance` artifact.
     pub const EARTHDISTANCE: Self = Self {
         id: ExtensionId::Earthdistance,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `file_fdw` artifact.
     pub const FILE_FDW: Self = Self {
         id: ExtensionId::FileFdw,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `fuzzystrmatch` artifact.
     pub const FUZZYSTRMATCH: Self = Self {
         id: ExtensionId::Fuzzystrmatch,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `hstore` artifact.
     pub const HSTORE: Self = Self {
         id: ExtensionId::Hstore,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `intarray` artifact.
     pub const INTARRAY: Self = Self {
         id: ExtensionId::Intarray,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `isn` artifact.
     pub const ISN: Self = Self {
         id: ExtensionId::Isn,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `lo` artifact.
     pub const LO: Self = Self {
         id: ExtensionId::Lo,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `ltree` artifact.
     pub const LTREE: Self = Self {
         id: ExtensionId::Ltree,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `pageinspect` artifact.
     pub const PAGEINSPECT: Self = Self {
         id: ExtensionId::Pageinspect,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `pg_buffercache` artifact.
     pub const PG_BUFFERCACHE: Self = Self {
         id: ExtensionId::PgBuffercache,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `pg_freespacemap` artifact.
     pub const PG_FREESPACEMAP: Self = Self {
         id: ExtensionId::PgFreespacemap,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `pg_hashids` artifact.
     pub const PG_HASHIDS: Self = Self {
         id: ExtensionId::PgHashids,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `pg_ivm` artifact.
     pub const PG_IVM: Self = Self {
         id: ExtensionId::PgIvm,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `pg_surgery` artifact.
     pub const PG_SURGERY: Self = Self {
         id: ExtensionId::PgSurgery,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `pg_textsearch` artifact.
     pub const PG_TEXTSEARCH: Self = Self {
         id: ExtensionId::PgTextsearch,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `pg_trgm` artifact.
     pub const PG_TRGM: Self = Self {
         id: ExtensionId::PgTrgm,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `pg_uuidv7` artifact.
     pub const PG_UUIDV7: Self = Self {
         id: ExtensionId::PgUuidv7,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `pg_visibility` artifact.
     pub const PG_VISIBILITY: Self = Self {
         id: ExtensionId::PgVisibility,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `pg_walinspect` artifact.
     pub const PG_WALINSPECT: Self = Self {
         id: ExtensionId::PgWalinspect,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `pgcrypto` artifact.
     pub const PGCRYPTO: Self = Self {
         id: ExtensionId::Pgcrypto,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `pgtap` artifact.
     pub const PGTAP: Self = Self {
         id: ExtensionId::Pgtap,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `postgis` artifact.
     pub const POSTGIS: Self = Self {
         id: ExtensionId::Postgis,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `seg` artifact.
     pub const SEG: Self = Self {
         id: ExtensionId::Seg,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `tablefunc` artifact.
     pub const TABLEFUNC: Self = Self {
         id: ExtensionId::Tablefunc,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `tcn` artifact.
     pub const TCN: Self = Self {
         id: ExtensionId::Tcn,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `tsm_system_rows` artifact.
     pub const TSM_SYSTEM_ROWS: Self = Self {
         id: ExtensionId::TsmSystemRows,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `tsm_system_time` artifact.
     pub const TSM_SYSTEM_TIME: Self = Self {
         id: ExtensionId::TsmSystemTime,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `unaccent` artifact.
     pub const UNACCENT: Self = Self {
         id: ExtensionId::Unaccent,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `uuid-ossp` artifact.
     pub const UUID_OSSP: Self = Self {
         id: ExtensionId::UuidOssp,
         package: None,
+        package_dependencies: &[],
     };
     /// Select the `vector` artifact.
     pub const VECTOR: Self = Self {
         id: ExtensionId::Vector,
         package: None,
+        package_dependencies: &[],
     };
 
     /// All PostgreSQL 18 extension artifacts known to the native SDK.
@@ -466,6 +506,71 @@ pub(super) const fn native_module_stem(extension: Extension) -> Option<&'static 
         ExtensionId::UuidOssp => Some("uuid-ossp"),
         ExtensionId::Vector => Some("vector"),
     }
+}
+
+/// Generated extension metadata accessor.
+pub(super) const fn native_dependency_module_stems(
+    extension: Extension,
+) -> &'static [&'static str] {
+    match extension.id {
+        ExtensionId::Amcheck => &[],
+        ExtensionId::AutoExplain => &[],
+        ExtensionId::Bloom => &[],
+        ExtensionId::BtreeGin => &[],
+        ExtensionId::BtreeGist => &[],
+        ExtensionId::Citext => &[],
+        ExtensionId::Cube => &[],
+        ExtensionId::DictInt => &[],
+        ExtensionId::DictXsyn => &[],
+        ExtensionId::Earthdistance => &[],
+        ExtensionId::FileFdw => &[],
+        ExtensionId::Fuzzystrmatch => &[],
+        ExtensionId::Hstore => &[],
+        ExtensionId::Intarray => &[],
+        ExtensionId::Isn => &[],
+        ExtensionId::Lo => &[],
+        ExtensionId::Ltree => &[],
+        ExtensionId::Pageinspect => &[],
+        ExtensionId::PgBuffercache => &[],
+        ExtensionId::PgFreespacemap => &[],
+        ExtensionId::PgHashids => &[],
+        ExtensionId::PgIvm => &[],
+        ExtensionId::PgSurgery => &[],
+        ExtensionId::PgTextsearch => &[],
+        ExtensionId::PgTrgm => &[],
+        ExtensionId::PgUuidv7 => &[],
+        ExtensionId::PgVisibility => &[],
+        ExtensionId::PgWalinspect => &[],
+        ExtensionId::Pgcrypto => &[],
+        ExtensionId::Pgtap => &[],
+        ExtensionId::Postgis => &[
+            "liboliphaunt_postgis_deps",
+            "postgis_raster-3",
+            "postgis_topology-3",
+        ],
+        ExtensionId::Seg => &[],
+        ExtensionId::Tablefunc => &[],
+        ExtensionId::Tcn => &[],
+        ExtensionId::TsmSystemRows => &[],
+        ExtensionId::TsmSystemTime => &[],
+        ExtensionId::Unaccent => &[],
+        ExtensionId::UuidOssp => &[],
+        ExtensionId::Vector => &[],
+    }
+}
+
+/// Current host dependency modules; frozen inputs retain their own inventory.
+#[cfg(feature = "internal-native-packaging")]
+pub(super) const fn native_dependency_module_stems_for_host(
+    extension: Extension,
+) -> &'static [&'static str] {
+    if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        return match extension.id {
+            ExtensionId::Postgis => &["postgis_raster-3", "postgis_topology-3"],
+            _ => native_dependency_module_stems(extension),
+        };
+    }
+    native_dependency_module_stems(extension)
 }
 
 /// Generated extension metadata accessor.

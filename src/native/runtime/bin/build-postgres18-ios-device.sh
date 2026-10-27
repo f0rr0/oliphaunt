@@ -734,7 +734,7 @@ build_mobile_static_dependencies() {
 }
 
 build_mobile_static_extension_objects() {
-  local extension source source_dir source_rel object object_dir objects_file stem prefix
+  local extension source source_dir source_rel object object_dir objects_file sources stem prefix
   local -a compile_args extension_include_args extension_cflags
   for extension in ${mobile_static_extensions[@]+"${mobile_static_extensions[@]}"}; do
     if [ "$extension" = "postgis" ]; then
@@ -767,6 +767,7 @@ build_mobile_static_extension_objects() {
     objects_file="$object_dir/objects.list"
     mkdir -p "$object_dir"
     : > "$objects_file"
+    sources="$(set -e; oliphaunt_mobile_static_extension_source_files "$repo_root" "$build_dir" "$extension")"
     while IFS= read -r source; do
       [ -n "$source" ] || continue
       source_rel="${source#$source_dir/}"
@@ -792,7 +793,7 @@ build_mobile_static_extension_objects() {
         -o "$object"
       )
       "${compile_args[@]}"
-    done < <(oliphaunt_mobile_static_extension_source_files "$repo_root" "$build_dir" "$extension")
+    done <<< "$sources"
     if [ ! -s "$objects_file" ]; then
       echo "mobile static extension $extension did not produce object inputs" >&2
       exit 1

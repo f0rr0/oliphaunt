@@ -1346,7 +1346,7 @@
     "collector": "src/extensions/tools/collect-wasix-evidence.sh",
     "kind": "exact-sha-ci"
   },
-  "source-digest": "sha256:49dd933337d1a0c56aacfa974d701900816f96e44e47a2ac0cd3dedc509da1be",
+  "source-digest": "sha256:ae453e68d8e31b7c968701014fe903016d43c16a2bf8e4ec848715131328f683",
   "source-digest-inputs": [
     "src/third-party/postgres/source.toml",
     "src/extensions/catalog/extensions.source.json",
@@ -1381,6 +1381,9 @@
     "src/extensions/external/pg_textsearch/recipe.toml",
     "src/extensions/external/pg_textsearch/targets/native-static-registry.toml",
     "src/extensions/external/pg_textsearch/tests/qualify.sh",
+    "src/extensions/external/pg_textsearch/tests/seed.sql",
+    "src/extensions/external/pg_textsearch/tests/upgrade.sql",
+    "src/extensions/external/pg_textsearch/tests/verify.sql",
     "src/extensions/external/pg_textsearch/upstream-license-data.json",
     "src/extensions/external/pg_uuidv7/upstream-license-data.json",
     "src/extensions/external/pgtap/recipe.toml",

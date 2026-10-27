@@ -119,7 +119,7 @@ fn write_generated_aot(out: &Path, target: &str, artifact_dir: &Path) {
         .parent()
         .expect("generated AOT output has parent")
         .join("manifest.json");
-    let retained_paths = write_core_aot_manifest(&manifest, &generated_manifest);
+    let (retained_paths, engine) = write_core_aot_manifest(&manifest, &generated_manifest);
     for relative in &retained_paths {
         assert!(
             artifact_dir.join(relative).is_file(),
@@ -156,7 +156,7 @@ fn write_generated_aot(out: &Path, target: &str, artifact_dir: &Path) {
 
     let text = format!(
         "pub const TARGET_TRIPLE: &str = {:?};\n\
-         pub const ENGINE: &str = \"llvm-opta\";\n\
+         pub const ENGINE: &str = {engine:?};\n\
          pub const HAS_EMBEDDED_AOT: bool = true;\n\
          pub const MANIFEST_JSON: &str = include_str!({});\n\
          #[rustfmt::skip]\n\
@@ -182,7 +182,7 @@ fn write_generated_aot(out: &Path, target: &str, artifact_dir: &Path) {
 
 fn write_source_only_aot(out: &Path, target: &str) {
     let manifest = format!(
-        "{{\"format-version\":1,\"target-triple\":{target:?},\"engine\":\"llvm-opta\",\"wasmer-version\":\"7.2.1\",\"wasmer-wasix-version\":\"0.702.1\",\"artifacts\":[]}}"
+        "{{\"format-version\":1,\"target-triple\":{target:?},\"engine\":\"llvm-opta\",\"wasmer-version\":\"7.5.0\",\"wasmer-wasix-version\":\"0.705.0\",\"artifacts\":[]}}"
     );
     let text = format!(
         "pub const TARGET_TRIPLE: &str = {target:?};\n\
@@ -211,7 +211,59 @@ fn artifact_name_from_file_stem(stem: &str) -> String {
 }
 
 fn rust_string_literal(path: &Path) -> String {
-    format!("{:?}", path.to_string_lossy())
+    // Generated Rust is compiled in a later action. Keep references relative
+    // to its output directory instead of retaining a build-script sandbox.
+    fn lexical_absolute(path: &Path) -> PathBuf {
+        let mut normalized = PathBuf::new();
+        for component in std::path::absolute(path)
+            .expect("absolute generated include path")
+            .components()
+        {
+            match component {
+                std::path::Component::ParentDir => {
+                    normalized.pop();
+                }
+                std::path::Component::CurDir => {}
+                component => normalized.push(component.as_os_str()),
+            }
+        }
+        normalized
+    }
+
+    let base = lexical_absolute(&PathBuf::from(
+        env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"),
+    ));
+    let target = lexical_absolute(path);
+    if !target.starts_with(&base) {
+        let manifest_dir = lexical_absolute(&PathBuf::from(
+            env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo"),
+        ));
+        if let Ok(member) = target.strip_prefix(&manifest_dir) {
+            return format!(
+                "concat!(env!(\"CARGO_MANIFEST_DIR\"), {:?})",
+                format!("/{}", member.to_string_lossy().replace('\\', "/"))
+            );
+        }
+    }
+    let base_components = base.components().collect::<Vec<_>>();
+    let target_components = target.components().collect::<Vec<_>>();
+    let common = base_components
+        .iter()
+        .zip(&target_components)
+        .take_while(|(left, right)| left == right)
+        .count();
+    if common == 0 {
+        // Ordinary Windows Cargo may place inputs and outputs on separate drives.
+        return format!("{:?}", target.to_string_lossy());
+    }
+    let mut relative = PathBuf::new();
+    for _ in &base_components[common..] {
+        relative.push("..");
+    }
+    for component in &target_components[common..] {
+        relative.push(component.as_os_str());
+    }
+    format!("{:?}", relative.to_string_lossy())
 }
 
 fn artifact_belongs_to_crate(name: &str) -> bool {
@@ -221,10 +273,15 @@ fn artifact_belongs_to_crate(name: &str) -> bool {
     }
 }
 
-fn write_core_aot_manifest(source: &Path, destination: &Path) -> Vec<String> {
+fn write_core_aot_manifest(source: &Path, destination: &Path) -> (Vec<String>, String) {
     let text = fs::read_to_string(source).expect("read generated WASIX AOT manifest");
     let mut manifest: serde_json::Value =
         serde_json::from_str(&text).expect("parse generated WASIX AOT manifest");
+    let engine = manifest
+        .get("engine")
+        .and_then(|value| value.as_str())
+        .expect("generated WASIX AOT manifest has engine")
+        .to_owned();
     let artifacts = manifest
         .get_mut("artifacts")
         .and_then(|value| value.as_array_mut())
@@ -252,10 +309,15 @@ fn write_core_aot_manifest(source: &Path, destination: &Path) -> Vec<String> {
     let rendered =
         serde_json::to_string_pretty(&manifest).expect("serialize core WASIX AOT manifest");
     fs::write(destination, format!("{rendered}\n")).expect("write core WASIX AOT manifest");
-    paths
+    (paths, engine)
 }
 
 fn emit_artifact_manifest(out_dir: &Path, target: &str, artifact_dir: &Path, files: &[PathBuf]) {
+    println!("cargo:rerun-if-env-changed=OLIPHAUNT_ARTIFACT_CRATE_EMIT_CARGO_MANIFEST");
+    let mode = env::var("OLIPHAUNT_ARTIFACT_CRATE_EMIT_CARGO_MANIFEST").ok();
+    if !emit_cargo_manifest(mode.as_deref()) {
+        return;
+    }
     let version = env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION is set by Cargo");
     let manifest_path = out_dir.join("oliphaunt-artifact.toml");
     let mut text = format!(
@@ -280,6 +342,34 @@ fn emit_artifact_manifest(out_dir: &Path, target: &str, artifact_dir: &Path, fil
     }
     fs::write(&manifest_path, text).expect("write WASIX AOT Cargo artifact manifest");
     println!("cargo::metadata=manifest={}", manifest_path.display());
+}
+
+fn emit_cargo_manifest(mode: Option<&str>) -> bool {
+    match mode {
+        None | Some("1") => true,
+        Some("0") => false,
+        Some(other) => {
+            panic!("OLIPHAUNT_ARTIFACT_CRATE_EMIT_CARGO_MANIFEST must be 0 or 1, got {other}")
+        }
+    }
+}
+
+#[cfg(test)]
+mod native_generation_contract {
+    use super::emit_cargo_manifest;
+
+    #[test]
+    fn ordinary_cargo_preserves_manifest_emission_and_native_construction_can_disable_it() {
+        assert!(emit_cargo_manifest(None));
+        assert!(emit_cargo_manifest(Some("1")));
+        assert!(!emit_cargo_manifest(Some("0")));
+    }
+
+    #[test]
+    #[should_panic(expected = "must be 0 or 1")]
+    fn unknown_manifest_modes_are_rejected() {
+        emit_cargo_manifest(Some("unknown"));
+    }
 }
 
 fn sha256_file(path: &Path) -> io::Result<String> {

@@ -1,0 +1,55 @@
+{
+  "crates": {
+    "wasmer": {
+      "version": "7.5.0",
+      "url": "https://static.crates.io/crates/wasmer/wasmer-7.5.0.crate",
+      "sha256": "ddfde3972691f1082774c71c42e21add1d1838cb6482a6921a0ba8a993e0046a",
+      "strip_prefix": "wasmer-7.5.0",
+      "patches": ["patches/wasmer-v8.patch"]
+    },
+    "wasmer-wasix": {
+      "version": "0.705.0",
+      "url": "https://static.crates.io/crates/wasmer-wasix/wasmer-wasix-0.705.0.crate",
+      "sha256": "1d5bbce1be073ab1e40f5ed2468653832c22aecfd73e2ba763c41a5d831a4475",
+      "strip_prefix": "wasmer-wasix-0.705.0",
+      "patches": ["patches/wasmer-wasix-v8.patch"]
+    },
+    "wasmer-wasix-types": {
+      "version": "0.705.0",
+      "url": "https://static.crates.io/crates/wasmer-wasix-types/wasmer-wasix-types-0.705.0.crate",
+      "sha256": "910259427f2e3af0f2238cf4d2d3dbf284ca471cf02965f4635de7f4b2eee66e",
+      "strip_prefix": "wasmer-wasix-types-0.705.0",
+      "patches": []
+    },
+    "wasmer-journal": {
+      "version": "0.705.0",
+      "url": "https://static.crates.io/crates/wasmer-journal/wasmer-journal-0.705.0.crate",
+      "sha256": "d1ba6aab53ebc49f540787f2daf9a8865b0933de8a8d081b22a78b19259d279c",
+      "strip_prefix": "wasmer-journal-0.705.0",
+      "patches": []
+    }
+  },
+  "wee8": {
+    "release": "11.9.7",
+    "url": "https://github.com/wasmerio/wee8-custom-builds/releases/download/11.9.7/v8-windows-amd64.tar.xz",
+    "sha256": "2aee8b6c3e8cecae2ce0325ac01b9bcaea4bef49e8f2aac599e1729d60c17285",
+    "bytes": 151695100,
+    "library": {
+      "path": "lib/v8.lib",
+      "bytes": 1871746786,
+      "sha256": "04061d2035659457dcedb2e695ab3ef50de97d3ab71579b4fe824523c47f582a"
+    },
+    "v8": {
+      "version": "13.6.233.17",
+      "commit": "b0a55a7dad7f536cce1f9aaddba89894c8533946"
+    },
+    "header": {
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/third_party/wasm-api/wasm.hh",
+      "sha256": "18f49f653f79a9485d6bda1d650a9c29f538987b7092457e2bb95e8fa68aae76"
+    },
+    "build_source": {
+      "url": "https://github.com/wasmerio/v8-custom-builds/blob/844d01dc10edaa0461715f484e06b004f1fd023e/build.ps1",
+      "commit": "844d01dc10edaa0461715f484e06b004f1fd023e"
+    }
+  }
+}

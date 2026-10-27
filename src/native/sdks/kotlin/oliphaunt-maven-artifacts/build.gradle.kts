@@ -26,6 +26,15 @@ data class OliphauntMavenArtifact(
     val runtimeVersion: String?,
     val licenseSpdx: String,
     val licenses: List<OliphauntMavenLicense>,
+    val dependencies: List<OliphauntMavenDependency>,
+)
+
+data class OliphauntMavenDependency(
+    val groupId: String,
+    val artifactId: String,
+    val version: String,
+    val type: String,
+    val scope: String,
 )
 
 val manifestPath =
@@ -87,10 +96,34 @@ fun parseArtifactManifest(path: File): List<OliphauntMavenArtifact> {
     val artifacts =
         rows.mapIndexed { index, line ->
             val parts = line.split('\t')
-            if (parts.size != 10) {
+            if (parts.size != 10 && parts.size != 11) {
                 throw GradleException(
-                    "Oliphaunt Maven artifact manifest ${path.relativeToOrSelf(rootDir)} line ${index + 1} must have 10 tab-separated fields",
+                    "Oliphaunt Maven artifact manifest ${path.relativeToOrSelf(rootDir)} line ${index + 1} must have 10 or 11 tab-separated fields",
                 )
+            }
+            val dependencyRows = if (parts.size == 11) JsonSlurper().parseText(parts[10]) else emptyList<Any>()
+            if (dependencyRows !is List<*>) throw GradleException("Maven artifact dependencies must be a JSON array")
+            val dependencies = dependencyRows.map { raw ->
+                if (raw !is Map<*, *> || raw.keys.toSet() != setOf("groupId", "artifactId", "version", "type", "scope")) {
+                    throw GradleException("Maven artifact dependency must contain exactly groupId, artifactId, version, type, scope")
+                }
+                fun field(key: String) = (raw[key] as? String)?.takeIf {
+                    it != "." && it != ".." && it.matches(Regex("[A-Za-z0-9_.-]+"))
+                }
+                    ?: throw GradleException("Invalid Maven artifact dependency $key")
+                OliphauntMavenDependency(field("groupId"), field("artifactId"), field("version"), field("type"), field("scope")).also {
+                    if (it.groupId.split('.').any { segment -> !segment.matches(Regex("[A-Za-z0-9_-]+")) }) {
+                        throw GradleException("Invalid Maven artifact dependency groupId")
+                    }
+                    if (!it.version.matches(Regex("(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)"))) {
+                        throw GradleException("Maven artifact dependency version must be an exact stable SemVer X.Y.Z")
+                    }
+                    if (it.type != "tar.gz" || it.scope != "runtime") throw GradleException("Maven artifact dependency must declare tar.gz runtime")
+                    if (it.groupId == parts[0] && it.artifactId == parts[1]) throw GradleException("Maven artifact must not depend on itself")
+                }
+            }.sortedBy { "${it.groupId}:${it.artifactId}" }
+            if (dependencies.map { "${it.groupId}:${it.artifactId}" }.toSet().size != dependencies.size) {
+                throw GradleException("Maven artifact dependencies repeat a coordinate")
             }
             val file = manifestFilePath(parts[3])
             OliphauntMavenArtifact(
@@ -104,6 +137,7 @@ fun parseArtifactManifest(path: File): List<OliphauntMavenArtifact> {
                 runtimeVersion = parts[7].ifBlank { null },
                 licenseSpdx = parts[8],
                 licenses = parseLicenses(parts[9], "Oliphaunt Maven artifact manifest line ${index + 1} licenses"),
+                dependencies = dependencies,
             )
         }
     val duplicateCoordinates =
@@ -239,6 +273,18 @@ publishing {
                         url.set("https://github.com/f0rr0/oliphaunt")
                         connection.set("scm:git:https://github.com/f0rr0/oliphaunt.git")
                         developerConnection.set("scm:git:ssh://git@github.com:f0rr0/oliphaunt.git")
+                    }
+                    if (artifact.dependencies.isNotEmpty()) withXml {
+                        val dependencies = asNode().appendNode("dependencies")
+                        artifact.dependencies.forEach { row ->
+                            dependencies.appendNode("dependency").apply {
+                                appendNode("groupId", row.groupId)
+                                appendNode("artifactId", row.artifactId)
+                                appendNode("version", row.version)
+                                appendNode("type", row.type)
+                                appendNode("scope", row.scope)
+                            }
+                        }
                     }
                 }
             }

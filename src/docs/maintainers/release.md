@@ -4,40 +4,38 @@ Windows publishers must also follow the [Visual C++ runtime release
 contract](./windows-vc-runtime.md); it defines redistributable provenance,
 extension-provider ownership, app-local placement, and receipt evidence.
 
-Status: normative operation guide. Last verified: 2026-07-30. Owner: repository maintainers.
+Status: operation guide reviewed against native release entrypoints on 2026-10-13. Complete hosted qualification, the seed adoption anchor and legacy CI retirement remain pending. Owner: repository maintainers.
 
 Oliphaunt releases independent products from one monorepo. There is no repository-wide product version.
 
-CI can qualify selected products using the `release_products_json` dispatch
-input, for example `["oliphaunt-js"]`. Leave all platform selectors at `all`.
-Moon selects those owners' tasks, downstream compatibility checks and required
-producer dependencies. An empty product array retains the exhaustive audit.
-Publication accepts this record only for covered products at the exact candidate
-SHA; it still verifies the immutable artifacts and required native/WASIX evidence.
-Generated release PRs and their main merge automatically select the products
-whose Release Please manifest versions advance. Exact main pushes and eligible
-main dispatches can produce publishable qualification; PR checks use the same
-scope but cannot authorize publication. Publication reuses covering successful
-CI, waits for active matching CI, or requests one missing run while main still
-equals the candidate SHA. Failed causal runs require recovery; ambiguous
-dispatches are not automatically repeated. Pre-publication recovery may reuse
-an explicitly selected exact-source qualification after permitted release-control
-fixes. It never substitutes another source's artifacts or changes their identity.
+The release entrypoints require `Native Bazel qualification / Required` for the
+exact source SHA/tree. The workflow in `.github/workflows/bazel.yml` constructs
+source-owned Bazel shipping exports and runs their mandatory configured tests.
+Bazel's dependency graph and action cache determine execution; release preparation
+compares delivered bytes with each product's authenticated completed publication
+before selecting necessary owners. An ordinary build or test dependency is not
+an automatic release bump.
 
-`Qualified` binds every planned native extension lifecycle aggregate and WASIX
-regression proof to the candidate's source SHA/tree and CI repository/run. A
-successful earlier attempt of that same run can supply proof when only failed
-jobs are rerun; a different run or newer attempt cannot. Both aggregate proof
-artifacts retain 90 days. The native artifact includes its complete shard
-receipts, so it does not depend on the shorter-lived diagnostic shard uploads.
+Ordinary source CI imports one immutable public-input pool. A generated release
+PR imports the authenticated inputs retained by its canonical `Release / Prepare
+release PR` producer. Required checks every predecessor and audits construction
+across all 27 products. That audit is construction evidence, not publication
+admission. PR and merge-queue runs cannot supply reviewed-main assurance.
 
-Publishing native extension carriers, including runtime-owned contrib, requires
-the native proof. Release revalidates the aggregate and every shard, checks the
-published SQL extension set, and compares the evidence digest with the candidate
-record. SDK-only publications continue to qualify their consumers against their
-declared payload versions. WASIX publications retain the existing product-derived
-regression requirement. Missing, changed, wrong-run or incomplete required proof
-blocks publication; an overall successful CI result does not replace it.
+Native release preparation and freezing are implemented, but the migration is
+not yet fully qualified: complete hosted platform/device results, the genuine
+14-seed adoption contract and retirement of legacy CI are still outstanding.
+Legacy CI remains for parity; its `Qualified` result is not the native release
+selector or publication gate. A successful individual native job or local test
+does not close these gaps.
+
+Publication requires an exact successful eligible-main Native run, authenticated
+final selected outputs, complete supplier and owner qualification coverage, and
+the prepared-source bridge. Final installed consumers and `Publication ready`
+remain separate prerequisites. Missing, failed, wrong-source or incomplete
+proof blocks publication. Pre-publication recovery may retain a prior exact
+source after allowlisted control fixes; it preserves original source/run/file
+identity and never rebuilds binary producers.
 
 ## Model
 
@@ -48,7 +46,7 @@ release use their product's version.
 
 The canonical model is composed from:
 
-- Moon project/release metadata for source ownership and qualification impact;
+- source-owned Bazel rules, configured shipping exports and captured production inputs for construction and qualification;
 - `release-please-config.json` and `.release-please-manifest.json` for product
   versions, changelogs, components, and tag naming;
 - the protected release workflow for exact-SHA tag and draft-release creation;
@@ -116,12 +114,6 @@ and participates in the same carrier checks as other public products.
   their own WASIX install metadata and payloads.
 - `feat`, `fix`, `perf`, `refactor`, and `revert` are release-impacting types because the Release Please `changelog-sections` catalog says so. A Conventional Commit `!` is breaking. Release-intent checks derive this set from config.
 - Product source PRs never edit product versions or generated changelogs. Source PRs may author dependency requirements in conventional manifests. Release Please owns product versions and its ecosystem dependency updates; sync projects actual compiled inputs and manifest requirements into package metadata and lockfiles.
-- While every product is still `0.0.0`, top-level `bootstrap-sha` is the full
-  legacy-history boundary `07a9054faa03d5737dc0193f7a77ed4a71920c05`.
-  Release Please considers only commits after that exclusive boundary. Derived
-  release-PR sync removes the key in the first generated release-bump change;
-  do not remove it before Release Please has consumed it or retain it after the
-  first bump.
 
 `bash tools/release/sync-release-pr.sh` closes the generated
 candidate metadata: compatibility values for selected
@@ -130,38 +122,35 @@ consumer release merely because one of its dependencies changed. Its `--check`
 mode proves that the same state is already closed. Pure version/changelog
 changes alter package envelopes but do not alter committed runtime binaries.
 
-PR CI runs `sync-release-pr.sh --check-generated-release` only for the
-same-repository `release-please--branches--main` head, before artifact planning.
-That cheap barrier checks the dependency/compatibility/lock fixed point and the
-exact structured release commit without compiling the asset
-verifier. The prepare workflow generates and validates the candidate locally
-before its first push. This admission check verifies the already-closed pushed
-head before expensive matrices begin.
+The prepare workflow generates and validates the candidate locally before its
+first push. It retains `native-release-inputs` before publishing the completed
+PR tree. Native CI resolves the canonical Prepare run and verifies the exact
+version-only source transition before expensive construction. A normalized
+release PR has one source parent and the expected manifest/version/changelog
+transition; an arbitrary `chore(release):` title is insufficient.
 
-Release Please selects changes under each configured product path. Shared code
-that changes published bytes must therefore live in, or be represented by, the
-product that owns those bytes. Pure workflow, validation, registry transport,
-test, and documentation changes do not bump products. If another unreleased
-product change is already present, Release Please may still prepare that
-product's release. A manually constructed `chore(release):` commit without an
-actual manifest/version/changelog transition is rejected by the structured
-release-commit verifier.
+Native preparation supplies necessary owners from physical delivery comparison.
+Pinned Release Please remains responsible for version and changelog calculation,
+using commit intent bounded to those owners' captured source and loaded recipes.
+Workflow, validation, transport, test and documentation changes do not themselves
+require a product release. An unknown completed baseline or incomplete physical
+coverage blocks the decision rather than falling back to path ownership.
 
 ### Independent candidates and pinned dependencies
 
-Release Please remains the sole authority for product candidates and version
-policy: it selects product paths changed since their last releases. Shared
-contrib inputs may select both runtime owners because those source files are
-physically bundled into both products. No Moon dependency edge creates another
-release candidate.
+Native delivery comparison selects necessary product owners; Release Please
+owns their versions and changelogs. Shared contrib bytes can select both runtime
+owners because each delivers those bytes. Dependency declarations and ordinary
+Bazel build/test edges do not create another release candidate.
 
 A dependency requirement is a consumer declaration. Releasing a producer does
 not rewrite unselected consumers. Source-only SDKs preserve their authored
 requirements except for Release Please ecosystem updates and the default
 extension install closure described below.
-A compiled payload names the source versions it actually incorporates. Shared
-carrier writers are explicit `shared_source_paths` of every product whose bytes
-they render. Carrier versions continue to equal their owning product version.
+A compiled payload names the source versions it actually incorporates. The
+shipping owner's typed supplier Files and their original configured producer
+closures establish that incorporation. ABI-only relationships do not silently
+retarget held consumers. Carrier versions equal their owning product version.
 
 Every compatibility reference declares `public_support`. Set it to `true` for an
 exact host supplied independently by the caller, such as an external extension's
@@ -189,107 +178,89 @@ create the extensions and execute extension SQL through the existing host cases.
 Recipes also depend on extension members, provider ABI and target profile;
 runtime version equality alone is insufficient.
 
-Binary products declare `embedded_cargo_manifests` in their `release.toml`.
-Release planning reads Cargo's versioned `metadata --no-deps --frozen` output
-and follows local runtime, build, and target dependencies through independent
-product boundaries. Cargo resolves workspace inheritance, renamed dependencies,
-and custom library, binary, and build-script source paths. All optional and
-target dependencies participate, so adding a platform does not require another
-release-planner branch. Development dependencies stay local. This read requires
-the pinned Cargo toolchain but never compiles, fetches registries, or changes a
-lockfile; source planning and release preparation declare that capability.
-The workspace Cargo manifest and lockfile conservatively select these binaries,
-since dependency resolution and build settings also determine their shipped bytes.
-This covers both Node addons, the native broker, and Swift/Kotlin native
-bindings. Generated assets use `embedded_payload_products`: changes to an
-embedded producer's sources, pins, or recipes also select the embedding binary.
-Source-only facades and dynamically loaded runtimes retain independent releases.
+Bazel owns compiler inputs, generated payload dependencies and execution
+configuration. Native evidence retains the full reached action DAG and hashes
+its required physical boundary: source/tool/repository leaves, consumed typed
+supplier Files, reached seed receipt/frozen pairs and final outputs. A valid
+cached action need not leave arbitrary intermediate objects on disk. Missing or
+unreadable required inputs still fail; incomplete supplier origin coverage stays
+unknown. Cargo metadata ownership and a second declaration graph are not release
+selection fallbacks.
 
-For a new compiled SDK, declare its shipped Cargo root once. Dependencies then
-follow the Cargo manifests, including new targets. Declare generated payload
-producers separately because Cargo cannot infer external artifact generation.
-Non-Cargo shared inputs belong in `shared_source_paths`. New source-only SDKs
-need compatibility pins and package qualification without a compiled-source
-root. The shared version-drift gate discovers producer products from every SDK's
-compatibility declarations, so a new dependency enters the fixture automatically.
-Every SDK must test its packager with an independently advanced producer; release
-packaging preserves the consumer's exact pin, while a source fixture that uses
-newer workspace bytes must identify those bytes and remain unpublishable.
-Moon's shared Cargo source group includes Rust files throughout each project,
-including custom source directories and build helpers. Inputs outside the Cargo
-project, such as resources read by a build script, still need explicit Moon
-inputs and release ownership.
+For a new shipped owner, declare its actual output roots, consumed supplier Files
+and mandatory configured tests in the source-owned shipping export. Source-only
+facades preserve conventional requirements and qualify their packages without
+inventing compiled incorporation. Package tests must exercise independently
+advanced producers: held requirements use authentic completed archives even when
+the workspace has the same version, while current construction identifies its
+actual Files. A version match alone proves no physical origin.
 
-Moon `production` and `peer` edges describe source and qualification impact.
-Product-local `compatibility_versions` describe the exact published product
-versions a carrier consumes. A native runtime can therefore be published
-without bumping an SDK, and the unchanged SDK continues to pin the older native
-version. A selected compiled consumer records the versions of the inputs it
-actually embeds. Other requirements retain their authored values except for
-Release Please ecosystem updates or required default extension install updates.
-If a required dependency is also
-selected at a satisfying version, publication orders it first.
+Product-local `compatibility_versions` describe the requirements a carrier
+consumes. A native runtime may release without bumping an SDK, whose older pin
+remains intact. A selected compiled consumer records its actual incorporated
+inputs. Other requirements retain authored values except for Release Please
+ecosystem updates or necessary default-install adoption. Publication orders a
+selected satisfying dependency before its consumer.
 
-Before publishing a selected consumer, version checks require each pinned
+Cargo library declarations keep [Cargo's normal version requirement semantics](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#version-requirement-syntax):
+`0.3.1` is a compatible minimum; `=0.3.1` is exact. Completed source-baseline
+acquisition currently uses a stable literal minimum or exact `=` value as a
+locator for one immutable completed source carrier. That lookup does not resolve
+arbitrary registry ranges. Local `path` declarations remain normal Cargo
+requirements checked against the local package. A library requirement and its
+separately authored installed-helper locator can differ; source packages retain
+the library requirement, while helper payload acquisition uses its own locator.
+
+Before publishing a selected consumer, version checks require each exact artifact
 dependency to be either selected at that exact version or already available at
 its exact product tag and registry/GitHub carriers. Selecting a newer dependency
 does not satisfy an older consumer pin. Structured release-commit verification
 also rejects source changes hidden inside compatibility-only edits.
 
-Source qualification uses current workspace producers and identifies the
-runtime actually compiled. If those producers differ from immutable release
-pins, npm fixtures carry `qualificationOnly` and publication rejects them.
-Release package tests retain their declared pins: Cargo uses a local source
-patch only at the matching exact version and otherwise resolves the published
-dependency. A WASIX TypeScript release must pair the portable runtime with an
-addon embedding the same runtime version.
-WASIX source builds resolve local extension archive versions from each staged
-extension product manifest. External extension versions are independent of the
-runtime; contrib manifests carry their owning runtime's version. Cargo tracks
-those manifests so a changed extension identity refreshes its embedded bytes.
-Swift and React Native carrier staging also retains the exact native pin.
-React Native resolves that pin through its declared Swift release, including
-immutable historical metadata when Swift has advanced. Older runtime pins use
-verified published Apple archives; current pins require same-run producer assets.
-Mobile app qualification stages private extension and Swift carrier fixtures
-under `target/qualification` against the current workspace runtimes. It leaves
-the release packages intact, retains payload hashes and exact runtime validation,
-and marks extension fixtures `qualificationOnly` so publication rejects them.
+Workspace source checks and final installed admission are separate. Source
+checks may compile against current workspace producers, while the prospective
+public carrier preserves its authored held header, archive and requirement.
+For Swift, the preparation export uses the same constructed roots with workspace
+source/API/iOS checks; the final export additionally requires the exact installed
+consumer. A Native-only change must not restamp unchanged held Swift bytes.
+Changed Swift source can select Swift, but a new API requiring a newer native
+base still needs explicit conventional adoption and final qualification.
 
-PR CI recognizes generated `chore(release):` changes only on the generated
-Release Please branch. Before merge it requires the release commit's parent to
-equal the exact base SHA, derives the product set from the manifest diff, and
-runs the same structured release-commit verifier used by publish. A multi-commit
-or source-bearing release PR therefore fails before it can reach `main`.
-Release Please may transport a large generated change as multiple file-chunk
-commits. The protected prepare job accepts those chunks only from the exact
-open canonical Release Please PR, requires a linear exact-main descendant with
-the configured release title on every chunk, collapses their tree to one commit,
-reapplies derived release synchronization, runs the structured verifier, and
-pushes with a lease against the inspected PR head. The normalized tree must be
-byte-identical before derived synchronization; a moved PR head is never replaced.
-Before the prepare job spends time on toolchains or release metadata, the
-read-only validation job directly inventories the exact
-`release-please--branches--main` head against `main` through the Pulls REST API
-and rejects any merged result that still carries `autorelease: pending`. It
-does not use GitHub Search or the Issues API's eventually consistent label
-  index. A pending merged PR means publication is unfinished; it is never
-  reported as “no releasable changes.”
+WASIX source builds resolve extension archive versions from each staged product
+manifest. External extensions retain independent versions; contrib follows its
+actual runtime owner. Installed WASIX consumers require the exact declared
+module/version contract. Resource creator provenance remains distinct from the
+admitted consumer, and a runtime release does not automatically release held
+compatible resource data.
 
-Publication derives its product scope from the latest verified Release Please
-release commit before checking product tags. Later changes to products outside
-that candidate do not block the pending release or add products to it. Selected
-products still require valid version transitions and exact dependency pins;
-unscoped tag planning continues to reject unversioned release-affecting changes.
+Swift and React Native final staging retain their conventional requirements.
+Held Swift source tags, bindings and Apple runtime archives come from the existing
+authenticated completed readers. Explicitly adopted unpublished inputs require
+actual matching candidate producer Files and their source-bound transport.
+The Mac producer captures native/Swift inputs before the downstream React Native
+consumer uses them; source checks cannot substitute for final installed proof.
+Private workspace fixtures remain unpublishable.
+
+Generated release trees resolve through `native-release-inputs.mts`, which checks
+the canonical PR/Prepare identity, immutable source and exact version-only bridge.
+Queue trees additionally need the matching original PR tree; a mixed queue or
+synthetic title cannot bypass those checks. Publication plans use the same
+verified Prepare record and its exact selected scope.
+
+Publication derives its exact scope from the authenticated Prepare record for
+the selected Release Please commit before checking product tags. Later changes
+outside that candidate do not add products. Selected owners still require valid
+version transitions, complete final carrier coverage and exact dependency pins.
 
 ## Qualification contract
 
 Root publication admission accepts a current-main candidate or an explicit
 ancestor source under an allowlisted current-main recovery controller. Source
-qualification requires one successful, non-cancelled CI run whose `head_sha`
-is exact and whose `Qualified` gate succeeded. That record covers required
-checks, tests, builds, policy, selected E2E, and named build artifacts. A
-successful `Builds` job alone is insufficient. After the root job pins the
+qualification requires one successful, non-cancelled `Native Bazel qualification`
+run whose `head_sha` is exact and whose `Required` gate succeeded. It must cover
+the configured owners, mandatory tests, platform/device behavior and original
+final artifacts. A successful producer job or construction audit alone is
+insufficient. After the root job pins the
 immutable release transport tag, the rest of that run remains bound to the
 exact transaction without re-evaluating the moving main branch.
 
@@ -324,24 +295,60 @@ bash tools/release/release-check.sh
 tools/dev/bun.sh src/extensions/tools/check-extension-model.mts --check
 ```
 
-If the candidate changes a GitHub workflow or local action, also run
-`bash tools/ci/check-workflows.sh`. That conditional gate runs the pinned
-`actionlint` and `zizmor` configuration, focused workflow security checks, and
-helper behavior tests;
-`actionlint` by itself is not equivalent.
+For a workflow or local-action change, run the source-owned
+`//tools/ci:source_checks` Bazel tests on the declared Linux profile. They use
+pinned actionlint, zizmor and ShellCheck plus behavioral workflow/security tests;
+actionlint alone is not equivalent. `tools/bazel/README.md` records the target/host
+profiles and focused package rehearsals.
 
-The default `release-check.sh` invocation includes publication metadata plus
-the release-owned and policy-owned mutation unit suites. `check-release-metadata.mts`
-is the canonical product, version, registry ownership, and dependency graph
-validator. The release-PR job runs `release-metadata-check.sh` once after the
-generated commit is synchronized, while hosted qualification owns candidate
-source-metadata evidence. Publishers verify the frozen candidate identity and
-live external state instead of replaying source-only metadata checks.
+The default `release-check.sh` invocation covers product metadata and controller
+mutation tests. Its `--mutation-tests-only` mode exercises release behavior,
+including pinned Release Please integration, without repeating metadata gates.
+Native preparation supplies authenticated supplier relationships to candidate
+calculation, synchronization and verification. Publishers verify the frozen
+candidate identity and live external state instead of replaying source-only tests.
 
 The `Release` workflow has two operations:
 
 1. `prepare-release-pr` — run from current `main`; creates or updates the generated release PR and synchronizes derived files.
 2. `publish` — waits for exact-SHA qualification, prepares and freezes the candidate, bootstraps missing Cargo/npm names when necessary, publishes verified bytes, checks public consumers, and promotes GitHub drafts last.
+
+The Prepare job requires an exact successful eligible-main Native run before
+calling `prepare-release-pr.sh`. For local preparation, use an isolated clean
+checkout of that qualified main source. Set `QUALIFIED_NATIVE_RUN_ID` to the
+verified positive run ID, then:
+
+```sh
+export GITHUB_REPOSITORY=f0rr0/oliphaunt
+export NATIVE_QUALIFICATION_RUN_ID="$QUALIFIED_NATIVE_RUN_ID"
+bash tools/release/prepare-release-pr.sh /absolute/new/release-candidate
+bash tools/release/close-release-candidate.sh /absolute/new/release-candidate
+```
+
+Use the shell's existing authenticated GitHub context; do not put credentials in
+a candidate file. Preparation reads GitHub metadata and writes locally. Close
+creates the local normalized release commit only when `required` is true.
+`.github/scripts/publish-release-pr.sh` is the separate remote PR mutation.
+
+The one-time resource migration uses actual constructor captures, not invented
+history for the old resource release. At the exact captured source, the existing
+proposal command is:
+
+```sh
+bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh \
+  tools/release/native-release-preparation.mts --seed-adoption-anchor \
+  --run-id "$NATIVE_QUALIFICATION_RUN_ID" --ref "$QUALIFICATION_REF" \
+  --output-directory /absolute/new/seed-adoption-proposal
+```
+
+Review the genuine 14-slot receipt/frozen/public-PGDATA join before committing
+`construction-anchor.json` at `src/database-resources/seeds/construction-anchor.json`.
+A successful PR source can propose that contract with its truthful source/run
+identity; it does not become reviewed-main evidence. The committed declaration
+and subsequent qualified source remain mandatory. Never edit the old public
+metadata, fabricate its constructor intent or rerun initdb after version changes
+to widen release scope. Whole hosted qualification and legacy retirement remain
+separate cutover requirements.
 
 Ordinary publication needs no approval run ID or separate dry-run/bootstrap
 dispatch. Preparation uploads `oliphaunt-publication-lock` and
@@ -414,9 +421,9 @@ creation requires both `--apply` and confirmation of the exact lock digest.
 Wrong or extra configurations are blockers and are never automatically
 replaced.
 
-Candidate assembly installs the full workspace; normal publish and bootstrap
-install only the verified command-line tools required for signing, uploading,
-and public verification. Neither path relies on Corepack. When the selected
+Native candidate preparation installs the locked release tooling and consumes
+authenticated producer outputs. Normal publish and bootstrap install only the
+verified command-line tools needed for signing, uploading and public verification. Neither path relies on Corepack. When the selected
 carrier set includes npm, both normal and bootstrap jobs use
 `setup-npm-publisher` to install the workflow-pinned npm archive. That action
 verifies the canonical URL, compressed digests and byte count, safe archive
@@ -427,24 +434,23 @@ observed Node/npm trusted-publishing runtime plus the command-specific
 configuration. This local tool setup neither requests an OIDC token nor changes
 the frozen registry mutation logic.
 
-Installer fault-injection suites are owned by the exact-SHA
-`ci-workflows:check` gate. Publication does not execute those download, cache,
-and rollback suites again. Release-PR preparation runs the live metadata checker
-once after structured commit verification. The candidate preparation job verifies the
-same-SHA `Qualified` record before freezing the candidate; slim publishers do
-not replay that source-only validation.
+Installer and transport fault-injection suites belong to source-owned Bazel
+policy tests and the release controller suites. Publication does not rerun them.
+Candidate freezing authenticates the exact-source Native record, final outputs
+and Prepare bridge; slim publishers do not replay source-only qualification.
 For local read-only validation, run `bash tools/release/release-check.sh` for
 source metadata and release-tool tests. Check selected public version state with
 `bash tools/release/release-check-registries.sh --products-json '["oliphaunt-js"]' --head-ref HEAD`
 (replace the example selection with the actual products). Neither command
 assembles release packages; the retired dry-run wrapper did not assemble them
-either. Use the selected products' package and artifact/consumer test tasks for
-local package rehearsal.
+either. Use the selected owners' actual Bazel package and consumer tests for local
+rehearsal.
 
 Release admission checks consumer combinations before uploading registry bytes.
-The CI release-intent job runs the same compatibility gate on generated release
-PRs, their main release commits and explicitly selected main qualification
-dispatches; ordinary source PRs and feature diagnostics keep source qualification.
+Native CI verifies the canonical prepared source and conventional requirement
+transition before qualifying generated release trees. Candidate admission then
+checks the selected final delivery against unchanged immutable dependencies;
+ordinary source checks do not substitute for that final contract.
 `consumer-compatibility.mts` reads selected consumers' declared pins and reads
 unselected dependencies from their immutable product tags. It compares the WASIX
 SDK runtime with the runtime embedded by its exact N-API dependency, follows
@@ -458,9 +464,9 @@ its extension compatibility policy before metadata admission.
 
 Cargo extension facades use compatible SemVer requirements for SDK, build-helper
 and binding APIs; extension payload and AOT carrier versions remain exact.
-The shared facade generator is a release source of every external extension and
-the native runtime product that owns the contrib facade, so Release Please
-includes those products when its shipped output changes. WASIX tools declare
+Each owner's Bazel package construction consumes the shared facade generator.
+When its delivered output changes, native comparison selects the affected
+external extension or runtime contrib owner before Release Please versions it. WASIX tools declare
 their SDK pin explicitly instead of deriving it from the current workspace SDK.
 These rules preserve independent packaging versions; they do not establish
 cross-runtime extension compatibility or waive ABI, AOT, export or integrity
@@ -475,21 +481,14 @@ installed carrier for every installed WASIX SDK, including unselected historical
 SDKs and nested dependency installations. Source qualification and installed
 release compatibility remain separate requirements.
 
-For a release packaging failure, download the failed candidate's inputs from its
-exact CI run into an isolated checkout and run the same assembly entrypoint:
-
-```sh
-bash tools/release/package-release-carriers.sh --products-json '["postgres-tools-native"]'
-```
-
-Use the failed release's complete product selection when checking for subsequent
-failures. Then run `tools/release/publication-lock.mts candidate` with that selection
-and the artifact roots used by Release's "Freeze exhaustive publication lock" step. This
-checks the complete GitHub and registry inventory, including missing and extra
-carriers, without publishing or rebuilding product binaries. Rehearse packaging
-fixes this way before expensive qualification; diagnostic outputs are not
-publication evidence. A changed packager still requires qualification of the new
-candidate.
+For a candidate failure, retain the exact source, Native run, Prepare record and
+original artifact identities. Use the same `native-freeze-publication-candidate.mts`
+entrypoint and arguments as Release's “Freeze authenticated native publication
+outputs” step in an isolated checkout. This reuses the actual producer Files;
+it does not substitute a local compiler build or the old carrier assembly path.
+Use the complete selected scope when diagnosing missing or extra final carriers.
+A construction diagnostic is not an admitted publication lock, and changed
+production code requires fresh source qualification.
 
 Candidate preparation verifies its exact-SHA qualification record once and
 performs registry preflight once. Immediately before assembly,
@@ -831,24 +830,13 @@ Release qualification must inspect the binaries themselves: Mach-O
 requirements must satisfy these floors. Package labels, runner versions, and
 successful builds are not compatibility evidence by themselves.
 
-Rust 1.93.1's Linux `std::process` implementation contains weak
-`pidfd_getpid`/`pidfd_spawnp` references. Linking the broker directly on an
-Ubuntu 24.04 runner binds those otherwise optional references to
-`GLIBC_2.39`, which raises the load-time floor even when the fast path is never
-used. Linux broker release assets are therefore linked from a clean target
-directory in the exact, digest-pinned `rust:1.93.1-slim-bookworm` container.
-After any bounded digest-pinned image acquisition, only Cargo's locked
-dependency-fetch phase may use the network inside the container; package code
-and build scripts run in a read-only, networkless, capability-free container.
-The resulting broker is then executed in that baseline before staging.
-
-Linux release stages also run in the exact digest-pinned Fedora 39 fixture
-after verifying that `getconf GNU_LIBC_VERSION` is exactly `glibc 2.38`.
-The rehearsal resolves every staged dynamic ELF dependency and executes the
-safe version/argument probes available in the carrier. Fedora 39 is retained
-solely as a reproducible ABI fixture: it is end-of-life and this check is not a
-claim that Fedora 39 is a security-supported production OS. Oliphaunt's public
-contract is the GNU architecture and symbol-version floor, not a distro name.
+Native Linux construction uses the declared Bazel target/host toolchains,
+including the GNU 2.28 profiles. Those construction profiles do not change the
+published compatibility ceilings above. Inspect the actual ELF dependencies and
+symbol versions of every final carrier, and run its installed consumer on the
+required host. Do not link release outputs against arbitrary workstation or
+runner-image libraries or restore the former Cargo/Docker producer path as an
+alternative authority.
 
 Every release-ready exact extension has stable ecosystem façades. PostgreSQL
 contrib carriers belong to the matching native or WASIX runtime product; each
@@ -858,7 +846,7 @@ against the runtime target matrix.
 
 ## Frozen consumer readiness
 
-The publication path is: source `Qualified`, final carrier rendering, exhaustive
+The publication path is: exact-source Native `Required`, authenticated final outputs, exhaustive
 publication lock and candidate capsule, `Frozen consumers` on the required hosts,
 `Publication ready`, then bootstrap and normal publication. Both protected jobs
 require the ready gate. Every supported mutation entry point also checks the
@@ -940,10 +928,10 @@ Ordinary clean-state control-plane workflow, policy, validator,
 registry-transport, test, or documentation changes do not use recovery and do
 not create a release. With no other unreleased product change,
 `prepare-release-pr` reports no releasable products and creates no PR; a direct
-publish selects no release changes and performs no registry work. A change to a
-compiler, SDK, linker, build command, source selection, target, or packaging
-output requires the affected versions to advance even when the change lives in
-CI.
+publish selects no release changes and performs no registry work. A compiler, SDK, linker, recipe, source-selection or target change requires
+qualification of its affected construction. Delivered payload changes select
+necessary owners before Release Please calculates versions; an unchanged
+qualified delivery does not release merely because a recipe or comment changed.
 
 ## Handoff evidence
 

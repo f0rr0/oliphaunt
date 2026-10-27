@@ -1,17 +1,52 @@
 import { extensionConsumerRequirements } from './consumer-compatibility.mts';
-import { buildBoundCompatibilityProducts } from './release-dependency-plan.mts';
+import { resolveBuildBoundCompatibilityProducts } from './release-dependency-plan.mts';
 import { productCompatibilityVersion } from './release-graph.mts';
 
+// These associations are controller-derived contracts, not a release selector.
+// Authentication and descriptor/module equivalence stay with the acquired observations.
+export function snapshotCurrentExactInputs(products, value = []) {
+  if (!Array.isArray(value))
+    throw new Error('default-extension-release-plan: current exact inputs must be an array');
+  const seen = new Set();
+  return Object.freeze(
+    value.map((row) => {
+      if (
+        !row ||
+        typeof row !== 'object' ||
+        Array.isArray(row) ||
+        Object.keys(row).sort().join(',') !== 'product,sourceProduct' ||
+        typeof row.product !== 'string' ||
+        typeof row.sourceProduct !== 'string' ||
+        !Object.hasOwn(products, row.product) ||
+        !Object.hasOwn(products, row.sourceProduct) ||
+        row.product === row.sourceProduct ||
+        !Object.values(products[row.product].compatibility_versions ?? {}).some(
+          (entry) => entry.source_product === row.sourceProduct,
+        )
+      )
+        throw new Error(
+          'default-extension-release-plan: current exact input lacks its conventional requirement',
+        );
+      const key = `${row.product}:${row.sourceProduct}`;
+      if (seen.has(key))
+        throw new Error('default-extension-release-plan: duplicate current exact input');
+      seen.add(key);
+      return Object.freeze({ product: row.product, sourceProduct: row.sourceProduct });
+    }),
+  );
+}
+
 // Default installs constrain dependency requirements, not product version numbers.
-export function defaultExtensionReleasePlan(
-  products,
-  selectedProducts,
-  {
-    readCompatibility = productCompatibilityVersion,
-    buildBound = buildBoundCompatibilityProducts(products),
-  } = {},
-) {
+export function defaultExtensionReleasePlan(products, selectedProducts, options = {}) {
+  const { readCompatibility = productCompatibilityVersion } = options;
+  const buildBound = resolveBuildBoundCompatibilityProducts(products, options);
+  const currentExactInputs = snapshotCurrentExactInputs(products, options.currentExactInputs);
   const selected = new Set(selectedProducts);
+  const currentContracts = new Set(
+    currentExactInputs
+      .filter(({ product, sourceProduct }) => selected.has(product) && selected.has(sourceProduct))
+      .map(({ product, sourceProduct }) => `${product}:${sourceProduct}`),
+  );
   const required = new Set(selected);
   const requirements = new Map();
   const extensions = Object.keys(products).filter(
@@ -34,7 +69,7 @@ export function defaultExtensionReleasePlan(
     products,
     pin,
     buildBound,
-  ).filter(({ product, owner }) => !owner || products[owner].kind === 'sdk');
+  ).filter(({ owner }) => !owner || products[owner].kind === 'sdk');
   const runtimes = new Set(selectedConsumers.map(({ runtime }) => runtime));
   if (extensions.some((product) => selected.has(product))) {
     for (const product of sdks) {
@@ -44,8 +79,14 @@ export function defaultExtensionReleasePlan(
   }
   const maximum = (versions) => versions.sort(Bun.semver.order).at(-1);
   for (const runtime of runtimes) {
+    const requiredCurrentHost = extensions.some((product) =>
+      currentContracts.has(`${product}:${runtime}`),
+    );
     const hosts = extensions.map((product) =>
-      selected.has(product) ? products[runtime].version : pin(product, runtime),
+      (selected.has(product) && buildBound.get(product).has(runtime)) ||
+      currentContracts.has(`${product}:${runtime}`)
+        ? products[runtime].version
+        : pin(product, runtime),
     );
     let target = maximum([
       ...hosts,
@@ -59,9 +100,29 @@ export function defaultExtensionReleasePlan(
       );
     const repackage = hosts.some((host) => host !== target);
     if (repackage) {
-      // Extension producers cannot recreate an older host with current compiler inputs.
-      target = products[runtime].version;
+      // Only current compiler inputs force adoption of the workspace host.
+      if (
+        extensions.some(
+          (product) => buildBound.get(product).has(runtime) && pin(product, runtime) !== target,
+        )
+      )
+        target = products[runtime].version;
       for (const product of extensions) {
+        if (
+          !buildBound.get(product).has(runtime) &&
+          readCompatibility(product, runtime, 'default-extension-release-plan', { ref: null }) !==
+            target
+        ) {
+          // A proven missing ABI export can require a new exact default host.
+          // Propose the conventional requirements together; final qualification
+          // must still execute every affected carrier on that exact host.
+          if (requiredCurrentHost && target === products[runtime].version)
+            writeRequirement(product, runtime, target);
+          else
+            throw new Error(
+              `default-extension-release-plan: ${product} retains a held ${runtime} requirement; update its conventional runtime requirement before targeting ${runtime}@${target}`,
+            );
+        }
         if (pin(product, runtime) !== target || selected.has(product)) required.add(product);
       }
     }
@@ -88,13 +149,19 @@ export function defaultExtensionReleasePlan(
     const target = requirements.get(`${sdk}:${runtime}`)?.version ?? pin(sdk, runtime);
     const addon = 'oliphaunt-wasix-napi';
     const version = pin(sdk, addon);
+    const buildsRuntime = buildBound.get(addon)?.has(runtime);
     const currentHost =
-      selected.has(addon) && version === products[addon].version
+      buildsRuntime && selected.has(addon) && version === products[addon].version
         ? products[runtime].version
         : pin(addon, runtime, version);
     if (currentHost !== target) {
-      const host = selected.has(addon) ? products[runtime].version : pin(addon, runtime);
+      const host =
+        buildsRuntime && selected.has(addon) ? products[runtime].version : pin(addon, runtime);
       if (host !== target) {
+        if (!buildsRuntime)
+          throw new Error(
+            `default-extension-release-plan: ${addon} adopts ${runtime}@${host}; update its conventional runtime and SDK requirements before targeting ${runtime}@${target}`,
+          );
         if (target !== products[runtime].version)
           throw new Error(
             `default-extension-release-plan: ${addon} cannot embed older ${runtime}@${target}`,
@@ -121,6 +188,17 @@ export function defaultExtensionReleasePlan(
           : pin(provider, runtime, version);
       if (oldHost !== target) writeRequirement(owner, provider, products[provider].version);
     }
+  }
+  // A byte-qualified exact-module contract follows a new producer only when
+  // both products already have necessary deliveries. ABI reachability alone
+  // never adds a producer or consumer to the release set.
+  for (const { product, sourceProduct } of currentExactInputs) {
+    if (!selected.has(product) || !selected.has(sourceProduct)) continue;
+    const version = products[sourceProduct].version;
+    const previous = requirements.get(`${product}:${sourceProduct}`);
+    if (previous && previous.version !== version)
+      throw new Error('default-extension-release-plan: conflicting current exact requirement');
+    if (pin(product, sourceProduct) !== version) writeRequirement(product, sourceProduct, version);
   }
   return { required, requirements };
 }

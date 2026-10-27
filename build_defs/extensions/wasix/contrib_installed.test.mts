@@ -1,0 +1,320 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import {
+  assertWasixExtensionArchiveInstall,
+  EXTENSION_RUNTIME_CONTRACT_SCHEMA,
+  WASIX_EXTENSION_INSTALL_SIDECAR_SCHEMA,
+} from '../../../src/extensions/contracts/wasix-extension-install.mts';
+import { assertWasixAotArtifactPayloads } from '../../../src/wasix/runtime/tools/check-release-assets.mts';
+import { assertCanonicalWasixAotManifest } from '../../../src/wasix/runtime/tools/wasix-aot-manifest.mts';
+import { AOT_TARGET_TRIPLES } from '../../../src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
+import { readPortableArchiveEntries } from '../../../tools/packaging/portable-archive.mts';
+import {
+  readWasixCargoCarrierPayload,
+  readWasixCargoCarrierSet,
+} from '../../../tools/packaging/wasix-extension-cargo-family.mts';
+
+assert(
+  [18, 22].includes(process.argv.length),
+  'contrib installed test requires its five declared parents, five parts Trees and optional incremental inputs',
+);
+const [specInput, npmInput, cargoInput, frozenInput, coreInput, coreManifestInput, binary] =
+  process.argv.slice(2);
+const incremental = process.argv.length === 22;
+const [toolsSpecInput, toolsPortableInput, toolsAotInput, serverBinary] = incremental
+  ? process.argv.slice(9, 13)
+  : [];
+const cargoInputs = process.argv.slice(incremental ? 13 : 9);
+const parentInputs = [cargoInput, ...cargoInputs.slice(0, Object.keys(AOT_TARGET_TRIPLES).length)];
+const partInputs = cargoInputs.slice(Object.keys(AOT_TARGET_TRIPLES).length);
+if (incremental)
+  assert([toolsSpecInput, toolsPortableInput, toolsAotInput, serverBinary].every(Boolean));
+const spec = JSON.parse(readFileSync(specInput, 'utf8'));
+const frozen = JSON.parse(readFileSync(frozenInput, 'utf8'));
+const root = mkdtempSync(
+  path.join(process.env.TEST_TMPDIR ?? os.tmpdir(), 'installed-wasix-contrib-'),
+);
+const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+function write(relative: string, bytes: Uint8Array | string) {
+  const file = path.join(root, relative);
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, bytes);
+  return file;
+}
+try {
+  assert.equal(spec.owner, 'liboliphaunt-wasix');
+  assert.equal(spec.product, 'oliphaunt-extension-contrib-pg18');
+  assert.equal(spec.version, spec.runtimeVersion);
+  assert.equal(frozen.product, spec.product);
+  assert.equal(frozen.version, spec.version);
+  assert.deepEqual(frozen.compatibility, spec.releaseMetadata.compatibility);
+  const core = JSON.parse(readFileSync(coreManifestInput, 'utf8'));
+  const coreModuleSha256 = digest(readFileSync(coreInput));
+  assert.equal(core.runtime['module-sha256'], coreModuleSha256);
+  const npm = readPortableArchiveEntries(realpathSync(npmInput));
+  const metadata = JSON.parse(npm.get('package/package.json')!.data().toString());
+  assert.equal(metadata.name, '@oliphaunt/extension-contrib-pg18-wasix');
+  assert.equal(metadata.version, spec.version);
+  assert.equal(metadata.oliphaunt.product, spec.product);
+  assert.equal(metadata.oliphaunt.kind, 'exact-extension-wasix-bundle');
+  assert.equal(metadata.oliphaunt.runtime, 'wasix');
+  assert.equal(metadata.oliphaunt.target, spec.target);
+  assert.equal(metadata.oliphaunt.wasixRuntimeProduct, spec.compatibility.wasix_runtime_product);
+  assert.equal(metadata.oliphaunt.wasixRuntimeVersion, spec.compatibility.wasix_runtime_version);
+  assert.equal(metadata.oliphaunt.runtimeBound, true);
+  assert.deepEqual([...metadata.oliphaunt.members].sort(), spec.expectedMembers);
+  assert.deepEqual(Object.keys(metadata.oliphaunt.carriers).sort(), spec.expectedMembers);
+  assert.deepEqual(
+    frozen.extensions.map((row: { sqlName: string }) => row.sqlName).sort(),
+    spec.expectedMembers,
+  );
+  const archives = spec.expectedMembers.map((sqlName: string) => {
+    const carrier = metadata.oliphaunt.carriers[sqlName];
+    const member = frozen.extensions.find((row: { sqlName: string }) => row.sqlName === sqlName);
+    assert.deepEqual(
+      member.dataFiles.map((relative: string) => `share/postgresql/${relative}`).sort(),
+      member.wasixInstall.installedFiles
+        .filter(
+          (relative: string) =>
+            relative.startsWith('share/postgresql/') &&
+            !relative.startsWith('share/postgresql/extension/'),
+        )
+        .sort(),
+      `${sqlName} frozen auxiliary data must name its exact physical installation inventory`,
+    );
+    const entry = npm.get(`package/${carrier.path}`);
+    assert(entry?.isFile && !entry.isSymbolicLink);
+    const bytes = Buffer.from(entry.data());
+    assertWasixExtensionArchiveInstall(bytes, {
+      schema: WASIX_EXTENSION_INSTALL_SIDECAR_SCHEMA,
+      sqlName,
+      archive: `extensions/${sqlName}.tar.zst`,
+      sha256: carrier.sha256,
+      size: carrier.size,
+      install: member.wasixInstall,
+    });
+    return { sqlName, path: write(`npm/${carrier.path}`, bytes), sha256: carrier.sha256 };
+  });
+  for (const sqlName of spec.expectedMembers) {
+    const relative = metadata.oliphaunt.memberExports[sqlName];
+    assert.equal(relative, `./${sqlName}`);
+    const descriptorPath = metadata.exports[relative].import;
+    assert.equal(descriptorPath, `./descriptors/${sqlName}.js`);
+    const descriptorEntry = npm.get(`package/${descriptorPath.slice(2)}`);
+    assert(descriptorEntry?.isFile && !descriptorEntry.isSymbolicLink);
+    const descriptorFile = write(`npm/${descriptorPath.slice(2)}`, descriptorEntry.data());
+    const { default: descriptor } = await import(pathToFileURL(descriptorFile).href);
+    assert.equal(descriptor.schema, metadata.oliphaunt.descriptorSchema);
+    assert.equal(descriptor.runtime, metadata.oliphaunt.runtime);
+    assert.equal(descriptor.product, spec.product);
+    assert.equal(descriptor.version, spec.version);
+    assert.equal(descriptor.sqlName, sqlName);
+    assert.deepEqual(descriptor.compatibility, {
+      extensionRuntimeContract: EXTENSION_RUNTIME_CONTRACT_SCHEMA,
+      postgresMajor: frozen.compatibility.postgresMajor,
+      wasixRuntimeProduct: frozen.compatibility.wasixRuntimeProduct,
+      wasixRuntimeVersion: frozen.compatibility.wasixRuntimeVersion,
+    });
+    assert(descriptor.carriers.some((carrier: { sqlName: string }) => carrier.sqlName === sqlName));
+    assert.equal(
+      new Set(descriptor.carriers.map((carrier: { sqlName: string }) => carrier.sqlName)).size,
+      descriptor.carriers.length,
+    );
+    for (const carrier of descriptor.carriers) {
+      const member = frozen.extensions.find(
+        (row: { sqlName: string }) => row.sqlName === carrier.sqlName,
+      );
+      const archive = archives.find((row: { sqlName: string }) => row.sqlName === carrier.sqlName);
+      assert(member && archive, 'public descriptor references an undeclared contrib member');
+      assert.equal(carrier.product, spec.product);
+      assert.equal(carrier.version, spec.version);
+      assert.equal(carrier.archive, `extensions/${carrier.sqlName}.tar.zst`);
+      assert.equal(carrier.sha256, archive.sha256);
+      assert.equal(carrier.size, readFileSync(archive.path).length);
+      assert.equal(carrier.source.href, pathToFileURL(archive.path).href);
+      assert.deepEqual(carrier.install, member.wasixInstall);
+    }
+  }
+  const base = spec.carriers.filter((row: { ecosystem: string }) => row.ecosystem === 'cargo');
+  const cargoRows = readWasixCargoCarrierSet(base, [
+    ...parentInputs.map((file) => realpathSync(file)),
+    ...partInputs,
+  ]);
+  assert.deepEqual(
+    cargoRows
+      .filter((row) => row.declared)
+      .map((row) => row.name)
+      .sort(),
+    base.map((row: { name: string }) => row.name).sort(),
+  );
+  const portable = cargoRows.find((row) => row.name.endsWith('-wasix'))!;
+  const portablePayload = readWasixCargoCarrierPayload(cargoRows, portable);
+  for (const archive of archives)
+    assert.deepEqual(
+      portablePayload.get(`extensions/${archive.sqlName}/extension.tar.zst`),
+      readFileSync(archive.path),
+      'Cargo and npm contrib portable bytes differ',
+    );
+  let host: { aotManifest: string; aotArtifacts: { path: string; source: string }[] } | undefined;
+  for (const target of Object.values(AOT_TARGET_TRIPLES)) {
+    const row = base.find((row: { target: string }) => row.target === target);
+    assert(row, 'missing canonical contrib AOT identity');
+    const owner = cargoRows.find((carrier) => carrier.name === row.name)!;
+    const files = readWasixCargoCarrierPayload(cargoRows, owner);
+    const manifests = spec.expectedMembers.map((sqlName: string) => {
+      const manifest = JSON.parse(
+        owner.entries.get(`${owner.prefix}/manifests/${sqlName}.json`)!.data().toString(),
+      );
+      assertCanonicalWasixAotManifest(manifest, { expectedTarget: target });
+      assertWasixAotArtifactPayloads(manifest, {
+        readArtifact: (relative: string) => files.get(`extensions/${sqlName}/${relative}`)!,
+      });
+      const member = frozen.extensions.find(
+        (member: { sqlName: string }) => member.sqlName === sqlName,
+      );
+      assert.equal(manifest.artifacts.length, member.wasixInstall.nativeModules.length);
+      for (const artifact of manifest.artifacts)
+        assert.equal(
+          artifact['module-sha256'],
+          member.wasixInstall.nativeModules.find(
+            (module: { name: string }) =>
+              artifact.name ===
+              `extension:${sqlName}${module.name === sqlName ? '' : `:${module.name}`}`,
+          ).moduleSha256,
+        );
+      return {
+        ...manifest,
+        artifacts: manifest.artifacts.map((artifact: { path: string }) => ({
+          ...artifact,
+          path: `extensions/${sqlName}/${artifact.path}`,
+        })),
+      };
+    });
+    const header = (manifest: { artifacts: unknown }) => {
+      const { artifacts: _artifacts, ...rest } = manifest;
+      return rest;
+    };
+    for (const manifest of manifests) assert.deepEqual(header(manifest), header(manifests[0]));
+    const merged = {
+      ...header(manifests[0]),
+      artifacts: manifests.flatMap((manifest: { artifacts: unknown[] }) => manifest.artifacts),
+    };
+    assertCanonicalWasixAotManifest(merged, { expectedTarget: target });
+    assertWasixAotArtifactPayloads(merged, {
+      readArtifact: (relative: string) => files.get(relative)!,
+    });
+    if (target === 'x86_64-unknown-linux-gnu')
+      host = {
+        aotManifest: write('host-aot/manifest.json', JSON.stringify(merged)),
+        aotArtifacts: merged.artifacts.map((artifact: { path: string }) => ({
+          path: artifact.path,
+          source: write(`host-aot/${artifact.path}`, files.get(artifact.path)!),
+        })),
+      };
+  }
+  assert(host, 'installed contrib test requires its declared GNU host cohort');
+  const packet = write(
+    'packet.json',
+    JSON.stringify({
+      product: spec.product,
+      version: spec.version,
+      runtimeVersion: spec.runtimeVersion,
+      archives,
+      ...host,
+      coreModuleSha256,
+      coreManifest: realpathSync(coreManifestInput),
+    }),
+  );
+  const run = (executable: string, test: string, extraEnv: Record<string, string> = {}) => {
+    const result = Bun.spawnSync(
+      [realpathSync(executable), '--ignored', '--exact', test, '--nocapture', '--test-threads=1'],
+      {
+        env: { ...process.env, OLIPHAUNT_DECLARED_EXTENSION_PACKET: packet, ...extraEnv },
+        cwd: process.cwd(),
+        stdout: 'pipe',
+        stderr: 'pipe',
+        timeout: 900000,
+      },
+    );
+    assert.equal(result.exitCode, 0, `${result.stderr.toString()}\n${result.stdout.toString()}`);
+    assert.match(result.stdout.toString(), /1 passed; 0 failed/u);
+    console.log(result.stdout.toString().trim());
+    if (incremental && result.stderr.length) console.log(result.stderr.toString().trim());
+  };
+  if (incremental) {
+    const { validatePortableToolsPayload, validateToolsAotPayload } = await import(
+      '../../../src/wasix/postgres-tools/tools/package-assets.mts'
+    );
+    const tools = JSON.parse(readFileSync(toolsSpecInput, 'utf8'));
+    assert.equal(tools.runtimeVersion, spec.runtimeVersion);
+    const extractTools = (input: string, name: string, directory: string) => {
+      const entries = readPortableArchiveEntries(realpathSync(input));
+      const prefix = `${name}-${tools.version}`;
+      const cargo = Bun.TOML.parse(entries.get(`${prefix}/Cargo.toml`)!.data().toString());
+      assert.equal(cargo.package.name, name);
+      assert.equal(cargo.package.version, tools.version);
+      for (const [member, entry] of entries)
+        if (member.startsWith(`${prefix}/${directory}/`)) {
+          assert(entry.isDirectory || (entry.isFile && !entry.isSymbolicLink));
+          if (entry.isFile)
+            write(
+              `tools/${directory}/${member.slice(`${prefix}/${directory}/`.length)}`,
+              entry.data(),
+            );
+        }
+      return path.join(root, 'tools', directory);
+    };
+    const portable = extractTools(toolsPortableInput, tools.portableName, 'payload');
+    const aot = extractTools(toolsAotInput, tools.aotName, 'artifacts');
+    const sourceFingerprint = core['source-fingerprint'];
+    assert.equal(typeof sourceFingerprint, 'string');
+    const portableManifest = validatePortableToolsPayload(portable, tools.version, {
+      runtimeVersion: tools.runtimeVersion,
+      sourceFingerprint,
+    });
+    const aotManifest = validateToolsAotPayload(aot, tools.target, { sourceFingerprint });
+    const tool = (key: 'pgDump' | 'psql') => {
+      const module = portableManifest[key];
+      const image = aotManifest.artifacts.find(
+        (artifact: { name: string }) => artifact.name === `tool:${module.name}`,
+      );
+      assert(image, 'declared tools AOT has no portable command identity');
+      assert.equal(image['module-sha256'], module.sha256);
+      return {
+        wasm: path.join(portable, module.path),
+        aot: path.join(aot, image.path),
+        manifest: path.join(aot, 'manifest.json'),
+      };
+    };
+    const toolsPacket = write(
+      'tools/packet.json',
+      JSON.stringify({
+        version: tools.version,
+        runtimeVersion: tools.runtimeVersion,
+        pgDump: tool('pgDump'),
+        psql: tool('psql'),
+      }),
+    );
+    run(
+      binary,
+      'oliphaunt::extensions::extension_tests::declared_contrib_carriers_pass_logical_dump_restore',
+      { OLIPHAUNT_DECLARED_TOOLS_PACKET: toolsPacket },
+    );
+    run(serverBinary, 'declared_contrib_carriers_pass_server_smoke');
+    console.log('Actual 32-member WASIX contrib logical dump/restore and pgwire server SQL: PASS');
+  } else {
+    run(
+      binary,
+      'oliphaunt::extensions::extension_tests::declared_contrib_carriers_pass_full_lifecycle',
+    );
+    console.log(
+      'Actual 32-member WASIX contrib npm/Cargo portable and four AOT cohorts with exact source-built core lifecycle: PASS',
+    );
+  }
+} finally {
+  rmSync(root, { recursive: true, force: true });
+}

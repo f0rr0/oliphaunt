@@ -1,6 +1,6 @@
 #![cfg(feature = "extensions")]
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use oliphaunt_wasix::{
     AsyncOliphaunt, AsyncTransaction, DatabaseStorage, Error, Oliphaunt, TransactionResult,
 };
@@ -171,6 +171,88 @@ fn direct_api_recovers_after_postgres_error() -> Result<()> {
     assert!(error.to_string().contains("division by zero"));
     let result = database.query("SELECT 42::int4 AS value")?;
     assert_eq!(result.get_text(0, "value")?, Some("42"));
+    database.close()?;
+    Ok(())
+}
+
+#[test]
+fn nested_plpgsql_handlers_preserve_subtransactions_and_session() -> Result<()> {
+    fn assert_query(
+        database: &mut Oliphaunt,
+        label: &str,
+        sql: &str,
+        expected: &str,
+    ) -> Result<()> {
+        let response = database.exec_protocol_raw(oliphaunt_query::simple_query(sql)?)?;
+        let result = oliphaunt_query::parse_exec_response(&response)
+            .with_context(|| format!("nested exception probe {label}"))?;
+        assert_eq!(
+            result.ready_status(),
+            oliphaunt_query::ReadyStatus::Idle,
+            "{label} must leave PostgreSQL idle"
+        );
+        let Some(oliphaunt_query::StatementResult::Rows(rows)) = result.statements().last() else {
+            panic!("{label} must return the probe result");
+        };
+        assert_eq!(rows.rows().len(), 1, "{label}");
+        assert_eq!(rows.get_text(0, "value")?, Some(expected), "{label}");
+        Ok(())
+    }
+
+    let mut database = Oliphaunt::open()?;
+    database.execute("CREATE TEMP TABLE exception_probe(value integer)")?;
+    let cases = [
+        (
+            "division",
+            "DO $$ BEGIN BEGIN PERFORM 1 / 0; \
+             EXCEPTION WHEN division_by_zero THEN NULL; END; END $$; \
+             SELECT 'division-caught'::text AS value",
+            "division-caught",
+        ),
+        (
+            "missing-schema",
+            "DO $$ BEGIN BEGIN \
+             EXECUTE 'ALTER EXTENSION plpgsql DROP SCHEMA oliphaunt_missing_exception_probe'; \
+             EXCEPTION WHEN invalid_schema_name THEN NULL; END; END $$; \
+             SELECT 'missing-schema-caught'::text AS value",
+            "missing-schema-caught",
+        ),
+        (
+            "nested-rethrow",
+            "DO $$ BEGIN BEGIN BEGIN \
+             RAISE EXCEPTION SQLSTATE '22012' USING MESSAGE = 'nested rethrow probe'; \
+             EXCEPTION WHEN division_by_zero THEN RAISE; END; \
+             EXCEPTION WHEN division_by_zero THEN NULL; END; END $$; \
+             SELECT 'nested-rethrow-caught'::text AS value",
+            "nested-rethrow-caught",
+        ),
+        (
+            "subtransaction-rollback",
+            "TRUNCATE exception_probe; DO $$ BEGIN BEGIN \
+             INSERT INTO exception_probe VALUES (1); PERFORM 1 / 0; \
+             EXCEPTION WHEN division_by_zero THEN INSERT INTO exception_probe VALUES (2); \
+             END; END $$; SELECT value::text AS value FROM exception_probe ORDER BY value",
+            "2",
+        ),
+    ];
+    for (name, sql, expected) in cases {
+        assert_query(
+            &mut database,
+            name,
+            "SELECT 'before'::text AS value",
+            "before",
+        )?;
+        for attempt in 1..=2 {
+            let label = format!("{name}, attempt {attempt}");
+            assert_query(&mut database, &label, sql, expected)?;
+            assert_query(
+                &mut database,
+                &label,
+                "SELECT 'after'::text AS value",
+                "after",
+            )?;
+        }
+    }
     database.close()?;
     Ok(())
 }
@@ -713,36 +795,54 @@ async fn managed_async_transaction_rejects_and_chain_before_dispatch() -> Result
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn abandoning_an_in_flight_async_commit_retires_the_owner() -> Result<()> {
-    let database = AsyncOliphaunt::open().await?;
+    let workspace = tempfile::tempdir()?;
+    let database_root = workspace.path().join("database");
+    let database = AsyncOliphaunt::builder()
+        .storage(DatabaseStorage::Directory(database_root.clone()))
+        .open()
+        .await?;
+    database.query("SELECT pg_sleep(0.01)").await?;
     database
         .exec(
             "CREATE TABLE deferred_commit_probe(id int PRIMARY KEY); \
-             CREATE FUNCTION deferred_commit_sleep() RETURNS trigger \
-             LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(1); RETURN NEW; END $$; \
-             CREATE CONSTRAINT TRIGGER deferred_commit_sleep \
+             CREATE FUNCTION deferred_commit_wait() RETURNS trigger \
+             LANGUAGE plpgsql AS $$ BEGIN \
+             COPY (SELECT 1) TO '/base/commit.started'; \
+             FOR attempt IN 1..500 LOOP \
+               IF (pg_stat_file('/base/commit.release', true)).size IS NOT NULL THEN \
+                 RETURN NEW; \
+               END IF; \
+               PERFORM pg_sleep(0.01); \
+             END LOOP; \
+             RAISE EXCEPTION 'COMMIT barrier was not released'; END $$; \
+             CREATE CONSTRAINT TRIGGER deferred_commit_wait \
              AFTER INSERT ON deferred_commit_probe DEFERRABLE INITIALLY DEFERRED \
-             FOR EACH ROW EXECUTE FUNCTION deferred_commit_sleep()",
+             FOR EACH ROW EXECUTE FUNCTION deferred_commit_wait()",
         )
         .await?;
 
     let transaction_database = database.clone();
-    let (callback_finished, callback_finished_rx) = tokio::sync::oneshot::channel();
     let settlement = tokio::spawn(async move {
         transaction_database
             .transaction(async |transaction: &mut AsyncTransaction| {
                 transaction
                     .execute("INSERT INTO deferred_commit_probe VALUES (1)")
                     .await?;
-                let _ = callback_finished.send(());
                 Ok::<(), oliphaunt_wasix::Error>(())
             })
             .await
     });
-    callback_finished_rx
-        .await
-        .expect("transaction callback reaches settlement");
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let commit_started = tokio::time::timeout(Duration::from_secs(5), async {
+        while !database_root.join("pgdata/commit.started").try_exists()? {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        Ok::<(), std::io::Error>(())
+    })
+    .await;
     settlement.abort();
+    // Release PostgreSQL before reporting a failed wait, so the owner cannot strand.
+    std::fs::write(database_root.join("pgdata/commit.release"), b"release")?;
+    commit_started.expect("COMMIT reaches its deferred trigger")?;
     assert!(
         settlement
             .await
@@ -759,5 +859,18 @@ async fn abandoning_an_in_flight_async_commit_retires_the_owner() -> Result<()> 
     );
     database.close().await?;
     assert!(database.is_closed());
+    let reopened = AsyncOliphaunt::builder()
+        .storage(DatabaseStorage::Directory(database_root))
+        .open()
+        .await?;
+    assert_eq!(
+        reopened
+            .query("SELECT count(*)::text AS rows FROM deferred_commit_probe")
+            .await?
+            .get_text(0, "rows")?,
+        Some("1"),
+        "the unobserved COMMIT must succeed before the owner retires"
+    );
+    reopened.close().await?;
     Ok(())
 }

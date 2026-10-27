@@ -1,0 +1,89 @@
+{
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "bugs": {
+    "url": "https://github.com/f0rr0/oliphaunt/issues"
+  },
+  "dist": {
+    "shasum": "9cb6f46cb35004b5234b3da595de5b5c4300d7a0",
+    "tarball": "https://registry.npmjs.org/@oliphaunt/liboliphaunt-darwin-arm64/-/liboliphaunt-darwin-arm64-0.3.2.tgz",
+    "fileCount": 733,
+    "integrity": "sha512-A3o+DhpUkbAyN5a/8jdzLPce6NsK5K63Ty8/GIUAEnMmRFzDl0E2aW/E67uis8sv2oNY+FZS3atIH+hrx2YyoQ==",
+    "signatures": [
+      {
+        "sig": "MEQCIDSmb2GqQovIM8bT7oTH410YA9Pbj132S0+TrhIMITvnAiAGu27RgzyPqY6PICVvi5zD8eG1BnQgTEIlw0HSypC2qg==",
+        "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+      },
+      {
+        "sig": "MEUCIQDJC/qWp6aLtNSFnYaEed5a6U8Hwf7zK6S+/EO4YuWncwIgBhciZI+5XvYKeiqRoFnc/OcyhgJwBc8YmZJjhYNuQRM=",
+        "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+      }
+    ],
+    "attestations": {
+      "url": "https://registry.npmjs.org/-/npm/v1/attestations/@oliphaunt%2fliboliphaunt-darwin-arm64@0.3.2",
+      "provenance": {
+        "predicateType": "https://slsa.dev/provenance/v1"
+      }
+    },
+    "unpackedSize": 32395953
+  },
+  "name": "@oliphaunt/liboliphaunt-darwin-arm64",
+  "type": "module",
+  "_from": "file:/home/runner/work/oliphaunt/oliphaunt/target/release/npm-packages/oliphaunt-liboliphaunt-darwin-arm64/oliphaunt-liboliphaunt-darwin-arm64-0.3.2.tgz",
+  "exports": {
+    "./package.json": "./package.json"
+  },
+  "license": "MIT AND PostgreSQL AND Unicode-3.0",
+  "_npmUser": {
+    "name": "GitHub Actions",
+    "email": "npm-oidc-no-reply@github.com",
+    "trustedPublisher": {
+      "id": "github",
+      "oidcConfigId": "b0df802e-6cd6-482e-ba73-2c28a4c19fe4"
+    }
+  },
+  "homepage": "https://github.com/f0rr0/oliphaunt#readme",
+  "optional": true,
+  "_resolved": "/home/runner/work/oliphaunt/oliphaunt/target/release/npm-packages/oliphaunt-liboliphaunt-darwin-arm64/oliphaunt-liboliphaunt-darwin-arm64-0.3.2.tgz",
+  "oliphaunt": {
+    "target": "macos-arm64",
+    "libraryRelativePath": "lib/liboliphaunt.dylib",
+    "runtimeRelativePath": "runtime"
+  },
+  "_integrity": "sha512-A3o+DhpUkbAyN5a/8jdzLPce6NsK5K63Ty8/GIUAEnMmRFzDl0E2aW/E67uis8sv2oNY+FZS3atIH+hrx2YyoQ==",
+  "repository": {
+    "url": "git+https://github.com/f0rr0/oliphaunt.git",
+    "type": "git",
+    "directory": "src/native/runtime/packages/darwin-arm64"
+  },
+  "_npmVersion": "11.18.0",
+  "description": "macOS arm64 liboliphaunt native library for Oliphaunt.",
+  "directories": {},
+  "maintainers": [
+    {
+      "name": "oliphaunt",
+      "email": "sids.outlook.email@gmail.com"
+    }
+  ],
+  "_nodeVersion": "22.22.3",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "executableFiles": [
+      "./runtime/bin/initdb",
+      "./runtime/bin/pg_ctl",
+      "./runtime/bin/postgres"
+    ]
+  },
+  "_hasShrinkwrap": false,
+  "_npmOperationalInternal": {
+    "tmp": "tmp/liboliphaunt-darwin-arm64_0.3.2_1791359951177_0.8751834618586141",
+    "host": "s3://npm-registry-packages-npm-production"
+  },
+  "_id": "@oliphaunt/liboliphaunt-darwin-arm64@0.3.2",
+  "version": "0.3.2"
+}

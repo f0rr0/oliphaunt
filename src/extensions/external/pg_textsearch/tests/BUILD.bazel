@@ -1,0 +1,87 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//build_defs/extensions:extensions.bzl", "extension_source_headers", "native_extension_modules")
+load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_LINUX_COMPATIBLE")
+load("//build_defs/foundation:bun.bzl", "bun_script_test")
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+
+package(default_visibility = ["//visibility:public"], default_testonly = True)
+
+exports_files(["upgrade/source.toml", "seed.sql", "upgrade.sql", "verify.sql"])
+
+extension_source_headers(
+    name = "old_headers",
+    hdrs = ["@pg_textsearch_upgrade_from//:headers"],
+    include_root = "@pg_textsearch_upgrade_from//:src/constants.h",
+)
+
+# The exact 0.6.1 PGXS object inventory; only its ordinary server module is used.
+native_extension_modules(
+    name = "upgrade_from",
+    srcs = ["@pg_textsearch_upgrade_from//:src/" + unit + ".c" for unit in [
+        "mod", "source", "am/handler", "am/build", "am/build_context", "am/build_parallel", "am/scan", "am/vacuum",
+        "memtable/arena", "memtable/expull", "memtable/memtable", "memtable/posting", "memtable/stringtable", "memtable/scan", "memtable/source",
+        "segment/segment", "segment/dictionary", "segment/scan", "segment/merge", "segment/docmap", "segment/compression",
+        "query/bmw", "query/score", "types/vector", "types/query", "state/state", "state/registry", "state/metapage", "state/limit",
+        "planner/hooks", "planner/cost", "debug/dump",
+    ]],
+    deps = [":old_headers"],
+    copts = ["-DPG_TEXTSEARCH_VERSION=\\\"0.6.1\\\""],
+    linux_only = True,
+)
+
+extension_source_headers(
+    name = "upstream_headers",
+    hdrs = ["@pg_textsearch//:headers", "@pg_textsearch//:src/segment/compression.c"],
+    include_root = "@pg_textsearch//:src/constants.h",
+)
+
+# Match the three standalone C executions required by upstream installcheck.
+# Keep assert() active in optimized CI builds; these tests do not link a backend.
+[
+    cc_binary(
+        name = name,
+        srcs = ["@pg_textsearch//:test/scripts/" + source + ".c"],
+        deps = [":upstream_headers", "//src/native/runtime:postgres_server_headers"] + (select({
+            "//build_defs/native:linux_x86_64_gnu_2_28": ["@pgvector_compiler_rt//:cpu_model"],
+            "//conditions:default": [],
+        }) if source == "compression_test" else []),
+        copts = ["-std=gnu11", "-UNDEBUG"] + options,
+        target_compatible_with = NATIVE_EXTENSION_LINUX_COMPATIBLE,
+    )
+    for name, source, options in [
+        ("segment_io_limits_test", "segment_io_limits_test", []),
+        ("compression_test", "compression_test", []),
+        ("compression_scalar_test", "compression_test", ["-DTP_TEST_NO_AVX2"]),
+    ]
+]
+
+_INPUTS = [
+    "//src/native/runtime:runtime_payload",
+    "//src/native/runtime:tools_payload",
+    "//src/extensions/external/pg_textsearch:native_payload_test_archive",
+    ":upgrade_from_server.so",
+    "@pg_textsearch_upgrade_from//:pg_textsearch.control",
+    "@pg_textsearch//:Makefile",
+    "@postgres//:pg_regress",
+    ":segment_io_limits_test",
+    ":compression_test",
+    ":compression_scalar_test",
+]
+
+bun_script_test(
+    name = "native_upstream_test",
+    entry_point = "native-upstream.test.mts",
+    args = ["$(location %s)" % label for label in _INPUTS],
+    data = _INPUTS + [
+        "@pg_textsearch_upgrade_from//:sql_resources",
+        "@pg_textsearch//:test_inputs",
+        "upgrade/source.toml", "seed.sql", "upgrade.sql", "verify.sql",
+        "//build_defs/native:host-runtime-test-helpers.mts",
+        "//build_defs/extensions:native_carrier_install_helpers.mts",
+        "//:tools/packaging/portable-archive.mts",
+    ],
+    size = "large",
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+source_quality_files()

@@ -812,6 +812,10 @@ fn validate_sealed_runtime_exports(runtime: &WasmLinkMetadataOut) -> Result<()> 
     let policy_path = repo_relative_path("src/wasix/runtime/assets/generated/wasix-dl.exports");
     let policy = fs::read_to_string(&policy_path)
         .with_context(|| format!("read {}", policy_path.display()))?;
+    validate_runtime_exports_from_policy(runtime, &policy)
+}
+
+fn validate_runtime_exports_from_policy(runtime: &WasmLinkMetadataOut, policy: &str) -> Result<()> {
     let mut expected = policy
         .lines()
         .filter(|line| !line.is_empty())
@@ -828,6 +832,642 @@ fn validate_sealed_runtime_exports(runtime: &WasmLinkMetadataOut) -> Result<()> 
         .map(|export| export.name.clone())
         .collect::<BTreeSet<_>>();
     ensure_exact_runtime_export_surface(&actual, &expected)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeclaredRuntimeManifestSpec {
+    runtime: PathBuf,
+    archive: PathBuf,
+    initdb: PathBuf,
+    export_policy: PathBuf,
+    support: Vec<DeclaredRuntimeSupport>,
+    source_fingerprint: String,
+    postgres_version: String,
+    sources: Vec<SourcePin>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeclaredRuntimeSupport {
+    name: String,
+    path: String,
+    source: PathBuf,
+}
+
+fn declared_manifest_args(args: &[String]) -> Result<(PathBuf, PathBuf)> {
+    let mut spec = None;
+    let mut output = None;
+    let mut args = args.iter();
+    while let Some(option) = args.next() {
+        let value = args
+            .next()
+            .ok_or_else(|| anyhow!("{option} requires a path"))?;
+        ensure!(
+            !value.is_empty() && !value.starts_with("--"),
+            "{option} requires a path"
+        );
+        let field = match option.as_str() {
+            "--spec" => &mut spec,
+            "--output" => &mut output,
+            _ => bail!("unknown declared-manifest option {option}"),
+        };
+        ensure!(
+            field.replace(PathBuf::from(value)).is_none(),
+            "duplicate {option}"
+        );
+    }
+    let spec = spec.context("declared-manifest requires --spec")?;
+    let output = output.context("declared-manifest requires --output")?;
+    ensure!(
+        spec != output,
+        "manifest output must differ from specification input"
+    );
+    Ok((spec, output))
+}
+
+fn validate_declared_source_facts(
+    source_fingerprint: &str,
+    postgres_version: &str,
+    sources: &[SourcePin],
+) -> Result<()> {
+    let fingerprint = source_fingerprint.split(':').collect::<Vec<_>>();
+    let is_digest = |value: &str| {
+        value.len() == 64
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    };
+    ensure!(
+        fingerprint.len() == 3 && is_digest(fingerprint[1]) && is_digest(fingerprint[2]),
+        "invalid declared PostgreSQL source fingerprint"
+    );
+    ensure_eq(
+        postgres_version,
+        fingerprint[0],
+        "declared PostgreSQL version",
+    )?;
+    let names = sources
+        .iter()
+        .map(|source| source.name.as_str())
+        .collect::<BTreeSet<_>>();
+    ensure!(
+        names.len() == sources.len(),
+        "duplicate declared source pin"
+    );
+    let postgres = sources
+        .iter()
+        .find(|source| source.name == "postgresql")
+        .context("declared sources require PostgreSQL")?;
+    ensure_eq(
+        &postgres.branch,
+        &format!("v{}", fingerprint[0]),
+        "declared PostgreSQL source branch",
+    )?;
+    ensure_eq(
+        &postgres.commit,
+        fingerprint[1],
+        "declared PostgreSQL source digest",
+    )?;
+    let patches = sources
+        .iter()
+        .find(|source| source.name == "oliphaunt-wasix-stable-patches")
+        .context("declared sources require WASIX patches")?;
+    ensure_eq(
+        &patches.commit,
+        fingerprint[2],
+        "declared PostgreSQL patch digest",
+    )?;
+    ensure_eq(
+        &patches.url,
+        POSTGRES_PATCH_SERIES_PATH,
+        "declared PostgreSQL patch source",
+    )?;
+    Ok(())
+}
+
+fn declared_runtime_manifest(spec: DeclaredRuntimeManifestSpec) -> Result<AssetManifestOut> {
+    validate_declared_source_facts(
+        &spec.source_fingerprint,
+        &spec.postgres_version,
+        &spec.sources,
+    )?;
+
+    let runtime_link = read_wasm_link_metadata(&spec.runtime)?;
+    validate_module_link_metadata(&BuildModuleManifestOut {
+        name: "runtime:oliphaunt".to_owned(),
+        kind: "runtime".to_owned(),
+        path: String::new(),
+        sha256: String::new(),
+        link: runtime_link.clone(),
+    })?;
+    let policy = fs::read_to_string(&spec.export_policy)
+        .with_context(|| format!("read {}", spec.export_policy.display()))?;
+    validate_runtime_exports_from_policy(&runtime_link, &policy)?;
+
+    let support_names = spec
+        .support
+        .iter()
+        .map(|item| item.name.as_str())
+        .collect::<BTreeSet<_>>();
+    ensure!(
+        support_names == BTreeSet::from(["plpgsql", "dict_snowball"])
+            && support_names.len() == spec.support.len(),
+        "declared runtime requires exactly plpgsql and dict_snowball support modules"
+    );
+    let mut runtime_support = Vec::new();
+    for item in &spec.support {
+        ensure_eq(
+            &item.path,
+            &format!("lib/postgresql/{}.so", item.name),
+            "declared runtime support path",
+        )?;
+        let link = read_wasm_link_metadata(&item.source)?;
+        validate_module_link_metadata(&BuildModuleManifestOut {
+            name: format!("runtime-support:{}", item.name),
+            kind: "runtime-support".to_owned(),
+            path: item.path.clone(),
+            sha256: String::new(),
+            link: link.clone(),
+        })?;
+        let digest = sha256_file(&item.source)?;
+        runtime_support.push(BinaryAssetOut {
+            name: item.name.clone(),
+            path: item.path.clone(),
+            sha256: digest.clone(),
+            module_sha256: digest,
+            size: fs::metadata(&item.source)?.len(),
+            link,
+        });
+    }
+    let links = runtime_support
+        .iter()
+        .map(|item| (item.name.clone(), item.link.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let basenames = side_module_basename_index(
+        spec.support
+            .iter()
+            .map(|item| (item.name.as_str(), item.source.as_path())),
+    )?;
+    for item in &runtime_support {
+        let providers = side_module_provider_exports(&item.name, &links, &basenames)?;
+        for import in item
+            .link
+            .imports
+            .iter()
+            .filter(|import| import_should_resolve_from_runtime(import))
+        {
+            ensure!(
+                import_resolves_from_wasm_exports(import, &providers, &item.name)?
+                    || import_resolves_from_wasm_exports(import, &runtime_link.exports, "runtime")?,
+                "declared runtime support {} has unresolved {}.{}",
+                item.name,
+                import.module,
+                import.name
+            );
+        }
+    }
+    let initdb_link = read_wasm_link_metadata(&spec.initdb)?;
+    validate_module_link_metadata(&BuildModuleManifestOut {
+        name: "tool:initdb".to_owned(),
+        kind: "tool".to_owned(),
+        path: String::new(),
+        sha256: String::new(),
+        link: initdb_link.clone(),
+    })?;
+    let initdb_digest = sha256_file(&spec.initdb)?;
+    Ok(AssetManifestOut {
+        format_version: ASSET_MANIFEST_FORMAT_VERSION,
+        source_lane: Some(DEFAULT_SOURCE_LANE.to_owned()),
+        source_fingerprint: Some(spec.source_fingerprint),
+        runtime: RuntimeAssetOut {
+            archive: "oliphaunt.wasix.tar.zst".to_owned(),
+            sha256: sha256_file(&spec.archive)?,
+            module_sha256: sha256_file(&spec.runtime)?,
+            postgres_version: spec.postgres_version,
+            runtime_kind: "wasix-dynamic-main".to_owned(),
+            link: runtime_link,
+        },
+        runtime_support,
+        pg_dump: None,
+        psql: None,
+        initdb: Some(BinaryAssetOut {
+            name: "initdb".to_owned(),
+            path: "bin/initdb.wasix.wasm".to_owned(),
+            sha256: initdb_digest.clone(),
+            module_sha256: initdb_digest,
+            size: fs::metadata(&spec.initdb)?.len(),
+            link: initdb_link,
+        }),
+        extensions: Vec::new(),
+        sources: spec.sources,
+    })
+}
+
+/// Pure I/O assembly of the frozen consumer manifest from explicit native outputs.
+pub(crate) fn generate_declared_wasix_manifest(args: &[String]) -> Result<()> {
+    let (input, output) = declared_manifest_args(args)?;
+    let bytes = fs::read(&input).with_context(|| format!("read {}", input.display()))?;
+    let spec: DeclaredRuntimeManifestSpec =
+        serde_json::from_slice(&bytes).context("parse declared runtime manifest specification")?;
+    ensure!(
+        output != spec.runtime
+            && output != spec.archive
+            && output != spec.initdb
+            && output != spec.export_policy
+            && spec.support.iter().all(|item| item.source != output),
+        "manifest output must differ from all declared inputs"
+    );
+    let manifest = declared_runtime_manifest(spec)?;
+    fs::write(
+        &output,
+        format!("{}\n", serde_json::to_string_pretty(&manifest)?),
+    )
+    .with_context(|| format!("write {}", output.display()))?;
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeclaredToolsManifestSpec {
+    pg_dump: PathBuf,
+    psql: PathBuf,
+    version: String,
+    runtime_version: String,
+    source_fingerprint: String,
+    postgres_version: String,
+    sources: Vec<SourcePin>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeclaredToolsManifest {
+    schema: String,
+    version: String,
+    runtime_version: String,
+    source_fingerprint: String,
+    pg_dump: DeclaredToolIdentity,
+    psql: DeclaredToolIdentity,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct DeclaredToolIdentity {
+    name: String,
+    path: String,
+    sha256: String,
+    size: u64,
+}
+
+fn declared_tool_identity(name: &'static str, module: &Path) -> Result<DeclaredToolIdentity> {
+    let link = read_wasm_link_metadata(module)?;
+    validate_module_link_metadata(&BuildModuleManifestOut {
+        name: format!("tool:{name}"),
+        kind: "tool".to_owned(),
+        path: String::new(),
+        sha256: String::new(),
+        link: link.clone(),
+    })?;
+    ensure!(
+        link.dylink_needed.is_empty() && has_wasm_export(&link, "_start"),
+        "declared {name} must be a standalone WASIX command"
+    );
+    Ok(DeclaredToolIdentity {
+        name: name.to_owned(),
+        path: format!("bin/{name}.wasix.wasm"),
+        sha256: sha256_file(module)?,
+        size: fs::metadata(module)?.len(),
+    })
+}
+
+/// Package identity for the two physical commands, without requiring the core runtime.
+pub(crate) fn generate_declared_tools_manifest(args: &[String]) -> Result<()> {
+    let (input, output) = declared_manifest_args(args)?;
+    let spec: DeclaredToolsManifestSpec = serde_json::from_slice(&fs::read(&input)?)
+        .context("parse declared tools manifest specification")?;
+    ensure!(
+        output != spec.pg_dump && output != spec.psql,
+        "tools manifest output must differ from all declared inputs"
+    );
+    validate_declared_source_facts(
+        &spec.source_fingerprint,
+        &spec.postgres_version,
+        &spec.sources,
+    )?;
+    for version in [&spec.version, &spec.runtime_version] {
+        let parts = version.split('.').collect::<Vec<_>>();
+        ensure!(
+            parts.len() == 3
+                && parts.iter().all(|part| !part.is_empty()
+                    && (part.len() == 1 || !part.starts_with('0'))
+                    && part.bytes().all(|byte| byte.is_ascii_digit())),
+            "declared tools require stable semantic product/runtime versions"
+        );
+    }
+    let manifest = DeclaredToolsManifest {
+        schema: "postgres-tools-wasix-portable-v1".to_owned(),
+        pg_dump: declared_tool_identity("pg_dump", &spec.pg_dump)?,
+        psql: declared_tool_identity("psql", &spec.psql)?,
+        version: spec.version,
+        runtime_version: spec.runtime_version,
+        source_fingerprint: spec.source_fingerprint,
+    };
+    fs::write(
+        &output,
+        format!("{}\n", serde_json::to_string_pretty(&manifest)?),
+    )
+    .with_context(|| format!("write {}", output.display()))?;
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeclaredAotManifestSpec {
+    portable_manifest: PathBuf,
+    toolchain: PathBuf,
+    target_triple: String,
+    profile: DeclaredAotProfile,
+    engine_sources: Option<PathBuf>,
+    artifacts: Vec<DeclaredAotArtifact>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeclaredAotProfile {
+    engine: String,
+    wasmer_version: String,
+    wasmer_wasix_version: String,
+}
+
+fn validate_declared_aot_profile(spec: &DeclaredAotManifestSpec) -> Result<()> {
+    let toolchain: WasixToolchainManifest = toml::from_str(&fs::read_to_string(&spec.toolchain)?)
+        .context("parse declared WASIX toolchain manifest")?;
+    let (engine, wasmer, wasmer_wasix) = if spec.target_triple == "x86_64-pc-windows-msvc" {
+        let source = spec
+            .engine_sources
+            .as_ref()
+            .context("Windows V8 AOT requires declared engine sources")?;
+        let sources: serde_json::Value = serde_json::from_slice(&fs::read(source)?)
+            .context("parse declared V8 engine sources")?;
+        let version = |name: &str| -> Result<String> {
+            let value = sources["crates"][name]["version"]
+                .as_str()
+                .filter(|version| !version.is_empty())
+                .with_context(|| format!("V8 engine source has no {name} version"))?;
+            Ok(value.to_owned())
+        };
+        ("v8", version("wasmer")?, version("wasmer-wasix")?)
+    } else {
+        (
+            "llvm-opta",
+            toolchain.toolchain.wasmer,
+            toolchain.toolchain.wasmer_wasix,
+        )
+    };
+    ensure!(
+        !wasmer.is_empty() && !wasmer_wasix.is_empty(),
+        "declared AOT requires pinned Wasmer versions"
+    );
+    ensure_eq(&spec.profile.engine, engine, "declared AOT engine")?;
+    ensure_eq(
+        &spec.profile.wasmer_version,
+        &wasmer,
+        "declared AOT Wasmer version",
+    )?;
+    ensure_eq(
+        &spec.profile.wasmer_wasix_version,
+        &wasmer_wasix,
+        "declared AOT WASIX version",
+    )?;
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeclaredAotArtifact {
+    name: String,
+    path: String,
+    image: PathBuf,
+    module: PathBuf,
+}
+
+struct DeclaredAotModules {
+    source_lane: Option<String>,
+    source_fingerprint: Option<String>,
+    postgres_version: String,
+    modules: BTreeMap<String, String>,
+    paths: BTreeMap<String, String>,
+}
+
+fn declared_aot_modules(file: &Path) -> Result<DeclaredAotModules> {
+    let bytes = fs::read(file)?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+    if value.get("schema").is_some() {
+        let portable: DeclaredToolsManifest =
+            serde_json::from_slice(&bytes).context("parse declared portable tools manifest")?;
+        ensure!(
+            portable.schema == "postgres-tools-wasix-portable-v1",
+            "declared AOT requires the canonical portable tools manifest"
+        );
+        for version in [&portable.version, &portable.runtime_version] {
+            let parts = version.split('.').collect::<Vec<_>>();
+            ensure!(
+                parts.len() == 3
+                    && parts.iter().all(|part| !part.is_empty()
+                        && (part.len() == 1 || !part.starts_with('0'))
+                        && part.bytes().all(|byte| byte.is_ascii_digit())),
+                "declared tools AOT requires stable product and runtime versions"
+            );
+        }
+        let fingerprint = portable.source_fingerprint;
+        let parts = fingerprint.split(':').collect::<Vec<_>>();
+        ensure!(
+            parts.len() == 3
+                && !parts[0].is_empty()
+                && parts[1..].iter().all(|part| part.len() == 64
+                    && part
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())),
+            "declared tools AOT requires the portable source fingerprint"
+        );
+        let postgres_version = parts[0].to_owned();
+        let mut modules = BTreeMap::new();
+        let mut paths = BTreeMap::new();
+        for (name, identity) in [("pg_dump", portable.pg_dump), ("psql", portable.psql)] {
+            ensure!(
+                identity.name == name
+                    && identity.path == format!("bin/{name}.wasix.wasm")
+                    && identity.size > 0
+                    && identity.sha256.len() == 64
+                    && identity
+                        .sha256
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
+                "declared tools AOT requires canonical physical command identities"
+            );
+            let key = format!("tool:{name}");
+            modules.insert(key.clone(), identity.sha256);
+            paths.insert(key, format!("{name}-llvm-opta.bin.zst"));
+        }
+        return Ok(DeclaredAotModules {
+            source_lane: Some(DEFAULT_SOURCE_LANE.to_owned()),
+            source_fingerprint: Some(fingerprint),
+            postgres_version,
+            modules,
+            paths,
+        });
+    }
+    let portable: AssetManifestOut =
+        serde_json::from_slice(&bytes).context("parse declared portable runtime manifest")?;
+    ensure!(
+        portable.format_version == ASSET_MANIFEST_FORMAT_VERSION
+            && portable.runtime.runtime_kind == "wasix-dynamic-main"
+            && portable.extensions.is_empty()
+            && portable.pg_dump.is_none()
+            && portable.psql.is_none(),
+        "declared AOT requires the portable core runtime manifest"
+    );
+    ensure!(
+        portable.source_lane.as_deref() == Some(DEFAULT_SOURCE_LANE)
+            && portable
+                .source_fingerprint
+                .as_ref()
+                .is_some_and(|value| !value.is_empty()),
+        "declared AOT requires the portable source lane and fingerprint"
+    );
+    let mut modules = BTreeMap::from([(
+        "runtime:oliphaunt".to_owned(),
+        portable.runtime.module_sha256.clone(),
+    )]);
+    let initdb = portable
+        .initdb
+        .as_ref()
+        .context("portable manifest has no initdb")?;
+    modules.insert("tool:initdb".to_owned(), initdb.module_sha256.clone());
+    for support in &portable.runtime_support {
+        ensure!(
+            modules
+                .insert(
+                    format!("runtime-support:{}", support.name),
+                    support.module_sha256.clone()
+                )
+                .is_none(),
+            "duplicate portable runtime support module"
+        );
+    }
+    let paths = BTreeMap::from(
+        [
+            ("runtime:oliphaunt", "oliphaunt-llvm-opta.bin.zst"),
+            ("tool:initdb", "initdb-llvm-opta.bin.zst"),
+            ("runtime-support:plpgsql", "plpgsql-llvm-opta.bin.zst"),
+            (
+                "runtime-support:dict_snowball",
+                "dict_snowball-llvm-opta.bin.zst",
+            ),
+        ]
+        .map(|(name, path)| (name.to_owned(), path.to_owned())),
+    );
+    ensure!(
+        modules.keys().collect::<BTreeSet<_>>() == paths.keys().collect::<BTreeSet<_>>(),
+        "portable manifest must contain exactly the four runtime AOT modules"
+    );
+    Ok(DeclaredAotModules {
+        source_lane: portable.source_lane,
+        source_fingerprint: portable.source_fingerprint,
+        postgres_version: portable.runtime.postgres_version,
+        modules,
+        paths,
+    })
+}
+
+fn declared_aot_manifest(spec: DeclaredAotManifestSpec) -> Result<AotManifest> {
+    // Admission of the exact target is owned by the canonical Bazel target
+    // projection. This I/O boundary still rejects empty or path-like triples.
+    ensure!(
+        spec.target_triple.split('-').count() >= 3
+            && spec.target_triple.split('-').all(|part| !part.is_empty())
+            && spec
+                .target_triple
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')),
+        "invalid declared AOT target triple"
+    );
+    let portable = declared_aot_modules(&spec.portable_manifest)?;
+    validate_declared_aot_profile(&spec)?;
+    let mut seen = BTreeSet::new();
+    let mut artifacts = Vec::new();
+    for item in &spec.artifacts {
+        let expected_path = portable
+            .paths
+            .get(item.name.as_str())
+            .context("unknown declared AOT module")?;
+        ensure!(
+            seen.insert(item.name.as_str()),
+            "duplicate declared AOT module"
+        );
+        ensure_eq(&item.path, expected_path, "declared AOT artifact path")?;
+        let module_sha256 = sha256_file(&item.module)?;
+        ensure_eq(
+            &module_sha256,
+            &portable.modules[&item.name],
+            "declared AOT portable module digest",
+        )?;
+        let raw = decode_zstd_file(&item.image)?;
+        ensure!(!raw.is_empty(), "declared AOT image is empty");
+        artifacts.push(AotManifestArtifact {
+            name: item.name.clone(),
+            path: item.path.clone(),
+            sha256: sha256_file(&item.image)?,
+            raw_sha256: sha256_bytes(&raw),
+            raw_size: raw.len() as u64,
+            module_sha256,
+            compressed: true,
+        });
+    }
+    ensure!(
+        seen == portable
+            .paths
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        "declared AOT requires every portable image"
+    );
+    artifacts.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(AotManifest {
+        format_version: AOT_MANIFEST_FORMAT_VERSION,
+        source_lane: portable.source_lane,
+        source_fingerprint: portable.source_fingerprint,
+        postgres_version: Some(portable.postgres_version),
+        target_triple: spec.target_triple,
+        engine: spec.profile.engine,
+        wasmer_version: spec.profile.wasmer_version,
+        wasmer_wasix_version: spec.profile.wasmer_wasix_version,
+        artifacts,
+    })
+}
+
+/// Describe physical native serializer outputs without discovering a checkout.
+pub(crate) fn generate_declared_aot_manifest(args: &[String]) -> Result<()> {
+    let (input, output) = declared_manifest_args(args)?;
+    let spec: DeclaredAotManifestSpec = serde_json::from_slice(&fs::read(&input)?)
+        .context("parse declared AOT manifest specification")?;
+    ensure!(
+        output != spec.portable_manifest
+            && output != spec.toolchain
+            && spec.engine_sources.as_ref() != Some(&output)
+            && spec
+                .artifacts
+                .iter()
+                .all(|item| output != item.image && output != item.module),
+        "AOT manifest output must differ from all declared inputs"
+    );
+    let manifest = declared_aot_manifest(spec)?;
+    fs::write(
+        &output,
+        format!("{}\n", serde_json::to_string_pretty(&manifest)?),
+    )
+    .with_context(|| format!("write {}", output.display()))?;
+    Ok(())
 }
 
 fn ensure_exact_runtime_export_surface(
@@ -1115,6 +1755,10 @@ fn wasix_export_list_from_modules(modules: &[BuildModuleManifestOut]) -> Result<
         .iter()
         .filter(|module| matches!(module.kind.as_str(), "runtime-support" | "extension"))
         .collect::<Vec<_>>();
+    wasix_export_list_from_side_modules(&side_modules)
+}
+
+fn wasix_export_list_from_side_modules(side_modules: &[&BuildModuleManifestOut]) -> Result<String> {
     let side_module_links = side_modules
         .iter()
         .map(|module| (module.name.clone(), module.link.clone()))
@@ -1148,6 +1792,349 @@ fn wasix_export_list_from_modules(modules: &[BuildModuleManifestOut]) -> Result<
     }
 
     Ok(required_exports.into_iter().collect::<Vec<_>>().join("\n") + "\n")
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct DeclaredExportPolicyArgs {
+    modules: Vec<(String, PathBuf)>,
+    output: PathBuf,
+    response: PathBuf,
+}
+
+fn declared_export_policy_args(args: &[String]) -> Result<DeclaredExportPolicyArgs> {
+    let mut modules = BTreeMap::new();
+    let mut output = None;
+    let mut response = None;
+    let mut args = args.iter();
+    while let Some(option) = args.next() {
+        let value = args
+            .next()
+            .ok_or_else(|| anyhow!("{option} requires a value"))?;
+        ensure!(
+            !value.is_empty() && !value.starts_with("--"),
+            "{option} requires a value"
+        );
+        match option.as_str() {
+            "--module" => {
+                let (name, path) = value
+                    .split_once('=')
+                    .ok_or_else(|| anyhow!("--module requires name=path"))?;
+                ensure!(
+                    !name.is_empty() && !path.is_empty(),
+                    "--module requires name=path"
+                );
+                ensure!(
+                    modules
+                        .insert(name.to_owned(), PathBuf::from(path))
+                        .is_none(),
+                    "duplicate module {name}"
+                );
+            }
+            "--output" => {
+                ensure!(
+                    output.replace(PathBuf::from(value)).is_none(),
+                    "duplicate --output"
+                );
+            }
+            "--response" => {
+                ensure!(
+                    response.replace(PathBuf::from(value)).is_none(),
+                    "duplicate --response"
+                );
+            }
+            _ => bail!("unknown export-policy option {option}"),
+        }
+    }
+    let output = output.ok_or_else(|| anyhow!("export-policy requires --output"))?;
+    let response = response.ok_or_else(|| anyhow!("export-policy requires --response"))?;
+    ensure!(
+        output != response,
+        "policy and response outputs must differ"
+    );
+    ensure!(
+        modules
+            .values()
+            .all(|path| path != &output && path != &response),
+        "policy outputs must differ from module inputs"
+    );
+    Ok(DeclaredExportPolicyArgs {
+        modules: modules.into_iter().collect(),
+        output,
+        response,
+    })
+}
+
+/// Analyze only explicitly declared modules; this command never discovers or builds assets.
+pub(crate) fn generate_declared_wasix_export_policy(args: &[String]) -> Result<()> {
+    let args = declared_export_policy_args(args)?;
+    let modules = args
+        .modules
+        .iter()
+        .map(|(name, path)| {
+            let module = BuildModuleManifestOut {
+                name: name.clone(),
+                kind: "runtime-support".to_owned(),
+                path: path
+                    .to_str()
+                    .ok_or_else(|| anyhow!("module path must be UTF-8"))?
+                    .to_owned(),
+                sha256: String::new(),
+                link: read_wasm_link_metadata(path)?,
+            };
+            validate_module_link_metadata(&module)?;
+            Ok(module)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let policy = wasix_export_list_from_side_modules(&modules.iter().collect::<Vec<_>>())?;
+    let response = policy
+        .lines()
+        .map(|symbol| {
+            ensure!(
+                symbol
+                    .bytes()
+                    .enumerate()
+                    .all(|(index, byte)| byte.is_ascii_alphabetic()
+                        || byte == b'_'
+                        || (index > 0
+                            && (byte.is_ascii_digit()
+                                || byte == b'.'
+                                || byte == b'$'
+                                || byte == b'@'))),
+                "invalid linker export symbol {symbol:?}"
+            );
+            Ok(format!("--export={symbol}\n"))
+        })
+        .collect::<Result<String>>()?;
+    fs::write(&args.output, policy).with_context(|| format!("write {}", args.output.display()))?;
+    fs::write(&args.response, response)
+        .with_context(|| format!("write {}", args.response.display()))?;
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeclaredExtensionLinkSpec {
+    sql_name: String,
+    runtime: PathBuf,
+    runtime_manifest: PathBuf,
+    modules: Vec<DeclaredExtensionModule>,
+    candidate: Option<DeclaredExtensionRuntimeCandidate>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeclaredExtensionRuntimeCandidate {
+    runtime: PathBuf,
+    runtime_manifest: PathBuf,
+    selected_runtime: PathBuf,
+    selected_runtime_manifest: PathBuf,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeclaredExtensionModule {
+    name: String,
+    path: PathBuf,
+    runtime_path: String,
+}
+
+fn declared_extension_runtime(
+    runtime: &Path,
+    manifest: &Path,
+) -> Result<(AssetManifestOut, WasmLinkMetadataOut)> {
+    let portable: AssetManifestOut = serde_json::from_slice(&fs::read(manifest)?)?;
+    ensure!(
+        portable.format_version == ASSET_MANIFEST_FORMAT_VERSION
+            && portable.runtime.runtime_kind == "wasix-dynamic-main"
+            && portable.source_lane.as_deref() == Some(DEFAULT_SOURCE_LANE),
+        "extension link requires its canonical portable runtime manifest"
+    );
+    portable
+        .source_fingerprint
+        .as_ref()
+        .context("extension core source fingerprint")?;
+    ensure_eq(
+        &sha256_file(runtime)?,
+        &portable.runtime.module_sha256,
+        "extension core module digest",
+    )?;
+    let link = read_wasm_link_metadata(runtime)?;
+    ensure!(
+        serde_json::to_value(&link)? == serde_json::to_value(&portable.runtime.link)?,
+        "extension core link metadata differs from its physical module"
+    );
+    Ok((portable, link))
+}
+
+/// Resolve one declared extension's physical side-module closure against its core.
+pub(crate) fn generate_declared_extension_link(args: &[String]) -> Result<()> {
+    let (input, output) = declared_manifest_args(args)?;
+    let spec: DeclaredExtensionLinkSpec = serde_json::from_slice(&fs::read(&input)?)?;
+    ensure!(
+        !spec.sql_name.is_empty()
+            && spec
+                .sql_name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'),
+        "invalid declared extension SQL name"
+    );
+    ensure!(
+        output != spec.runtime
+            && output != spec.runtime_manifest
+            && spec.modules.iter().all(|module| output != module.path),
+        "extension link output must differ from its declared inputs"
+    );
+    if let Some(candidate) = &spec.candidate {
+        let inputs = [
+            &input,
+            &spec.runtime,
+            &spec.runtime_manifest,
+            &candidate.runtime,
+            &candidate.runtime_manifest,
+        ];
+        let outputs = [
+            &output,
+            &candidate.selected_runtime,
+            &candidate.selected_runtime_manifest,
+        ];
+        ensure!(
+            outputs.iter().copied().collect::<BTreeSet<_>>().len() == outputs.len()
+                && outputs.iter().all(|path| !inputs.contains(path)
+                    && spec.modules.iter().all(|module| *path != &module.path)),
+            "extension runtime selection outputs must differ from each other and all inputs"
+        );
+    }
+    let (portable, runtime_link) =
+        declared_extension_runtime(&spec.runtime, &spec.runtime_manifest)?;
+    let current = spec
+        .candidate
+        .as_ref()
+        .map(|candidate| {
+            declared_extension_runtime(&candidate.runtime, &candidate.runtime_manifest)
+        })
+        .transpose()?;
+    let mut links = BTreeMap::new();
+    let mut runtime_paths = BTreeSet::new();
+    let mut native_modules = Vec::new();
+    for module in &spec.modules {
+        ensure!(
+            module.runtime_path
+                == format!(
+                    "lib/postgresql/{}",
+                    module
+                        .path
+                        .file_name()
+                        .context("extension module filename")?
+                        .to_str()
+                        .context("extension module filename UTF-8")?
+                ),
+            "extension module has a noncanonical runtime destination"
+        );
+        ensure!(
+            runtime_paths.insert(&module.runtime_path),
+            "duplicate extension module destination"
+        );
+        let link = read_wasm_link_metadata(&module.path)?;
+        validate_module_link_metadata(&BuildModuleManifestOut {
+            name: module.name.clone(),
+            kind: "extension".to_owned(),
+            path: module.path.display().to_string(),
+            sha256: String::new(),
+            link: link.clone(),
+        })?;
+        ensure!(
+            links.insert(module.name.clone(), link).is_none(),
+            "duplicate extension module name"
+        );
+        let digest = sha256_file(&module.path)?;
+        native_modules.push(serde_json::json!({"name": module.name, "path": module.runtime_path, "sha256": digest, "moduleSha256": digest, "size": fs::metadata(&module.path)?.len()}));
+    }
+    ensure!(
+        links.contains_key(&spec.sql_name),
+        "extension closure has no primary SQL module"
+    );
+    let basenames = side_module_basename_index(
+        spec.modules
+            .iter()
+            .map(|module| (module.name.as_str(), module.path.as_path())),
+    )?;
+    let mut imports = Vec::new();
+    for module in &spec.modules {
+        let providers = side_module_provider_exports(&module.name, &links, &basenames)?;
+        for import in &links[&module.name].imports {
+            if !import_should_resolve_from_runtime(import)
+                || import_resolves_from_wasm_exports(import, &providers, &module.name)?
+            {
+                continue;
+            }
+            imports.push((module.name.as_str(), import));
+        }
+    }
+    let resolve_imports = |runtime: &WasmLinkMetadataOut| -> Result<_> {
+        let mut required = BTreeSet::new();
+        let mut missing = Vec::new();
+        for (module, import) in &imports {
+            if let Some(name) = resolved_wasm_export_name(import, &runtime.exports, "runtime")? {
+                required.insert(name);
+            } else {
+                missing.push((*module, *import));
+            }
+        }
+        Ok((required, missing))
+    };
+    let (mut required, missing) = resolve_imports(&runtime_link)?;
+    let mut selected = (&portable, &spec.runtime, &spec.runtime_manifest);
+    if let Some((module, import)) = missing.first() {
+        let Some((candidate_portable, candidate_link)) = &current else {
+            bail!(
+                "extension {} has unresolved import {}.{} ({})",
+                module,
+                import.module,
+                import.name,
+                import.kind
+            );
+        };
+        let (candidate_required, candidate_missing) = resolve_imports(candidate_link)?;
+        if let Some((module, import)) = candidate_missing.first() {
+            bail!(
+                "extension {} has unresolved import {}.{} ({})",
+                module,
+                import.module,
+                import.name,
+                import.kind
+            );
+        }
+        required = candidate_required;
+        let candidate = spec
+            .candidate
+            .as_ref()
+            .expect("validated candidate runtime");
+        selected = (
+            candidate_portable,
+            &candidate.runtime,
+            &candidate.runtime_manifest,
+        );
+    }
+    native_modules.sort_by(|left, right| left["name"].as_str().cmp(&right["name"].as_str()));
+    let mut result = serde_json::json!({"schema": "oliphaunt-declared-wasix-extension-link-v1", "sqlName": spec.sql_name,
+        "nativeModules": native_modules, "coreExportsRequired": required, "unresolvedImports": [], "moduleLinkMetadata": links,
+        "sourceFingerprint": selected.0.source_fingerprint.as_ref().context("extension core source fingerprint")?, "postgresVersion": selected.0.runtime.postgres_version});
+    if let Some(candidate) = &spec.candidate {
+        result["runtimeSelection"] = serde_json::json!({
+            "kind": if missing.is_empty() { "completed-publication" } else { "current-source" },
+            "declaredModuleSha256": portable.runtime.module_sha256,
+            "currentModuleSha256": current.as_ref().expect("validated candidate runtime").0.runtime.module_sha256,
+            "selectedModuleSha256": selected.0.runtime.module_sha256,
+            "missingExports": missing.iter().map(|(_, import)| &import.name).collect::<BTreeSet<_>>(),
+        });
+        fs::copy(selected.1, &candidate.selected_runtime)?;
+        fs::copy(selected.2, &candidate.selected_runtime_manifest)?;
+    }
+    fs::write(
+        output,
+        format!("{}\n", serde_json::to_string_pretty(&result)?),
+    )?;
+    Ok(())
 }
 
 pub(crate) fn required_runtime_abi_exports() -> &'static [&'static str] {
@@ -2557,6 +3544,838 @@ fn extension_control_files_for_asset_manifest(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn declared_export_policy_rejects_ambiguous_arguments() {
+        for arguments in [
+            vec!["--output"],
+            vec!["--output", "--response"],
+            vec!["--unknown", "value"],
+            vec!["--module", "missing-separator"],
+            vec!["--module", "=path"],
+            vec!["--module", "name="],
+            vec!["--module", "one=file", "--module", "one=other"],
+            vec!["--output", "one", "--output", "two"],
+            vec!["--output", "same", "--response", "same"],
+            vec![
+                "--module",
+                "one=input",
+                "--output",
+                "input",
+                "--response",
+                "other",
+            ],
+        ] {
+            let arguments = arguments.into_iter().map(str::to_owned).collect::<Vec<_>>();
+            assert!(
+                declared_export_policy_args(&arguments).is_err(),
+                "{arguments:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn declared_export_policy_analyzes_only_explicit_wasm_inputs() {
+        let directory =
+            std::env::temp_dir().join(format!("oliphaunt-export-policy-{}", std::process::id()));
+        fs::create_dir_all(&directory).expect("create isolated fixture directory");
+        let module = directory.join("plugin.so");
+        // Independently encoded valid WASM: a dylink.0 side module imports
+        // env.backend, and reexports that function as plugin.
+        let wasm = b"\0asm\x01\0\0\0\0\x0f\x08dylink.0\x01\x04\0\0\0\0\x01\x04\x01\x60\0\0\x02\x0f\x01\x03env\x07backend\0\0\x07\x0a\x01\x06plugin\0\0";
+        fs::write(&module, wasm).expect("write independent WASM fixture");
+        let output = directory.join("exports");
+        let response = directory.join("exports.rsp");
+        let arguments = vec![
+            "--module".to_owned(),
+            format!("plugin={}", module.display()),
+            "--output".to_owned(),
+            output.to_str().unwrap().to_owned(),
+            "--response".to_owned(),
+            response.to_str().unwrap().to_owned(),
+        ];
+        generate_declared_wasix_export_policy(&arguments).expect("derive compiled import policy");
+        let policy = fs::read_to_string(&output).expect("read export policy");
+        assert!(policy.lines().any(|symbol| symbol == "backend"));
+        assert!(!policy.lines().any(|symbol| symbol == "plugin"));
+        for abi in REQUIRED_RUNTIME_ABI_EXPORTS {
+            assert!(policy.lines().any(|symbol| symbol == *abi));
+        }
+        assert_eq!(
+            fs::read_to_string(&response).unwrap(),
+            policy
+                .lines()
+                .map(|symbol| format!("--export={symbol}\n"))
+                .collect::<String>()
+        );
+        let first = fs::read(&output).unwrap();
+        generate_declared_wasix_export_policy(&arguments).expect("repeat deterministic policy");
+        assert_eq!(fs::read(&output).unwrap(), first);
+        fs::write(&module, b"invalid WASM").expect("replace malformed input");
+        assert!(generate_declared_wasix_export_policy(&arguments).is_err());
+        fs::remove_dir_all(directory).expect("remove fixture directory");
+    }
+
+    #[test]
+    fn declared_extension_link_binds_physical_core_and_side_module() {
+        let directory =
+            std::env::temp_dir().join(format!("oliphaunt-extension-link-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let module = directory.join("plugin.so");
+        fs::write(&module, b"\0asm\x01\0\0\0\0\x0f\x08dylink.0\x01\x04\0\0\0\0\x01\x04\x01\x60\0\0\x02\x0f\x01\x03env\x07backend\0\0\x07\x0a\x01\x06plugin\0\0").unwrap();
+        let runtime = directory.join("postgres.wasm");
+        fs::write(&runtime, b"\0asm\x01\0\0\0\x01\x04\x01\x60\0\0\x03\x02\x01\0\x07\x0b\x01\x07backend\0\0\x0a\x04\x01\x02\0\x0b").unwrap();
+        let manifest = directory.join("manifest.json");
+        let portable = serde_json::json!({"format-version": ASSET_MANIFEST_FORMAT_VERSION, "source-lane": "stable", "source-fingerprint": "18.4:declared-test",
+            "runtime": {"archive": "oliphaunt.wasix.tar.zst", "sha256": "a".repeat(64), "module-sha256": sha256_file(&runtime).unwrap(), "postgres-version": "18.4", "runtime-kind": "wasix-dynamic-main", "link": read_wasm_link_metadata(&runtime).unwrap()}, "runtime-support": [], "extensions": [], "sources": []});
+        fs::write(&manifest, serde_json::to_vec(&portable).unwrap()).unwrap();
+        let spec = directory.join("spec.json");
+        let mut inputs = serde_json::json!({"sql_name": "plugin", "runtime": runtime, "runtime_manifest": manifest, "modules": [{"name": "plugin", "path": module, "runtime_path": "lib/postgresql/plugin.so"}]});
+        fs::write(&spec, serde_json::to_vec(&inputs).unwrap()).unwrap();
+        let output = directory.join("link.json");
+        let args = [
+            "--spec".to_owned(),
+            spec.display().to_string(),
+            "--output".to_owned(),
+            output.display().to_string(),
+        ];
+        generate_declared_extension_link(&args).unwrap();
+        let first = fs::read(&output).unwrap();
+        let result: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        assert!(result.get("runtimeSelection").is_none());
+        assert_eq!(
+            result["coreExportsRequired"],
+            serde_json::json!(["backend"])
+        );
+        assert_eq!(
+            result["nativeModules"][0]["moduleSha256"],
+            sha256_file(&module).unwrap()
+        );
+        generate_declared_extension_link(&args).unwrap();
+        assert_eq!(fs::read(&output).unwrap(), first);
+        inputs["sql_name"] = serde_json::json!("uuid-ossp");
+        inputs["modules"][0]["name"] = serde_json::json!("uuid-ossp");
+        fs::write(&spec, serde_json::to_vec(&inputs).unwrap()).unwrap();
+        generate_declared_extension_link(&args).unwrap();
+        let hyphenated: serde_json::Value =
+            serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
+        assert_eq!(hyphenated["sqlName"], "uuid-ossp");
+        for name in [
+            "",
+            "../plugin",
+            "uuid/ossp",
+            "uuid ossp",
+            "uuid'ossp",
+            "uuid.ossπ",
+        ] {
+            inputs["sql_name"] = serde_json::json!(name);
+            fs::write(&spec, serde_json::to_vec(&inputs).unwrap()).unwrap();
+            assert!(
+                generate_declared_extension_link(&args)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("invalid declared extension SQL name")
+            );
+        }
+        inputs["sql_name"] = serde_json::json!("plugin");
+        inputs["modules"][0]["name"] = serde_json::json!("plugin");
+        inputs["modules"][0]["runtime_path"] = serde_json::json!("../plugin.so");
+        fs::write(&spec, serde_json::to_vec(&inputs).unwrap()).unwrap();
+        assert!(generate_declared_extension_link(&args).is_err());
+        inputs["modules"][0]["runtime_path"] = serde_json::json!("lib/postgresql/plugin.so");
+        fs::write(&spec, serde_json::to_vec(&inputs).unwrap()).unwrap();
+        let original_module = fs::read(&module).unwrap();
+        let mut unresolved_module = original_module.clone();
+        let position = unresolved_module
+            .windows(7)
+            .position(|bytes| bytes == b"backend")
+            .unwrap();
+        unresolved_module[position..position + 7].copy_from_slice(b"missing");
+        fs::write(&module, unresolved_module).unwrap();
+        assert!(
+            generate_declared_extension_link(&args)
+                .unwrap_err()
+                .to_string()
+                .contains("unresolved import env.missing")
+        );
+        fs::write(&module, original_module).unwrap();
+        let mut wrong_link = portable.clone();
+        wrong_link["runtime"]["link"]["exports"][0]["name"] = serde_json::json!("invented");
+        fs::write(&manifest, serde_json::to_vec(&wrong_link).unwrap()).unwrap();
+        assert!(generate_declared_extension_link(&args).is_err());
+        fs::write(&manifest, serde_json::to_vec(&portable).unwrap()).unwrap();
+        fs::write(&runtime, b"invalid core bytes").unwrap();
+        assert!(generate_declared_extension_link(&args).is_err());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn declared_extension_link_prefers_published_and_selects_current_only_for_missing_exports() {
+        let directory = std::env::temp_dir().join(format!(
+            "oliphaunt-extension-runtime-selection-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let module = directory.join("plugin.so");
+        // The same function is imported directly and through GOT.func, matching
+        // callbacks taken by real side modules. Missing names must be unique.
+        fs::write(&module, b"\0asm\x01\0\0\0\0\x0f\x08dylink.0\x01\x04\0\0\0\0\x01\x04\x01\x60\0\0\x02\x23\x02\x03env\x07backend\0\0\x08GOT.func\x07backend\x03\x7f\x01\x07\x0a\x01\x06plugin\0\0").unwrap();
+        let core = b"\0asm\x01\0\0\0\x01\x04\x01\x60\0\0\x03\x02\x01\0\x07\x0b\x01\x07backend\0\0\x0a\x04\x01\x02\0\x0b";
+        let declared = directory.join("declared.wasm");
+        let declared_manifest = directory.join("declared.json");
+        let current = directory.join("current.wasm");
+        let current_manifest = directory.join("current.json");
+        fs::write(&declared, core).unwrap();
+        let mut current_bytes = core.to_vec();
+        current_bytes.extend_from_slice(b"\0\x08\x07current");
+        fs::write(&current, &current_bytes).unwrap();
+        let write_manifest = |runtime: &Path, manifest: &Path, fingerprint: &str| {
+            let value = serde_json::json!({"format-version": ASSET_MANIFEST_FORMAT_VERSION, "source-lane": "stable", "source-fingerprint": fingerprint,
+                "runtime": {"archive": "oliphaunt.wasix.tar.zst", "sha256": "a".repeat(64), "module-sha256": sha256_file(runtime).unwrap(), "postgres-version": fingerprint, "runtime-kind": "wasix-dynamic-main", "link": read_wasm_link_metadata(runtime).unwrap()}, "runtime-support": [], "extensions": [], "sources": []});
+            fs::write(manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+        };
+        write_manifest(&declared, &declared_manifest, "18.4:declared");
+        write_manifest(&current, &current_manifest, "18.5:current");
+        let selected = directory.join("selected.wasm");
+        let selected_manifest = directory.join("selected.json");
+        let spec = directory.join("spec.json");
+        let output = directory.join("link.json");
+        let mut inputs = serde_json::json!({"sql_name": "plugin", "runtime": declared, "runtime_manifest": declared_manifest,
+            "modules": [{"name": "plugin", "path": module, "runtime_path": "lib/postgresql/plugin.so"}],
+            "candidate": {"runtime": current, "runtime_manifest": current_manifest, "selected_runtime": selected, "selected_runtime_manifest": selected_manifest}});
+        let args = [
+            "--spec".to_owned(),
+            spec.display().to_string(),
+            "--output".to_owned(),
+            output.display().to_string(),
+        ];
+        let run = |inputs: &serde_json::Value| {
+            fs::write(&spec, serde_json::to_vec(inputs).unwrap()).unwrap();
+            generate_declared_extension_link(&args)
+        };
+        let result = || -> serde_json::Value {
+            serde_json::from_slice(&fs::read(&output).unwrap()).unwrap()
+        };
+        run(&inputs).unwrap();
+        let published = result();
+        assert_eq!(
+            published["runtimeSelection"],
+            serde_json::json!({
+                "kind": "completed-publication", "declaredModuleSha256": sha256_file(&declared).unwrap(),
+                "currentModuleSha256": sha256_file(&current).unwrap(), "selectedModuleSha256": sha256_file(&declared).unwrap(), "missingExports": []
+            })
+        );
+        assert_ne!(
+            sha256_file(&declared).unwrap(),
+            sha256_file(&current).unwrap()
+        );
+        assert_eq!(published["sourceFingerprint"], "18.4:declared");
+        assert_eq!(published["postgresVersion"], "18.4:declared");
+        assert_eq!(fs::read(&selected).unwrap(), fs::read(&declared).unwrap());
+        assert_eq!(
+            fs::read(&selected_manifest).unwrap(),
+            fs::read(&declared_manifest).unwrap()
+        );
+
+        // Even an unused candidate must authenticate its physical bytes/link.
+        for (runtime, manifest) in [
+            (&declared, &declared_manifest),
+            (&current, &current_manifest),
+        ] {
+            let original = fs::read(manifest).unwrap();
+            let mut value: serde_json::Value = serde_json::from_slice(&original).unwrap();
+            for field in ["module-sha256", "link"] {
+                value["runtime"][field] = if field == "module-sha256" {
+                    serde_json::json!("0".repeat(64))
+                } else {
+                    serde_json::json!({})
+                };
+                fs::write(manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+                assert!(run(&inputs).is_err());
+                value = serde_json::from_slice(&original).unwrap();
+            }
+            fs::write(manifest, &original).unwrap();
+            let bytes = fs::read(runtime).unwrap();
+            fs::write(runtime, b"invalid core bytes").unwrap();
+            assert!(run(&inputs).is_err());
+            fs::write(runtime, bytes).unwrap();
+        }
+
+        let mut missing_core = core.to_vec();
+        let position = missing_core
+            .windows(7)
+            .position(|bytes| bytes == b"backend")
+            .unwrap();
+        missing_core[position..position + 7].copy_from_slice(b"legacy_");
+        fs::write(&declared, &missing_core).unwrap();
+        write_manifest(&declared, &declared_manifest, "18.4:declared");
+        run(&inputs).unwrap();
+        let needed = result();
+        assert_eq!(
+            needed["runtimeSelection"],
+            serde_json::json!({
+                "kind": "current-source", "declaredModuleSha256": sha256_file(&declared).unwrap(),
+                "currentModuleSha256": sha256_file(&current).unwrap(), "selectedModuleSha256": sha256_file(&current).unwrap(), "missingExports": ["backend"]
+            })
+        );
+        assert_eq!(
+            needed["coreExportsRequired"],
+            serde_json::json!(["backend"])
+        );
+        assert_eq!(needed["sourceFingerprint"], "18.5:current");
+        assert_eq!(needed["postgresVersion"], "18.5:current");
+        assert_eq!(fs::read(&selected).unwrap(), current_bytes);
+        assert_eq!(
+            fs::read(&selected_manifest).unwrap(),
+            fs::read(&current_manifest).unwrap()
+        );
+        // A candidate must also retain imports that the declared core supplied.
+        let original_module = fs::read(&module).unwrap();
+        fs::write(&module, b"\0asm\x01\0\0\0\0\x0f\x08dylink.0\x01\x04\0\0\0\0\x01\x04\x01\x60\0\0\x02\x31\x03\x03env\x07backend\0\0\x08GOT.func\x07backend\x03\x7f\x01\x03env\x07legacy_\0\0\x07\x0a\x01\x06plugin\0\0").unwrap();
+        assert!(
+            run(&inputs)
+                .unwrap_err()
+                .to_string()
+                .contains("unresolved import env.legacy_")
+        );
+        fs::write(&module, original_module).unwrap();
+        let mut strict = inputs.clone();
+        strict.as_object_mut().unwrap().remove("candidate");
+        // Link metadata orders GOT.func before env, so this is the first
+        // unresolved import even though both reference the same symbol.
+        assert!(
+            run(&strict)
+                .unwrap_err()
+                .to_string()
+                .contains("unresolved import GOT.func.backend (global)")
+        );
+
+        fs::write(&current, &missing_core).unwrap();
+        write_manifest(&current, &current_manifest, "18.5:current");
+        assert!(
+            run(&inputs)
+                .unwrap_err()
+                .to_string()
+                .contains("unresolved import GOT.func.backend (global)")
+        );
+
+        let wrong_kind =
+            b"\0asm\x01\0\0\0\x06\x06\x01\x7f\0\x41\0\x0b\x07\x0b\x01\x07backend\x03\0";
+        fs::write(&current, wrong_kind).unwrap();
+        write_manifest(&current, &current_manifest, "18.5:current");
+        assert!(
+            run(&inputs)
+                .unwrap_err()
+                .to_string()
+                .contains("expected func")
+        );
+        fs::write(&current, core).unwrap();
+        write_manifest(&current, &current_manifest, "18.5:current");
+        fs::write(&declared, wrong_kind).unwrap();
+        write_manifest(&declared, &declared_manifest, "18.4:declared");
+        assert!(
+            run(&inputs)
+                .unwrap_err()
+                .to_string()
+                .contains("expected func")
+        );
+
+        fs::write(&declared, core).unwrap();
+        write_manifest(&declared, &declared_manifest, "18.4:declared");
+        for collision in [
+            &spec,
+            &declared,
+            &declared_manifest,
+            &current,
+            &current_manifest,
+            &module,
+            &output,
+            &selected_manifest,
+        ] {
+            inputs["candidate"]["selected_runtime"] = serde_json::json!(collision);
+            assert!(run(&inputs).is_err(), "{}", collision.display());
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn declared_manifest_rejects_ambiguous_arguments() {
+        for arguments in [
+            vec![],
+            vec!["--spec"],
+            vec!["--spec", "--output"],
+            vec!["--spec", "file", "--output", "file"],
+            vec!["--unknown", "file"],
+            vec!["--spec", "one", "--spec", "two"],
+            vec!["--spec", "file", "--output", "one", "--output", "two"],
+        ] {
+            assert!(
+                declared_manifest_args(
+                    &arguments.into_iter().map(str::to_owned).collect::<Vec<_>>()
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn declared_manifest_uses_physical_modules_and_rejects_stale_facts() {
+        fn uleb(mut value: usize, bytes: &mut Vec<u8>) {
+            loop {
+                let byte = (value & 0x7f) as u8;
+                value >>= 7;
+                bytes.push(byte | if value == 0 { 0 } else { 0x80 });
+                if value == 0 {
+                    return;
+                }
+            }
+        }
+        fn main_wasm(exports: &[String]) -> Vec<u8> {
+            // Independent encoder: one () -> () function with explicit aliases.
+            let mut wasm = b"\0asm\x01\0\0\0\x01\x04\x01\x60\0\0\x03\x02\x01\0".to_vec();
+            let mut section = Vec::new();
+            uleb(exports.len(), &mut section);
+            for name in exports {
+                uleb(name.len(), &mut section);
+                section.extend(name.bytes());
+                section.extend([0, 0]);
+            }
+            wasm.push(7);
+            uleb(section.len(), &mut wasm);
+            wasm.extend(section);
+            wasm.extend([10, 4, 1, 2, 0, 11]);
+            wasm
+        }
+        let root = std::env::temp_dir().join(format!(
+            "oliphaunt-declared-manifest-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let runtime = root.join("postgres.wasm");
+        let initdb = root.join("initdb.wasm");
+        let archive = root.join("runtime.tar.zst");
+        let policy = root.join("exports");
+        let exports = REQUIRED_RUNTIME_ABI_EXPORTS
+            .iter()
+            .chain(WASIX_LINKER_RUNTIME_EXPORTS)
+            .map(|name| (*name).to_owned())
+            .chain(std::iter::once("backend".to_owned()))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        fs::write(&runtime, main_wasm(&exports)).unwrap();
+        fs::write(&initdb, main_wasm(&["_start".to_owned()])).unwrap();
+        fs::write(&archive, b"physical archive bytes").unwrap();
+        fs::write(
+            &policy,
+            REQUIRED_RUNTIME_ABI_EXPORTS
+                .iter()
+                .map(|name| format!("{name}\n"))
+                .chain(std::iter::once("backend\n".to_owned()))
+                .collect::<String>(),
+        )
+        .unwrap();
+        let side = b"\0asm\x01\0\0\0\0\x0f\x08dylink.0\x01\x04\0\0\0\0\x01\x04\x01\x60\0\0\x02\x0f\x01\x03env\x07backend\0\0\x07\x0a\x01\x06plugin\0\0";
+        let support = ["plpgsql", "dict_snowball"].map(|name| {
+            let source = root.join(format!("{name}.so"));
+            fs::write(&source, side).unwrap();
+            serde_json::json!({"name": name, "path": format!("lib/postgresql/{name}.so"), "source": source})
+        });
+        let source_hash = "a".repeat(64);
+        let patch_hash = "b".repeat(64);
+        let spec = serde_json::json!({
+            "runtime": runtime, "initdb": initdb, "archive": archive, "export_policy": policy, "support": support,
+            "source_fingerprint": format!("42.8:{source_hash}:{patch_hash}"), "postgres_version": "42.8",
+            "sources": [
+                {"name": "postgresql", "url": "https://source.test/pg.tar.bz2", "branch": "v42.8", "commit": source_hash},
+                {"name": "oliphaunt-wasix-stable-patches", "url": POSTGRES_PATCH_SERIES_PATH, "branch": "series", "commit": patch_hash},
+            ],
+        });
+        let input = root.join("spec.json");
+        let output = root.join("manifest.json");
+        let args = [
+            "--spec".to_owned(),
+            input.to_str().unwrap().to_owned(),
+            "--output".to_owned(),
+            output.to_str().unwrap().to_owned(),
+        ];
+        fs::write(&input, serde_json::to_vec(&spec).unwrap()).unwrap();
+        generate_declared_wasix_manifest(&args).unwrap();
+        let bytes = fs::read(&output).unwrap();
+        let manifest: AssetManifestOut = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            manifest.runtime.module_sha256,
+            sha256_file(&runtime).unwrap()
+        );
+        assert_eq!(manifest.runtime.sha256, sha256_file(&archive).unwrap());
+        assert_eq!(manifest.runtime.postgres_version, "42.8");
+        assert_eq!(manifest.runtime_support.len(), 2);
+        assert_eq!(
+            manifest.initdb.unwrap().module_sha256,
+            sha256_file(&initdb).unwrap()
+        );
+        generate_declared_wasix_manifest(&args).unwrap();
+        assert_eq!(bytes, fs::read(&output).unwrap());
+        for mutate in [
+            "unknown",
+            "source-digest",
+            "version",
+            "version-label",
+            "support-path",
+            "missing-support",
+            "missing-input",
+        ] {
+            let mut invalid = spec.clone();
+            match mutate {
+                "unknown" => invalid["undeclared"] = serde_json::json!(true),
+                "source-digest" => {
+                    invalid["sources"][0]["commit"] = serde_json::json!("c".repeat(64))
+                }
+                "version" => invalid["postgres_version"] = serde_json::json!("42.9"),
+                "version-label" => {
+                    invalid["postgres_version"] = serde_json::json!("42.8-wasix-oliphaunt")
+                }
+                "support-path" => invalid["support"][0]["path"] = serde_json::json!("../outside"),
+                "missing-support" => invalid["support"]
+                    .as_array_mut()
+                    .unwrap()
+                    .pop()
+                    .map(|_| ())
+                    .unwrap(),
+                "missing-input" => invalid["initdb"] = serde_json::json!(root.join("missing.wasm")),
+                _ => unreachable!(),
+            }
+            fs::write(&input, serde_json::to_vec(&invalid).unwrap()).unwrap();
+            assert!(generate_declared_wasix_manifest(&args).is_err(), "{mutate}");
+        }
+        fs::write(&input, serde_json::to_vec(&spec).unwrap()).unwrap();
+        fs::write(&runtime, main_wasm(&["_start".to_owned()])).unwrap();
+        assert!(generate_declared_wasix_manifest(&args).is_err());
+        fs::write(&runtime, b"invalid WASM").unwrap();
+        assert!(generate_declared_wasix_manifest(&args).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn declared_tools_manifest_checks_physical_commands_and_independent_versions() {
+        let root =
+            std::env::temp_dir().join(format!("oliphaunt-declared-tools-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let pg_dump = root.join("pg_dump.wasm");
+        let psql = root.join("psql.wasm");
+        // Independent WASM fixture: one empty function exported as _start.
+        let command = b"\0asm\x01\0\0\0\x01\x04\x01\x60\0\0\x03\x02\x01\0\x07\x0a\x01\x06_start\0\0\x0a\x04\x01\x02\0\x0b";
+        fs::write(&pg_dump, command).unwrap();
+        fs::write(&psql, command).unwrap();
+        let source_hash = "a".repeat(64);
+        let patch_hash = "b".repeat(64);
+        let spec = serde_json::json!({
+            "pg_dump": pg_dump, "psql": psql, "version": "2.3.4", "runtime_version": "7.8.9",
+            "source_fingerprint": format!("42.8:{source_hash}:{patch_hash}"), "postgres_version": "42.8",
+            "sources": [
+                {"name": "postgresql", "url": "https://source.test/pg.tar.bz2", "branch": "v42.8", "commit": source_hash},
+                {"name": "oliphaunt-wasix-stable-patches", "url": POSTGRES_PATCH_SERIES_PATH, "branch": "series", "commit": patch_hash},
+            ],
+        });
+        let input = root.join("spec.json");
+        let output = root.join("manifest.json");
+        let args = [
+            "--spec".to_owned(),
+            input.to_str().unwrap().to_owned(),
+            "--output".to_owned(),
+            output.to_str().unwrap().to_owned(),
+        ];
+        fs::write(&input, serde_json::to_vec(&spec).unwrap()).unwrap();
+        generate_declared_tools_manifest(&args).unwrap();
+        let bytes = fs::read(&output).unwrap();
+        let manifest: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(manifest["schema"], "postgres-tools-wasix-portable-v1");
+        assert_eq!(manifest["version"], "2.3.4");
+        assert_eq!(manifest["runtimeVersion"], "7.8.9");
+        assert_eq!(manifest["pgDump"]["path"], "bin/pg_dump.wasix.wasm");
+        assert_eq!(manifest["psql"]["size"], command.len());
+        assert_eq!(
+            manifest["pgDump"]["sha256"],
+            format!("{:x}", Sha256::digest(command))
+        );
+        generate_declared_tools_manifest(&args).unwrap();
+        assert_eq!(bytes, fs::read(&output).unwrap());
+        for mutate in [
+            "unknown",
+            "version",
+            "runtime-version",
+            "source-digest",
+            "missing-input",
+        ] {
+            let mut invalid = spec.clone();
+            match mutate {
+                "unknown" => invalid["undeclared"] = serde_json::json!(true),
+                "version" => invalid["version"] = serde_json::json!("2.3"),
+                "runtime-version" => invalid["runtime_version"] = serde_json::json!("07.8.9"),
+                "source-digest" => {
+                    invalid["sources"][0]["commit"] = serde_json::json!("c".repeat(64))
+                }
+                "missing-input" => invalid["psql"] = serde_json::json!(root.join("missing.wasm")),
+                _ => unreachable!(),
+            }
+            fs::write(&input, serde_json::to_vec(&invalid).unwrap()).unwrap();
+            assert!(generate_declared_tools_manifest(&args).is_err(), "{mutate}");
+        }
+        fs::write(&input, serde_json::to_vec(&spec).unwrap()).unwrap();
+        let mut no_start = command.to_vec();
+        let position = no_start
+            .windows(6)
+            .position(|name| name == b"_start")
+            .unwrap();
+        no_start[position..position + 6].copy_from_slice(b"other!");
+        fs::write(&psql, no_start).unwrap();
+        assert!(generate_declared_tools_manifest(&args).is_err());
+        fs::write(&psql, b"invalid WASM").unwrap();
+        assert!(generate_declared_tools_manifest(&args).is_err());
+        fs::write(&psql, command).unwrap();
+        let mut collision = args.clone();
+        collision[3] = psql.to_str().unwrap().to_owned();
+        assert!(generate_declared_tools_manifest(&collision).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn declared_tools_aot_uses_only_its_two_commands_and_rejects_cross_family_inputs() {
+        let root = std::env::temp_dir().join(format!(
+            "oliphaunt-declared-tools-aot-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let portable_path = root.join("tools.json");
+        let toolchain = root.join("toolchain.toml");
+        fs::write(
+            &toolchain,
+            "[toolchain]\nwasmer = '9.8.7'\nwasmer-wasix = '0.987.0'\n",
+        )
+        .unwrap();
+        let mut artifacts = Vec::new();
+        let mut identities = serde_json::Map::new();
+        for (key, name) in [("pgDump", "pg_dump"), ("psql", "psql")] {
+            let module = root.join(format!("{name}.wasm"));
+            let image = root.join(format!("{name}.bin.zst"));
+            fs::write(&module, format!("portable command {name}")).unwrap();
+            fs::write(
+                &image,
+                zstd::stream::encode_all(format!("AOT command {name}").as_bytes(), 19).unwrap(),
+            )
+            .unwrap();
+            identities.insert(key.to_owned(), serde_json::json!({"name": name, "path": format!("bin/{name}.wasix.wasm"), "sha256": sha256_file(&module).unwrap(), "size": fs::metadata(&module).unwrap().len()}));
+            artifacts.push(serde_json::json!({"name": format!("tool:{name}"), "path": format!("{name}-llvm-opta.bin.zst"), "image": image, "module": module}));
+        }
+        let mut portable = serde_json::json!({"schema": "postgres-tools-wasix-portable-v1", "version": "0.2.4", "runtimeVersion": "0.3.2", "sourceFingerprint": format!("18.4:{}:{}", "a".repeat(64), "b".repeat(64))});
+        portable.as_object_mut().unwrap().extend(identities);
+        fs::write(&portable_path, serde_json::to_vec(&portable).unwrap()).unwrap();
+        let spec = serde_json::json!({"portable_manifest": portable_path, "toolchain": toolchain, "target_triple": "aarch64-apple-darwin", "profile": {"engine": "llvm-opta", "wasmer_version": "9.8.7", "wasmer_wasix_version": "0.987.0"}, "artifacts": artifacts});
+        let input = root.join("spec.json");
+        let output = root.join("manifest.json");
+        let args = [
+            "--spec".to_owned(),
+            input.to_str().unwrap().to_owned(),
+            "--output".to_owned(),
+            output.to_str().unwrap().to_owned(),
+        ];
+        fs::write(&input, serde_json::to_vec(&spec).unwrap()).unwrap();
+        generate_declared_aot_manifest(&args).unwrap();
+        let first = fs::read(&output).unwrap();
+        let manifest: AotManifest = serde_json::from_slice(&first).unwrap();
+        assert_eq!(
+            manifest
+                .artifacts
+                .iter()
+                .map(|row| row.name.as_str())
+                .collect::<Vec<_>>(),
+            ["tool:pg_dump", "tool:psql"]
+        );
+        assert_eq!(manifest.postgres_version.as_deref(), Some("18.4"));
+        assert_eq!(manifest.target_triple, "aarch64-apple-darwin");
+        generate_declared_aot_manifest(&args).unwrap();
+        assert_eq!(first, fs::read(&output).unwrap());
+        for case in ["family", "schema", "missing", "module", "duplicate", "path"] {
+            let mut invalid = spec.clone();
+            match case {
+                "family" => {
+                    invalid["artifacts"][0]["name"] = serde_json::json!("runtime:oliphaunt")
+                }
+                "schema" => {
+                    let mut invalid_portable = portable.clone();
+                    invalid_portable["schema"] = serde_json::json!("unknown");
+                    fs::write(
+                        &portable_path,
+                        serde_json::to_vec(&invalid_portable).unwrap(),
+                    )
+                    .unwrap();
+                }
+                "missing" => {
+                    invalid["artifacts"].as_array_mut().unwrap().pop();
+                }
+                "module" => {
+                    invalid["artifacts"][0]["module"] = invalid["artifacts"][1]["module"].clone()
+                }
+                "duplicate" => invalid["artifacts"][0] = invalid["artifacts"][1].clone(),
+                "path" => invalid["artifacts"][0]["path"] = serde_json::json!("../outside"),
+                _ => unreachable!(),
+            }
+            fs::write(&input, serde_json::to_vec(&invalid).unwrap()).unwrap();
+            assert!(generate_declared_aot_manifest(&args).is_err(), "{case}");
+            fs::write(&portable_path, serde_json::to_vec(&portable).unwrap()).unwrap();
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn declared_aot_manifest_records_physical_images_and_rejects_mismatches() {
+        let root =
+            std::env::temp_dir().join(format!("oliphaunt-declared-aot-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let portable_path = root.join("portable.json");
+        let toolchain = root.join("toolchain.toml");
+        let engine_sources = root.join("engine-sources.json");
+        fs::write(
+            &engine_sources,
+            br#"{"crates":{"wasmer":{"version":"8.7.6"},"wasmer-wasix":{"version":"0.876.0"}}}"#,
+        )
+        .unwrap();
+        fs::write(
+            &toolchain,
+            "[toolchain]\nwasmer = '9.8.7'\nwasmer-wasix = '0.987.0'\n",
+        )
+        .unwrap();
+        let names = [
+            ("runtime:oliphaunt", "oliphaunt"),
+            ("tool:initdb", "initdb"),
+            ("runtime-support:plpgsql", "plpgsql"),
+            ("runtime-support:dict_snowball", "dict_snowball"),
+        ];
+        let mut artifacts = Vec::new();
+        let mut digests = BTreeMap::new();
+        for (name, stem) in names {
+            let module = root.join(format!("{stem}.wasm"));
+            let image = root.join(format!("{stem}.bin.zst"));
+            fs::write(&module, format!("physical portable {name}")).unwrap();
+            fs::write(
+                &image,
+                zstd::stream::encode_all(format!("physical AOT {name}").as_bytes(), 19).unwrap(),
+            )
+            .unwrap();
+            digests.insert(stem, sha256_file(&module).unwrap());
+            artifacts.push(serde_json::json!({
+                "name": name, "path": format!("{stem}-llvm-opta.bin.zst"), "image": image, "module": module,
+            }));
+        }
+        let link = serde_json::to_value(WasmLinkMetadataOut::default()).unwrap();
+        let binary = |name: &str| {
+            serde_json::json!({
+                "name": name, "path": format!("lib/postgresql/{name}.so"), "sha256": digests[name],
+                "module-sha256": digests[name], "size": 1, "link": link,
+            })
+        };
+        let portable = serde_json::json!({
+            "format-version": ASSET_MANIFEST_FORMAT_VERSION, "source-lane": DEFAULT_SOURCE_LANE,
+            "source-fingerprint": "physical source identity",
+            "runtime": {"archive": "oliphaunt.wasix.tar.zst", "sha256": "archive digest", "module-sha256": digests["oliphaunt"],
+                "postgres-version": "42.8-wasix-oliphaunt", "runtime-kind": "wasix-dynamic-main", "link": link},
+            "runtime-support": [binary("plpgsql"), binary("dict_snowball")], "initdb": binary("initdb"), "extensions": [], "sources": [],
+        });
+        fs::write(&portable_path, serde_json::to_vec(&portable).unwrap()).unwrap();
+        let spec = serde_json::json!({
+            "portable_manifest": portable_path, "toolchain": toolchain,
+            "engine_sources": engine_sources,
+            "profile": {"engine": "v8", "wasmer_version": "8.7.6", "wasmer_wasix_version": "0.876.0"},
+            "target_triple": "x86_64-pc-windows-msvc", "artifacts": artifacts,
+        });
+        let input = root.join("spec.json");
+        let output = root.join("manifest.json");
+        let args = [
+            "--spec".to_owned(),
+            input.to_str().unwrap().to_owned(),
+            "--output".to_owned(),
+            output.to_str().unwrap().to_owned(),
+        ];
+        fs::write(&input, serde_json::to_vec(&spec).unwrap()).unwrap();
+        generate_declared_aot_manifest(&args).unwrap();
+        let bytes = fs::read(&output).unwrap();
+        let manifest: AotManifest = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(manifest.format_version, AOT_MANIFEST_FORMAT_VERSION);
+        assert_eq!(manifest.target_triple, "x86_64-pc-windows-msvc");
+        assert_eq!(manifest.engine, "v8");
+        assert_eq!(manifest.wasmer_version, "8.7.6");
+        assert_eq!(manifest.wasmer_wasix_version, "0.876.0");
+        assert_eq!(
+            manifest.source_fingerprint.as_deref(),
+            Some("physical source identity")
+        );
+        assert_eq!(
+            manifest.postgres_version.as_deref(),
+            Some("42.8-wasix-oliphaunt")
+        );
+        assert_eq!(manifest.artifacts.len(), 4);
+        for artifact in &manifest.artifacts {
+            let raw = format!("physical AOT {}", artifact.name);
+            assert_eq!(artifact.raw_sha256, sha256_bytes(raw.as_bytes()));
+            assert_eq!(artifact.raw_size, raw.len() as u64);
+            assert!(artifact.compressed);
+        }
+        generate_declared_aot_manifest(&args).unwrap();
+        assert_eq!(bytes, fs::read(&output).unwrap());
+        for case in [
+            "unknown",
+            "target",
+            "module",
+            "path",
+            "missing",
+            "duplicate",
+            "missing-image",
+            "wrong-engine",
+            "wrong-wasmer",
+            "wrong-wasix",
+            "missing-engine-source",
+        ] {
+            let mut invalid = spec.clone();
+            match case {
+                "unknown" => invalid["undeclared"] = serde_json::json!(true),
+                "target" => invalid["target_triple"] = serde_json::json!("../outside"),
+                "module" => {
+                    invalid["artifacts"][0]["module"] = invalid["artifacts"][1]["module"].clone()
+                }
+                "path" => invalid["artifacts"][0]["path"] = serde_json::json!("../outside"),
+                "missing" => {
+                    invalid["artifacts"].as_array_mut().unwrap().pop();
+                }
+                "duplicate" => invalid["artifacts"][0] = invalid["artifacts"][1].clone(),
+                "missing-image" => {
+                    invalid["artifacts"][0]["image"] = serde_json::json!(root.join("missing"))
+                }
+                "wrong-engine" => invalid["profile"]["engine"] = serde_json::json!("llvm-opta"),
+                "wrong-wasmer" => invalid["profile"]["wasmer_version"] = serde_json::json!("9.8.7"),
+                "wrong-wasix" => {
+                    invalid["profile"]["wasmer_wasix_version"] = serde_json::json!("0.987.0")
+                }
+                "missing-engine-source" => invalid["engine_sources"] = serde_json::Value::Null,
+                _ => unreachable!(),
+            }
+            fs::write(&input, serde_json::to_vec(&invalid).unwrap()).unwrap();
+            assert!(generate_declared_aot_manifest(&args).is_err(), "{case}");
+        }
+        fs::write(&input, serde_json::to_vec(&spec).unwrap()).unwrap();
+        let mut invalid = portable.clone();
+        invalid["format-version"] = serde_json::json!(999);
+        fs::write(&portable_path, serde_json::to_vec(&invalid).unwrap()).unwrap();
+        assert!(generate_declared_aot_manifest(&args).is_err());
+        fs::write(&portable_path, serde_json::to_vec(&portable).unwrap()).unwrap();
+        let image = PathBuf::from(spec["artifacts"][0]["image"].as_str().unwrap());
+        fs::write(&image, b"corrupt compressed image").unwrap();
+        assert!(generate_declared_aot_manifest(&args).is_err());
+        fs::write(&image, zstd::stream::encode_all(&b""[..], 19).unwrap()).unwrap();
+        assert!(generate_declared_aot_manifest(&args).is_err());
+        fs::write(&toolchain, "invalid TOML").unwrap();
+        assert!(generate_declared_aot_manifest(&args).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     fn manifest_extension_metadata(
         create_extension: bool,

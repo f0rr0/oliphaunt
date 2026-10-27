@@ -1,0 +1,74 @@
+load("@rules_cc//cc/toolchains:cc_toolchain.bzl", "cc_toolchain")
+load("@oliphaunt//build_defs/android:toolchain.bzl", "android_cc_config")
+load(":ndk.bzl", "NDK")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["source.properties", "ndk.bzl", NDK["prefix"] + "/bin/llvm-nm"])
+
+_PREFIX = NDK["prefix"]
+alias(name = "nm", actual = _PREFIX + "/bin/llvm-nm")
+_TARGETS = {
+    "arm64": ("aarch64-linux-android", "aarch64", "arm64-v8a"),
+    "x86_64": ("x86_64-linux-android", "x86_64", "x86_64"),
+}
+
+filegroup(name = "compiler_binaries", srcs = [_PREFIX + "/bin/clang", _PREFIX + "/bin/clang++", _PREFIX + "/bin/clang-" + NDK["resource"]])
+filegroup(name = "linker_binaries", srcs = [":compiler_binaries", _PREFIX + "/bin/ld.lld", _PREFIX + "/bin/lld"])
+filegroup(name = "ar_files", srcs = [_PREFIX + "/bin/llvm-ar"])
+filegroup(name = "dwp_files", srcs = [_PREFIX + "/bin/llvm-dwp"])
+filegroup(name = "coverage_files", srcs = [_PREFIX + "/bin/llvm-cov", _PREFIX + "/bin/llvm-profdata"])
+filegroup(name = "objcopy_files", srcs = [_PREFIX + "/bin/llvm-objcopy"])
+filegroup(name = "strip_files", srcs = [":objcopy_files", _PREFIX + "/bin/llvm-strip"])
+filegroup(name = "tools", srcs = [":linker_binaries", ":ar_files", ":dwp_files", ":coverage_files", ":strip_files", _PREFIX + "/bin/llvm-nm", _PREFIX + "/bin/llvm-objdump"])
+filegroup(name = "includes", srcs = glob([_PREFIX + "/sysroot/usr/include/**", _PREFIX + "/lib/clang/" + NDK["resource"] + "/include/**"]))
+
+[filegroup(
+    name = "runtime_" + name,
+    srcs = [_PREFIX + "/sysroot/usr/lib/" + triple + "/libc++_static.a", _PREFIX + "/sysroot/usr/lib/" + triple + "/libc++abi.a"],
+) for name, (triple, _, _) in _TARGETS.items()]
+
+[filegroup(
+    name = "libraries_" + name,
+    srcs = glob([
+        _PREFIX + "/sysroot/usr/lib/" + triple + "/*.a",
+        _PREFIX + "/sysroot/usr/lib/" + triple + "/" + str(NDK["api"]) + "/*",
+        _PREFIX + "/lib/clang/" + NDK["resource"] + "/lib/linux/*-" + cpu + "-android.a",
+        _PREFIX + "/lib/clang/" + NDK["resource"] + "/lib/linux/" + cpu + "/*",
+    ]),
+) for name, (triple, cpu, _) in _TARGETS.items()]
+
+[filegroup(name = "compiler_files_" + name, srcs = [":compiler_binaries", ":includes"]) for name in _TARGETS]
+[filegroup(name = "linker_files_" + name, srcs = [":linker_binaries", ":libraries_" + name]) for name in _TARGETS]
+[filegroup(name = "files_" + name, srcs = [":tools", ":includes", ":libraries_" + name]) for name in _TARGETS]
+
+[android_cc_config(
+    name = "config_" + name,
+    prefix = _PREFIX,
+    resource = NDK["resource"],
+    revision = NDK["revision"],
+    api = NDK["api"],
+    page_alignment = NDK["page_alignment"],
+    triple = triple,
+    cpu = cpu,
+) for name, (triple, _, cpu) in _TARGETS.items()]
+
+[cc_toolchain(
+    name = "cc_" + name,
+    toolchain_identifier = "oliphaunt-ndk-" + NDK["revision"] + "-" + triple,
+    toolchain_config = ":config_" + name,
+    all_files = ":files_" + name,
+    ar_files = ":ar_files",
+    as_files = ":compiler_binaries",
+    compiler_files = ":compiler_files_" + name,
+    dwp_files = ":dwp_files",
+    coverage_files = ":coverage_files",
+    linker_files = ":linker_files_" + name,
+    objcopy_files = ":objcopy_files",
+    strip_files = ":strip_files",
+    static_runtime_lib = ":runtime_" + name,
+    dynamic_runtime_lib = ":empty",
+    supports_param_files = 1,
+) for name, (triple, _, _) in _TARGETS.items()]
+
+filegroup(name = "empty", srcs = [])

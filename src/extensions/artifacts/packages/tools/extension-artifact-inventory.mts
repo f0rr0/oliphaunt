@@ -12,12 +12,25 @@ import {
 import path from 'node:path';
 import { TextDecoder } from 'node:util';
 import { strictGunzip } from '../../../../../tools/packaging/portable-archive.mts';
-import { releaseNoticeRows } from '../../../../../tools/packaging/release-notices.mts';
+import {
+  releaseNoticeDeclaration,
+  releaseNoticeRows,
+} from '../../../../../tools/packaging/release-notices.mts';
 import { extensionProductForSqlName } from '../../../../../tools/release/release-artifact-targets.mts';
+import { EXTENSION_VERSIONING_BY_CLASS } from '../../../../../tools/release/extension-release-metadata.mts';
+import {
+  isPortableNpmExtensionLicensePath,
+  parseNpmExtensionLicenseFiles,
+} from '../../../../native/sdks/ts/src/native/extension-contract.ts';
+import {
+  nativeExtensionDependencyModulePaths,
+  nativeExtensionModuleHostTarget,
+} from '../../../contracts/extension-target-profiles.mts';
 import { EXTENSION_ARTIFACT_ARCHIVE_POLICY } from '../../../tools/extension-artifact-archive-policy.mts';
 import {
   extensionCarrierLegalContract,
   extensionUpstreamLicenseRow,
+  validateNativeExtensionConstructionLicenseInventory,
 } from '../../../tools/extension-upstream-licenses.mts';
 
 export const EXTENSION_ARTIFACT_PROPERTY_KEYS = Object.freeze([
@@ -70,6 +83,162 @@ function inventoryError(label, message) {
 
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/** Only complete absence identifies the immutable primary-only manifest shape. */
+export function hasDeclaredExtensionArtifactClosure(value, label = 'extension member') {
+  const fields = [
+    ['sqlMembers', 'sql-members'],
+    ['nativeModuleStems', 'native-module-stems'],
+  ];
+  const present = fields.map((names) => names.some((name) => Object.hasOwn(value, name)));
+  if (present[0] !== present[1])
+    throw inventoryError(label, 'sqlMembers and nativeModuleStems must be declared together');
+  return present[0];
+}
+
+export function assertExtensionArtifactClosureShape(metadata, label) {
+  for (const field of ['sqlMembers', 'nativeModuleStems']) {
+    const values = metadata[field];
+    if (
+      !Array.isArray(values) ||
+      values.some((value) => typeof value !== 'string' || !PORTABLE_ID.test(value)) ||
+      JSON.stringify(values) !== JSON.stringify([...new Set(values)].sort(compareText))
+    ) {
+      throw inventoryError(label, `${field} must be sorted unique portable identifiers`);
+    }
+  }
+  if (metadata.sqlMembers.includes(metadata.sqlName) !== metadata.createsExtension)
+    throw inventoryError(
+      label,
+      'sqlMembers must include sqlName exactly when createsExtension is true',
+    );
+  if (!metadata.createsExtension && metadata.sqlMembers.length !== 0)
+    throw inventoryError(label, 'sqlMembers must be empty when createsExtension is false');
+  if (metadata.nativeModuleStem === null && metadata.nativeModuleStems.length !== 0)
+    throw inventoryError(label, 'nativeModuleStems must be empty when nativeModuleStem is null');
+  if (
+    metadata.nativeModuleStem !== null &&
+    !metadata.nativeModuleStems.includes(metadata.nativeModuleStem)
+  )
+    throw inventoryError(label, 'nativeModuleStems must include nativeModuleStem');
+}
+
+/** Mobile archives merge all owned native code into the primary static module. */
+export function rewriteMobileExtensionModuleReferences(
+  sql: string,
+  nativeModuleStem: string | null,
+  nativeModuleStems: readonly string[],
+) {
+  if (!nativeModuleStem) return sql;
+  for (const stem of nativeModuleStems) {
+    if (stem !== nativeModuleStem)
+      sql = sql.replaceAll(`'$libdir/${stem}'`, `'$libdir/${nativeModuleStem}'`);
+  }
+  return sql;
+}
+
+/** Original carrier hashes authenticate these bytes; current source pins govern new carriers. */
+export function validateFrozenExtensionLegalInventory(
+  { profile, licenseFiles, files, constructionLicenseFiles = [], extensionClass = undefined },
+  label,
+) {
+  if (
+    typeof profile !== 'string' ||
+    !/^(?:external|contrib)-(?:native|wasix)(?:-openssl)?$/u.test(profile)
+  )
+    throw inventoryError(label, 'frozen legal profile must identify an extension carrier');
+  const notices = releaseNoticeDeclaration(profile).members;
+  if (
+    extensionClass !== undefined &&
+    (!Object.hasOwn(EXTENSION_VERSIONING_BY_CLASS, extensionClass) ||
+      !profile.startsWith(`${extensionClass === 'contrib' ? 'contrib' : 'external'}-`))
+  )
+    throw inventoryError(label, 'frozen legal profile differs from the original extension class');
+  if (
+    !Array.isArray(licenseFiles) ||
+    licenseFiles.some((file) => !isPortableNpmExtensionLicensePath(file)) ||
+    JSON.stringify(licenseFiles) !== JSON.stringify([...new Set(licenseFiles)].sort(compareText))
+  )
+    throw inventoryError(
+      label,
+      'frozen licenseFiles must be sorted unique portable share/licenses paths',
+    );
+  if (!Array.isArray(files)) throw inventoryError(label, 'frozen legal files must be an array');
+  const rows = files.map((row) => {
+    if (
+      row === null ||
+      typeof row !== 'object' ||
+      Array.isArray(row) ||
+      JSON.stringify(Object.keys(row).sort(compareText)) !==
+        JSON.stringify(['bytes', 'mode', 'path', 'sha256']) ||
+      row.mode !== '0644' ||
+      !Number.isSafeInteger(row.bytes) ||
+      row.bytes <= 0 ||
+      typeof row.sha256 !== 'string' ||
+      !SHA256.test(row.sha256)
+    )
+      throw inventoryError(
+        label,
+        'frozen legal files require exact path, 0644 mode, positive size and SHA-256',
+      );
+    return {
+      path: safeRelativePath(row.path, label),
+      mode: '0644',
+      bytes: row.bytes,
+      sha256: row.sha256,
+    };
+  });
+  const expected = [...notices, ...licenseFiles].sort(compareText);
+  if (JSON.stringify(rows.map((row) => row.path)) !== JSON.stringify(expected))
+    throw inventoryError(
+      label,
+      'frozen legal files must exactly cover the declared notices and licenseFiles',
+    );
+  parseNpmExtensionLicenseFiles(
+    rows.filter((row) => licenseFiles.includes(row.path)).map(({ bytes: _bytes, ...row }) => row),
+    `${label} licenseFiles`,
+  );
+  for (const construction of parseNpmExtensionLicenseFiles(
+    constructionLicenseFiles,
+    `${label} construction licenses`,
+  )) {
+    const row = rows.find((row) => row.path === construction.path);
+    if (!row || row.sha256 !== construction.sha256 || row.mode !== construction.mode)
+      throw inventoryError(
+        label,
+        `frozen construction license ${construction.path} differs from its original legal inventory`,
+      );
+  }
+  return {
+    profile,
+    licenseFiles: [...licenseFiles],
+    files: rows,
+    ...(extensionClass === undefined ? {} : { extensionClass }),
+  };
+}
+
+/** Capture the legal inventory from an already authenticated original native member. */
+export function frozenExtensionArtifactLegalInventory(entries, label) {
+  const manifest = entries.get('manifest.properties');
+  if (!manifest) throw inventoryError(label, 'is missing manifest.properties');
+  const properties = parseExtensionArtifactProperties(decodeUtf8(manifest.data, label), label);
+  const profile = properties.get('licenseProfile');
+  const licenseFiles = csv(properties.get('licenseFiles'), `${label} licenseFiles`);
+  const files = [...releaseNoticeDeclaration(profile).members, ...licenseFiles]
+    .sort(compareText)
+    .map((file) => {
+      const name = file.startsWith('share/licenses/') ? `files/${file}` : file;
+      const entry = entries.get(name);
+      if (!entry) throw inventoryError(label, `missing original legal member ${name}`);
+      return {
+        path: file,
+        mode: entry.mode === 0o644 ? '0644' : entry.mode.toString(8),
+        bytes: entry.bytes,
+        sha256: entry.sha256,
+      };
+    });
+  return validateFrozenExtensionLegalInventory({ profile, licenseFiles, files }, label);
 }
 
 function safeRelativePath(value, label) {
@@ -148,14 +317,20 @@ export function parseExtensionArtifactProperties(text, label) {
     properties.set(key, rawLine.slice(separator + 1));
   }
   const actual = [...properties.keys()].sort(compareText);
-  const expected = [...EXTENSION_ARTIFACT_PROPERTY_KEYS].sort(compareText);
+  const keys =
+    !properties.has('sqlMembers') && !properties.has('nativeModuleStems')
+      ? EXTENSION_ARTIFACT_PROPERTY_KEYS.filter(
+          (key) => key !== 'sqlMembers' && key !== 'nativeModuleStems',
+        )
+      : EXTENSION_ARTIFACT_PROPERTY_KEYS;
+  const expected = [...keys].sort(compareText);
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw inventoryError(
       label,
       `property fields must be exactly ${expected.join(',')}; got ${actual.join(',')}`,
     );
   }
-  if (JSON.stringify([...properties.keys()]) !== JSON.stringify(EXTENSION_ARTIFACT_PROPERTY_KEYS)) {
+  if (JSON.stringify([...properties.keys()]) !== JSON.stringify(keys)) {
     throw inventoryError(label, 'properties must use the canonical field order');
   }
   return properties;
@@ -437,12 +612,21 @@ function normalizeMetadata(row, label) {
   if (typeof createsExtension !== 'boolean') {
     throw inventoryError(label, 'creates-extension must be boolean');
   }
+  const declaredClosure = hasDeclaredExtensionArtifactClosure(row, label);
   const metadata = {
     sqlName,
     createsExtension,
     nativeModuleStem,
-    sqlMembers: list('sqlMembers', 'sql-members'),
-    nativeModuleStems: list('nativeModuleStems', 'native-module-stems'),
+    sqlMembers: list(
+      'sqlMembers',
+      'sql-members',
+      declaredClosure ? undefined : createsExtension ? [sqlName] : [],
+    ),
+    nativeModuleStems: list(
+      'nativeModuleStems',
+      'native-module-stems',
+      declaredClosure ? undefined : nativeModuleStem === null ? [] : [nativeModuleStem],
+    ),
     dependencies: (() => {
       const selected =
         row?.selectedExtensionDependencies ??
@@ -458,6 +642,12 @@ function normalizeMetadata(row, label) {
     extensionSqlFileNames: list('extensionSqlFileNames', 'extension-sql-file-names'),
     extensionSqlFilePrefixes: list('extensionSqlFilePrefixes', 'extension-sql-file-prefixes'),
     sharedPreloadLibraries: list('sharedPreloadLibraries', 'shared-preload-libraries'),
+    nativeDependencyModules: list(
+      'nativeDependencyModules',
+      'native-dependency-modules',
+      row?.nativeDependencyModules ?? [],
+    ),
+    nativeConstructionLicenseFiles: row?.nativeConstructionLicenseFiles ?? [],
   };
   for (const [field, values] of [
     ['selected-extension-dependencies', metadata.dependencies],
@@ -468,6 +658,14 @@ function normalizeMetadata(row, label) {
     if (values.some((item) => !PORTABLE_ID.test(item))) {
       throw inventoryError(label, `${field} contains a non-portable identifier`);
     }
+  }
+  if (declaredClosure) assertExtensionArtifactClosureShape(metadata, label);
+  if (
+    metadata.nativeDependencyModules.some(
+      (file) => !/^[A-Za-z0-9_-]+\.(?:so|dylib|dll)$/u.test(file),
+    )
+  ) {
+    throw inventoryError(label, 'native-dependency-modules must contain portable module basenames');
   }
   if (
     metadata.extensionSqlFileNames.some(
@@ -487,10 +685,39 @@ function normalizeMetadata(row, label) {
   return metadata;
 }
 
-function moduleSuffix(target) {
+export function moduleSuffix(target) {
   if (target === 'windows-x64-msvc') return '.dll';
   if (target === 'macos-arm64' || target === 'ios-xcframework') return '.dylib';
   return '.so';
+}
+
+export function isDesktopNativeTarget(target) {
+  return DESKTOP_NATIVE_TARGETS.has(target);
+}
+
+/** Project the canonical recipe's module stems into an existing desktop profile. */
+export const nativeModuleHostTarget = nativeExtensionModuleHostTarget;
+
+export function nativeDependencyModuleBasenames(files = [], target, byTarget = {}) {
+  const hostTarget = nativeModuleHostTarget(target);
+  if (!isDesktopNativeTarget(hostTarget)) {
+    if (files.length === 0) return [];
+    throw inventoryError(
+      'native dependency modules',
+      `target ${target} has no desktop module contract`,
+    );
+  }
+  return nativeExtensionDependencyModulePaths(files, target, byTarget)
+    .map((file) => {
+      const match = /^lib\/postgresql\/([A-Za-z0-9_-]+)\.(?:so|dylib|dll)$/u.exec(file);
+      if (!match)
+        throw inventoryError(
+          'native dependency modules',
+          'canonical recipe requires a portable PostgreSQL module destination',
+        );
+      return match[1] + moduleSuffix(hostTarget);
+    })
+    .sort(compareText);
 }
 
 // The target recipe owns native modules; the common recipe also lists WASIX-only dependencies.
@@ -530,10 +757,9 @@ export function extensionNativeArtifactClosure(sqlName, target) {
   };
 }
 
-export function assertExtensionArtifactClosure(metadata, target, label) {
+export function extensionArtifactMemberClosure(metadata, target = 'linux-x64-gnu') {
   const closure = extensionNativeArtifactClosure(metadata.sqlName, target);
-  const mobile = target === 'ios-xcframework' || target.startsWith('android-');
-  const expected = {
+  return {
     sqlMembers: [
       ...new Set([
         ...(metadata.createsExtension ? [metadata.sqlName] : []),
@@ -543,12 +769,15 @@ export function assertExtensionArtifactClosure(metadata, target, label) {
     nativeModuleStems: [
       ...new Set([
         ...(metadata.nativeModuleStem === null ? [] : [metadata.nativeModuleStem]),
-        ...(mobile ? [] : closure.modules).map((name) =>
-          name.slice(0, -moduleSuffix(target).length),
-        ),
+        ...closure.modules.map((name) => name.slice(0, -moduleSuffix(target).length)),
       ]),
     ].sort(compareText),
   };
+}
+
+export function assertExtensionArtifactClosure(metadata, target, label) {
+  assertExtensionArtifactClosureShape(metadata, label);
+  const expected = extensionArtifactMemberClosure(metadata, target);
   for (const [field, values] of Object.entries(expected)) {
     if (JSON.stringify(metadata[field]) !== JSON.stringify(values)) {
       throw inventoryError(
@@ -743,16 +972,14 @@ function validateStaticLinkage(properties, metadata, target, label) {
   }
 }
 
-function canonicalLegalContract(metadata, target, label) {
+function canonicalLegalContract(metadata, target, label, product) {
   let contract;
   try {
-    const product = extensionProductForSqlName(
-      metadata.sqlName,
-      'extension-artifact-inventory.mts',
-    );
+    product ??= extensionProductForSqlName(metadata.sqlName, 'extension-artifact-inventory.mts');
     contract = extensionCarrierLegalContract(product, [metadata.sqlName], {
       family: 'native',
       target,
+      memberContracts: [metadata],
     });
   } catch (cause) {
     throw inventoryError(label, `cannot resolve canonical legal contract: ${cause.message}`);
@@ -785,7 +1012,50 @@ function canonicalLegalContract(metadata, target, label) {
   for (const row of upstreamFiles) {
     add(`files/${row.destination}`, row.sha256, `${metadata.sqlName}:${row.path}`);
   }
+  const construction = validateNativeExtensionConstructionLicenseInventory(
+    metadata.sqlName,
+    target,
+    metadata.nativeConstructionLicenseFiles,
+  );
+  for (const row of construction)
+    add(`files/${row.path}`, row.sha256, 'immutable construction source');
+  if (construction.length > 0)
+    contract = {
+      ...contract,
+      licenseFiles: [...contract.licenseFiles, ...construction.map((row) => row.path)].sort(
+        compareText,
+      ),
+    };
   return { contract, members };
+}
+
+function originalLegalContract(metadata, inventory, label) {
+  if (typeof inventory.extensionClass !== 'string')
+    throw inventoryError(
+      label,
+      'original legal inventory must identify its frozen extension class',
+    );
+  const legal = validateFrozenExtensionLegalInventory(
+    {
+      ...inventory,
+      constructionLicenseFiles: metadata.nativeConstructionLicenseFiles,
+    },
+    label,
+  );
+  if (!/^(?:external|contrib)-native(?:-openssl)?$/u.test(legal.profile))
+    throw inventoryError(
+      label,
+      'original native artifact must declare a native extension legal profile',
+    );
+  return {
+    contract: { profile: legal.profile, licenseFiles: legal.licenseFiles },
+    members: new Map(
+      legal.files.map((row) => [
+        row.path.startsWith('share/licenses/') ? `files/${row.path}` : row.path,
+        { ...row, source: 'authenticated original legal inventory' },
+      ]),
+    ),
+  };
 }
 
 /**
@@ -797,12 +1067,16 @@ export function validateExtensionArtifactEntries({
   metadata: rawMetadata,
   target,
   nativeRuntimeVersion,
+  product,
   label,
+  mobileContract,
+  legalInventory,
 }) {
-  if (!DESKTOP_NATIVE_TARGETS.has(target)) {
+  const desktop = DESKTOP_NATIVE_TARGETS.has(target);
+  if (!desktop && mobileContract?.target !== target) {
     throw inventoryError(
       label,
-      `native target ${JSON.stringify(target)} is not a canonical desktop target`,
+      `native target ${JSON.stringify(target)} requires its declared mobile inventory contract`,
     );
   }
   if (
@@ -818,9 +1092,15 @@ export function validateExtensionArtifactEntries({
     decodeUtf8(manifestEntry.data, `${label} manifest.properties`),
     `${label} manifest.properties`,
   );
-  assertExtensionArtifactClosure(metadata, target, `${label} canonical metadata`);
-  const sqlMembers = csv(properties.get('sqlMembers'), `${label} sqlMembers`);
-  const nativeModuleStems = csv(properties.get('nativeModuleStems'), `${label} nativeModuleStems`);
+  const declaredClosure = hasDeclaredExtensionArtifactClosure(rawMetadata, label);
+  if (properties.has('sqlMembers') !== declaredClosure)
+    throw inventoryError(label, 'manifest closure fields must match the frozen release inventory');
+  const sqlMembers = declaredClosure
+    ? csv(properties.get('sqlMembers'), `${label} sqlMembers`)
+    : metadata.sqlMembers;
+  const nativeModuleStems = declaredClosure
+    ? csv(properties.get('nativeModuleStems'), `${label} nativeModuleStems`)
+    : metadata.nativeModuleStems;
   for (const [key, actual] of [
     ['sqlMembers', sqlMembers],
     ['nativeModuleStems', nativeModuleStems],
@@ -832,7 +1112,10 @@ export function validateExtensionArtifactEntries({
   metadata.companionControls = sqlMembers
     .filter((name) => name !== metadata.sqlName)
     .map((name) => `${name}.control`);
-  const legal = canonicalLegalContract(metadata, target, label);
+  const legal =
+    legalInventory === undefined
+      ? canonicalLegalContract(metadata, target, label, product)
+      : originalLegalContract(metadata, legalInventory, label);
   const expectedProperties = new Map([
     ['packageLayout', 'oliphaunt-extension-artifact-v1'],
     ['pgMajor', '18'],
@@ -869,6 +1152,23 @@ export function validateExtensionArtifactEntries({
     throw inventoryError(label, 'manifest mobilePrebuilt must be yes or no');
   }
   validateStaticLinkage(properties, metadata, target, label);
+  if (!desktop) {
+    const expectedMobile = new Map([
+      ['mobilePrebuilt', metadata.nativeModuleStem === null ? 'no' : 'yes'],
+      ['mobileStaticArchives', mobileContract.archives.join(',')],
+      ['mobileStaticDependencyArchives', mobileContract.dependencies.join(',')],
+      ['staticSymbolPrefix', mobileContract.symbolPrefix],
+    ]);
+    if (mobileContract.symbolAliases !== undefined)
+      expectedMobile.set('staticSymbolAliases', mobileContract.symbolAliases.join(','));
+    for (const [key, expected] of expectedMobile) {
+      if (properties.get(key) !== expected)
+        throw inventoryError(
+          label,
+          `manifest ${key} differs from its declared mobile inventory contract`,
+        );
+    }
+  }
 
   const allowed = new Set(['manifest.properties']);
   for (const [member, expected] of legal.members) {
@@ -884,6 +1184,8 @@ export function validateExtensionArtifactEntries({
           `legal member ${member} does not match canonical bytes from ${expected.source}`,
         );
       }
+      if (expected.bytes !== undefined && entry.bytes !== expected.bytes)
+        throw inventoryError(label, `legal member ${member} differs from its original byte count`);
     }
   }
   const extensionPrefix = 'files/share/postgresql/extension/';
@@ -931,12 +1233,27 @@ export function validateExtensionArtifactEntries({
   for (const dataFile of metadata.dataFiles) {
     allowed.add(`files/share/postgresql/${dataFile}`);
   }
-  const modules = new Set(nativeModuleStems.map((stem) => `${stem}${moduleSuffix(target)}`));
+  const modules = new Set(
+    (DESKTOP_NATIVE_TARGETS.has(target)
+      ? nativeModuleStems
+      : metadata.nativeModuleStem === null
+        ? []
+        : [metadata.nativeModuleStem]
+    ).map((stem) => `${stem}${moduleSuffix(target)}`),
+  );
   for (const module of modules) {
     allowed.add(`files/lib/postgresql/${module}`);
     if (DESKTOP_NATIVE_TARGETS.has(target)) {
       allowed.add(`files/lib/modules/${module}`);
     }
+  }
+  if (metadata.nativeModuleStem !== null) {
+    for (const dependency of metadata.nativeDependencyModules) {
+      allowed.add(`files/lib/postgresql/${dependency}`);
+      if (DESKTOP_NATIVE_TARGETS.has(target)) allowed.add(`files/lib/modules/${dependency}`);
+    }
+  } else if (metadata.nativeDependencyModules.length > 0) {
+    throw inventoryError(label, 'SQL-only artifacts must not declare native dependency modules');
   }
   const mobilePaths = declaredMobilePaths(properties, metadata, label);
   if (

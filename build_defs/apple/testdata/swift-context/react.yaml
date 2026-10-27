@@ -1,0 +1,8 @@
+{
+  "version": 0,
+  "roots": [{"type": "directory", "name": "oliphaunt-swift-context/Headers", "contents": [
+    {"type": "directory", "name": "ReactCommon", "contents": [
+      {"type": "file", "name": "CallInvoker.h", "external-contents": "build_defs/apple/testdata/swift-context/CallInvoker.h"}
+    ]}
+  ]}]
+}

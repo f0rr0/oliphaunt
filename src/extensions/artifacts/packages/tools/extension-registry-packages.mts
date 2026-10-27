@@ -1,9 +1,12 @@
+import { extensionNpmPackageForProduct } from '../../../../../tools/release/extension-release-metadata.mts';
 import {
   AOT_TARGET_TRIPLES,
   expectedExtensionAotTargets,
   wasixExtensionAotPackageName,
   wasixExtensionPackageName,
 } from '../../../../wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
+
+export { extensionNpmPackageForProduct };
 
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -31,15 +34,6 @@ export function extensionNpmPackage(sqlName) {
 
 export function extensionNpmTargetPackage(sqlName, target) {
   return `${extensionNpmPackage(sqlName)}-${target}`;
-}
-
-export function extensionNpmPackageForProduct(product) {
-  if (typeof product !== 'string' || !product.startsWith('oliphaunt-extension-')) {
-    throw new TypeError(
-      `extension product must start with oliphaunt-extension-: ${JSON.stringify(product)}`,
-    );
-  }
-  return `@oliphaunt/${product.slice('oliphaunt-'.length)}`;
 }
 
 /**

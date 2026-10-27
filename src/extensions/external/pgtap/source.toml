@@ -7,3 +7,6 @@ commit = "b89585a64ffef012ff0f219de9197c669aa8485b"
 sql-name = "pgtap"
 source-path = "pgtap.control"
 default-version = "1.3.5"
+
+[archive]
+sha256 = "ffd501f27670a7d3d7f0cfd4ea7f291848112c2ef408a0b73e4cb727ac83e604"

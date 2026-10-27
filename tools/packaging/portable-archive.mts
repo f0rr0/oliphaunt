@@ -30,6 +30,7 @@ export const DEFAULT_PORTABLE_ARCHIVE_LIMITS = Object.freeze({
 const UTF8 = new TextDecoder('utf-8', { fatal: true });
 const ZIP_ALLOWED_FLAGS = 0x080e;
 const ZIP_ALLOWED_EXTRA_FIELDS = new Set([0x5455, 0x5855, 0x7875]);
+const JAVA_ARCHIVE_MAGIC_EXTRA_FIELD_ID = 0xcafe;
 const ANDROID_ALIGNMENT_EXTRA_FIELD_ID = 0xd935;
 const APK_SIGNING_BLOCK_MAGIC = Buffer.from('APK Sig Block 42', 'ascii');
 const APK_SIGNATURE_SCHEME_BLOCK_IDS = new Set([0x7109871a, 0xf05368c0, 0x1b93ad61]);
@@ -322,7 +323,14 @@ function validateZipExtra(
   extra,
   file,
   label,
-  { source = false, androidApkLocal = false, dataOffset = 0, method = -1, name = '' } = {},
+  {
+    source = false,
+    javaArchive = false,
+    androidApkLocal = false,
+    dataOffset = 0,
+    method = -1,
+    name = '',
+  } = {},
 ) {
   const seen = new Set();
   for (let offset = 0; offset < extra.length; ) {
@@ -355,6 +363,7 @@ function validateZipExtra(
     if (
       !ZIP_ALLOWED_EXTRA_FIELDS.has(id) &&
       !(source && id === 0x000a) &&
+      !(javaArchive && id === JAVA_ARCHIVE_MAGIC_EXTRA_FIELD_ID) &&
       !(androidApkLocal && id === ANDROID_ALIGNMENT_EXTRA_FIELD_ID)
     ) {
       throw archiveError(
@@ -363,7 +372,9 @@ function validateZipExtra(
       );
     }
     const value = extra.subarray(offset, offset + size);
-    if (id === 0x000a) {
+    if (id === JAVA_ARCHIVE_MAGIC_EXTRA_FIELD_ID) {
+      if (size !== 0) throw archiveError(file, 'has non-empty Java archive magic ZIP metadata');
+    } else if (id === 0x000a) {
       if (
         size !== 32 ||
         value.readUInt32LE(0) !== 0 ||
@@ -516,7 +527,7 @@ function validateApkSigningBlock(buffer, recordsEnd, centralOffset, file) {
   }
 }
 
-function zipEntryType(versionMadeBy, externalAttributes, rawName, file) {
+function zipEntryType(versionMadeBy, externalAttributes, rawName, file, javaArchive = false) {
   const host = versionMadeBy >>> 8;
   const unixMode = externalAttributes >>> 16;
   const unixType = unixMode & 0o170000;
@@ -540,7 +551,11 @@ function zipEntryType(versionMadeBy, externalAttributes, rawName, file) {
     if (unixType !== 0) {
       throw archiveError(file, `has conflicting FAT/Unix type metadata for ${rawName}`);
     }
-    if (pathDirectory !== dosDirectory) {
+    // Java archive writers leave FAT attributes at zero, including directories.
+    if (
+      pathDirectory !== dosDirectory &&
+      !(javaArchive && pathDirectory && externalAttributes === 0)
+    ) {
       throw archiveError(file, `has inconsistent FAT directory metadata for ${rawName}`);
     }
     type = pathDirectory ? 'directory' : 'file';
@@ -712,7 +727,11 @@ function inflateZipEntry(buffer, entry, file, maxEntryBytes) {
   return data;
 }
 
-function readZipEntries(file, archiveLimits, { source = false, androidApk = false } = {}) {
+function readZipEntries(
+  file,
+  archiveLimits,
+  { source = false, javaArchive = false, androidApk = false } = {},
+) {
   const buffer = readFileSync(file);
   const eocdOffset = findZipEnd(buffer, file);
   const eocd = boundedSlice(buffer, eocdOffset, 22, file, 'ZIP end record');
@@ -813,8 +832,15 @@ function readZipEntries(file, archiveLimits, { source = false, androidApk = fals
     });
     validateZipExtra(variable.subarray(nameLength), file, `central ${JSON.stringify(rawName)}`, {
       source,
+      javaArchive,
     });
-    const { mode, type } = zipEntryType(versionMadeBy, externalAttributes, rawName, file);
+    const { mode, type } = zipEntryType(
+      versionMadeBy,
+      externalAttributes,
+      rawName,
+      file,
+      javaArchive,
+    );
     const name = portableMemberName(rawName, type, file);
     if (type === 'directory' && (size !== 0 || expectedCrc !== 0)) {
       throw archiveError(file, `has a non-empty ZIP directory member ${rawName}`);
@@ -853,7 +879,7 @@ function readZipEntries(file, archiveLimits, { source = false, androidApk = fals
       localVariable.subarray(localNameLength),
       file,
       `local ${JSON.stringify(rawName)}`,
-      { source, androidApkLocal: androidApk, dataOffset, method, name },
+      { source, javaArchive, androidApkLocal: androidApk, dataOffset, method, name },
     );
     const descriptor = (flags & 0x0008) !== 0;
     const localCrc = local.readUInt32LE(14);
@@ -1329,6 +1355,13 @@ export function readPortableArchiveEntries(file, options = {}) {
   if (format === 'tar.gz') return readTarEntries(file, archiveLimits);
   if (format === 'tar.zst') return readTarEntries(file, archiveLimits, 'zstd');
   throw archiveError(file, `has an unsupported archive format ${JSON.stringify(format)}`);
+}
+
+/** Java build inputs additionally permit the empty JarOutputStream magic field. */
+export function readJavaArchiveEntries(file, options = {}) {
+  const archiveLimits = limits(options);
+  requireRegularArchive(file, archiveLimits.maxArchiveBytes);
+  return readZipEntries(file, archiveLimits, { javaArchive: true });
 }
 
 /** Source pins additionally permit V7 tar and links, validated before extraction. */

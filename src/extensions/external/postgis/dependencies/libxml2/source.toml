@@ -3,3 +3,6 @@ url = "https://gitlab.gnome.org/GNOME/libxml2.git"
 mirror_url = "https://github.com/GNOME/libxml2.git"
 branch = "v2.15.4"
 commit = "96498992efa48d52b0e8b83058bd88dbdaf153c1"
+
+[archive]
+sha256 = "3fa264c6117569780ea0f6447d98c77f29b285cfd665ced2ec7da4f51183607f"

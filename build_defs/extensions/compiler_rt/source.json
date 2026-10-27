@@ -1,0 +1,24 @@
+{
+  "schema": "oliphaunt-compiler-runtime-source-v1",
+  "project": "llvm-compiler-rt",
+  "version": "20.1.2",
+  "commit": "58df0ef89dd64126512e4ee27b4ac3fd8ddf6247",
+  "license": "Apache-2.0 WITH LLVM-exception",
+  "files": [
+    {
+      "path": "compiler-rt/lib/builtins/cpu_model/x86.c",
+      "destination": "x86.c",
+      "sha256": "961bcc58c10576374e4e59178b5d53b1bccf42601f85eb6034ae2466058d0735"
+    },
+    {
+      "path": "compiler-rt/lib/builtins/cpu_model/cpu_model.h",
+      "destination": "cpu_model.h",
+      "sha256": "4b374f7dcba5cbb9520b621ab596dc691af356772fc019246ab419f4c1c0f77c"
+    },
+    {
+      "path": "compiler-rt/LICENSE.TXT",
+      "destination": "LICENSE.TXT",
+      "sha256": "1a8f1058753f1ba890de984e48f0242a3a5c29a6a8f2ed9fd813f36985387e8d"
+    }
+  ]
+}

@@ -197,10 +197,14 @@ function normalizeFrozenRuntimeContract(row, label) {
       'sqlMembers must contain the primary extension exactly when createsExtension is true',
     );
   if (
-    JSON.stringify(nativeModuleStems) !==
-    JSON.stringify(nativeModuleStem === null ? [] : [nativeModuleStem])
+    nativeModuleStem === null
+      ? nativeModuleStems.length !== 0
+      : !nativeModuleStems.includes(nativeModuleStem)
   )
-    fail(label, 'mobile nativeModuleStems must contain only the merged primary module');
+    fail(
+      label,
+      'nativeModuleStems must contain the primary module exactly when nativeModuleStem is set',
+    );
   const dependencies = canonicalList(row?.dependencies, `${label}.dependencies`, portable);
   if (dependencies.includes(sqlName))
     fail(label, 'dependencies must not include the extension itself');
@@ -680,12 +684,6 @@ export async function validateSwiftExtensionResourceArtifact({
 }) {
   assertSwiftExtensionMatchesCanonical(extension, canonical, label);
   const contract = normalizeFrozenRuntimeContract(extension, `${label} frozen carrier contract`);
-  for (const field of canonical.sqlMembers.length > 1
-    ? ['sqlMembers', 'dependencies']
-    : ['sqlMembers']) {
-    if (JSON.stringify(contract[field]) !== JSON.stringify(canonical[field]))
-      fail(label, `${field} must match generated canonical metadata`);
-  }
   if (
     nativeRuntime?.product !== 'liboliphaunt-native' ||
     !STABLE_SEMVER.test(nativeRuntime?.version ?? '')

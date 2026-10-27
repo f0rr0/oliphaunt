@@ -7,3 +7,6 @@ commit = "fa142d049d08eac45a263f5abc250c8877ae076e"
 sql-name = "pg_textsearch"
 source-path = "pg_textsearch.control"
 default-version = "1.5.1"
+
+[archive]
+sha256 = "445a546810cbc17e15d05ff8a391f1b693eab382a2ef6efbf72e1c37fa0c48d0"

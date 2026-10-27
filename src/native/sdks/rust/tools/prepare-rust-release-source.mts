@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { cpSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { renderCargoToml } from '../../../../../tools/packaging/cargo-manifest.mts';
 import { packagedCargoManifestText } from '../../../../../tools/packaging/cargo-source-package.mts';
 import {
   assertReleaseNoticesInDirectory,
@@ -8,9 +9,11 @@ import {
 } from '../../../../../tools/packaging/release-notices.mts';
 import {
   assertSameNativeTargetSet,
+  nativeCargoPackageName,
   renderUnsupportedNativeTargetGuard,
   rustNativeTargetCfg,
 } from '../../../../../tools/packaging/rust-native-targets.mts';
+import { loadReleaseMetadata } from '../../../../../tools/release/bazel-release-metadata.mts';
 import {
   allArtifactTargets,
   compareText,
@@ -18,7 +21,6 @@ import {
   ROOT,
   registryPackageRows,
 } from '../../../../../tools/release/release-artifact-targets.mts';
-import { productCompatibilityVersion } from '../../../../../tools/release/release-graph.mts';
 import { stageRustPackageSource } from './package-source.mts';
 
 const TOOL = 'prepare-rust-release-source.mts';
@@ -42,19 +44,19 @@ function rel(file) {
 }
 
 function liboliphauntCargoPackageName(targetId, packageBase = LIBOLIPHAUNT_NATIVE_PRODUCT) {
-  return `${packageBase}-${targetId}`;
+  return nativeCargoPackageName(packageBase, targetId);
 }
 
 function brokerCargoPackageName(targetId) {
-  return `${BROKER_PRODUCT}-${targetId}`;
+  return nativeCargoPackageName(BROKER_PRODUCT, targetId);
 }
 
-function packageSection(text) {
-  const parts = text.split('[package]');
-  if (parts.length < 2) {
+function packageVersion(text) {
+  const manifest = Bun.TOML.parse(text);
+  if (!manifest.package) {
     fail('generated oliphaunt release source is missing [package]');
   }
-  return parts[1].split('\n[', 1)[0];
+  return manifest.package.version;
 }
 
 function artifactTargets({ product, kind, surface }) {
@@ -95,14 +97,20 @@ export function renderRustSdkNativeTargetGuard(nativeTargets) {
 
 export function renderReleaseCargoToml(
   source,
-  nativeVersion = productCompatibilityVersion(RUST_PRODUCT, LIBOLIPHAUNT_NATIVE_PRODUCT, TOOL),
-  brokerVersion = productCompatibilityVersion(RUST_PRODUCT, BROKER_PRODUCT, TOOL),
+  nativeVersion,
+  brokerVersion,
   artifactTargets = nativeSdkArtifactTargets(),
 ) {
+  if (nativeVersion === undefined || brokerVersion === undefined) {
+    const compatibility = loadReleaseMetadata(ROOT).products[RUST_PRODUCT].compatibility_versions;
+    nativeVersion ??= compatibility[LIBOLIPHAUNT_NATIVE_PRODUCT];
+    brokerVersion ??= compatibility[BROKER_PRODUCT];
+  }
+  if (!nativeVersion || !brokerVersion) fail('Rust SDK installed runtime/helper pins are missing');
   let text = source
     .replace('repository.workspace = true', 'repository = "https://github.com/f0rr0/oliphaunt"')
     .replace('homepage.workspace = true', 'homepage = "https://oliphaunt.dev"');
-  if (!text.includes('[workspace]')) {
+  if (Bun.TOML.parse(text).workspace === undefined) {
     text = `${text.trimEnd()}\n\n[workspace]\n`;
   }
 
@@ -138,15 +146,21 @@ export function renderReleaseCargoToml(
     lines.push('', `[target.'cfg(${cfg})'.dependencies]`);
     lines.push(...targetDependencies.get(cfg).sort(compareText));
   }
-  return `${text.trimEnd()}\n${lines.join('\n')}\n`;
+  return renderCargoToml(Bun.TOML.parse(`${text.trimEnd()}\n${lines.join('\n')}\n`));
 }
 
-function validateReleaseArtifactCoverage(manifest, nativeVersion, nativeTargets) {
+function validateReleaseArtifactCoverage(text, nativeVersion, nativeTargets) {
+  const manifest = Bun.TOML.parse(text);
+  const dependencies = new Map(
+    [manifest, ...Object.values(manifest.target ?? {})].flatMap((table) =>
+      Object.entries(table.dependencies ?? {}),
+    ),
+  );
   const brokerCrates = registryPackageRows(
     { product: BROKER_PRODUCT, packageKind: 'crates' },
     TOOL,
   ).map((row) => row.packageName);
-  const missingBroker = brokerCrates.filter((crate) => !manifest.includes(`${crate} = `));
+  const missingBroker = brokerCrates.filter((crate) => !dependencies.has(crate));
   if (missingBroker.length > 0) {
     fail(
       `generated oliphaunt release source is missing broker Cargo artifact dependencies: ${missingBroker.join(', ')}`,
@@ -170,7 +184,7 @@ function validateReleaseArtifactCoverage(manifest, nativeVersion, nativeTargets)
   }
 
   const missingNative = nativeRuntimeCrates.filter(
-    (crate) => !manifest.includes(`${crate} = { version = "=${nativeVersion}" }`),
+    (crate) => dependencies.get(crate)?.version !== `=${nativeVersion}`,
   );
   if (missingNative.length > 0) {
     fail(
@@ -190,25 +204,25 @@ function releaseStageDir(stageDir) {
 
 export function prepareRustReleaseSource({ stageDir = DEFAULT_STAGE_DIR, log = true } = {}) {
   const version = currentProductVersionSync(RUST_PRODUCT, TOOL);
-  const nativeVersion = productCompatibilityVersion(
-    RUST_PRODUCT,
-    LIBOLIPHAUNT_NATIVE_PRODUCT,
-    TOOL,
-  );
-  const brokerVersion = productCompatibilityVersion(RUST_PRODUCT, BROKER_PRODUCT, TOOL);
+  const compatibility = loadReleaseMetadata(ROOT).products[RUST_PRODUCT].compatibility_versions;
+  const nativeVersion = compatibility[LIBOLIPHAUNT_NATIVE_PRODUCT];
+  const brokerVersion = compatibility[BROKER_PRODUCT];
   const artifactTargets = nativeSdkArtifactTargets();
   const outputDir = releaseStageDir(stageDir);
   stageRustPackageSource(outputDir);
 
   const cargoToml = path.join(outputDir, 'Cargo.toml');
   const rendered = renderReleaseCargoToml(
-    readFileSync(cargoToml, 'utf8'),
+    packagedCargoManifestText(
+      readFileSync(cargoToml, 'utf8'),
+      readFileSync(path.join(ROOT, 'Cargo.toml'), 'utf8'),
+    ),
     nativeVersion,
     brokerVersion,
     artifactTargets,
   );
   writeFileSync(cargoToml, rendered, 'utf8');
-  if (!packageSection(rendered).includes(`version = "${version}"`)) {
+  if (packageVersion(rendered) !== version) {
     fail(`generated oliphaunt release source must keep SDK version ${version}`);
   }
   validateReleaseArtifactCoverage(rendered, nativeVersion, artifactTargets.nativeTargets);
@@ -238,9 +252,12 @@ export function prepareOliphauntBuildReleaseSource({
     filter: (source) => path.basename(source) !== 'target',
   });
   const cargoToml = path.join(outputDir, 'Cargo.toml');
-  const rendered = packagedCargoManifestText(readFileSync(cargoToml, 'utf8'));
+  const rendered = packagedCargoManifestText(
+    readFileSync(cargoToml, 'utf8'),
+    readFileSync(path.join(ROOT, 'Cargo.toml'), 'utf8'),
+  );
   writeFileSync(cargoToml, rendered, 'utf8');
-  if (!packageSection(rendered).includes(`version = "${version}"`)) {
+  if (packageVersion(rendered) !== version) {
     fail(`generated oliphaunt-build release source must keep SDK version ${version}`);
   }
   stageReleaseNotices(outputDir, SOURCE_NOTICE_OPTIONS);

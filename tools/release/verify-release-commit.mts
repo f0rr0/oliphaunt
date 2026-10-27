@@ -2,16 +2,18 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { cargoSatisfies } from '../../build_defs/languages/cargo-metadata.mts';
 import { electronReleaseDependencies } from '../../src/examples/tools/example-release-dependencies.mts';
-import { exampleCargoReleaseVersionBindings } from './example-cargo-versions.mts';
 import { isDefaultExtensionRequirement } from './consumer-compatibility.mts';
+import { exampleCargoReleaseVersionBindings } from './example-cargo-versions.mts';
+import { loadPublicationCatalog } from './publication-catalog.mts';
 import {
   nativeToolsOptionalPackageProducts,
   registryPackageRows,
 } from './release-artifact-targets.mts';
 import {
-  buildBoundCompatibilityProducts,
   requirePublicSupportTransition,
+  resolveBuildBoundCompatibilityProducts,
 } from './release-dependency-plan.mts';
 import {
   compatibilityVersionEntries,
@@ -19,14 +21,18 @@ import {
   loadProducts,
 } from './release-graph.mts';
 import { RELEASE_PLEASE_BOOTSTRAP_SHA } from './release-please-bootstrap.mts';
-import { releaseDerivedPathInventory } from './sync-release-pr.mts';
+import {
+  cargoLocalVersions,
+  cargoSameOwnerDependencyBindings,
+  desiredCargoPathDependencyVersion,
+  releaseDerivedPathInventory,
+} from './sync-release-pr.mts';
 
 const TOOL = 'verify-release-commit.mts';
 const ROOT = path.resolve(import.meta.dir, '../..');
 const SEMVER =
   /^(?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:[.](?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:[.][0-9A-Za-z-]+)*)?$/u;
 const CARGO_DEPENDENCY_TABLES = new Set(['dependencies', 'dev-dependencies', 'build-dependencies']);
-let cachedDerivedRules;
 
 function error(message) {
   return new Error(`${TOOL}: ${message}`);
@@ -321,9 +327,7 @@ function structuredRuleKey(type, file, parts) {
   return `${type}\0${file}\0${pathKey(parts)}`;
 }
 
-function derivedVersionRules() {
-  if (cachedDerivedRules !== undefined) return cachedDerivedRules;
-  const products = loadProducts(TOOL);
+function derivedVersionRules(products, buildBound, suppliedBuildBound) {
   const structured = new Map();
   const text = new Map();
   const addStructured = (
@@ -344,7 +348,24 @@ function derivedVersionRules() {
     ) {
       throw error(`conflicting derived version rules for ${file}:${parts.join('.')}`);
     }
-    const rule = { sourceProduct, wrapped, consumerProduct };
+    const rule = {
+      sourceProduct,
+      wrapped,
+      consumerProduct,
+      // RP may update installed ecosystem requirements of selected packages.
+      // A supplied held map cannot authorize generated runtime metadata/consts
+      // merely because the independent producer is also selected.
+      allowSelectedProducerRetarget:
+        !suppliedBuildBound ||
+        (type === 'json' &&
+          file.endsWith('/package.json') &&
+          ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'].includes(
+            parts[0],
+          )) ||
+        (type === 'toml' &&
+          parts.at(-1) === 'version' &&
+          CARGO_DEPENDENCY_TABLES.has(parts.at(-3))),
+    };
     structured.set(key, rule);
     if (
       type === 'json' &&
@@ -372,7 +393,6 @@ function derivedVersionRules() {
     text.set(file, rule);
   };
 
-  const buildBound = buildBoundCompatibilityProducts(products);
   for (const entry of compatibilityVersionEntries(products, {
     requireSourceProduct: true,
     prefix: TOOL,
@@ -468,6 +488,7 @@ function derivedVersionRules() {
   }
   for (const rule of text.values()) {
     if (rule.consumerProduct !== undefined) {
+      rule.allowSelectedProducerRetarget = !suppliedBuildBound;
       rule.buildBound = buildBound.get(rule.consumerProduct)?.has(rule.sourceProduct) ?? false;
       rule.defaultInstall = isDefaultExtensionRequirement(
         products,
@@ -476,8 +497,7 @@ function derivedVersionRules() {
       );
     }
   }
-  cachedDerivedRules = { structured, text };
-  return cachedDerivedRules;
+  return { structured, text };
 }
 
 function productTransition(rule, before, after, transitions, productVersions) {
@@ -498,7 +518,9 @@ function productTransition(rule, before, after, transitions, productVersions) {
       (rule.defaultInstall
         ? Bun.semver.order(after, productVersions.get(rule.sourceProduct)) <= 0
         : after === productVersions.get(rule.sourceProduct) &&
-          (rule.buildBound || transitions.some(({ product }) => product === rule.sourceProduct))) &&
+          (rule.buildBound ||
+            (rule.allowSelectedProducerRetarget &&
+              transitions.some(({ product }) => product === rule.sourceProduct)))) &&
       Bun.semver.order(after, before) > 0
     );
   }
@@ -524,6 +546,13 @@ function cargoDependencyEntryPath(parts) {
     return names.slice(0, 2);
   }
   if (
+    names.length === 4 &&
+    names[0] === 'workspace' &&
+    names[1] === 'dependencies' &&
+    names[3] === 'version'
+  )
+    return names.slice(0, 3);
+  if (
     names.length === 5 &&
     names[0] === 'target' &&
     CARGO_DEPENDENCY_TABLES.has(names[2]) &&
@@ -548,6 +577,9 @@ function cargoDependencyVersionChange({
   afterRoot,
   before,
   after,
+  products,
+  transitions,
+  updateMinimum = false,
 }) {
   if (path.posix.basename(file) !== 'Cargo.toml') return false;
   const entryPath = cargoDependencyEntryPath(parts);
@@ -590,21 +622,29 @@ function cargoDependencyVersionChange({
   ) {
     return false;
   }
-  const exact = typeof before === 'string' && before.startsWith('=');
+  const producer = Object.entries(products).find(([, product]) =>
+    product.registry_packages?.includes('crates:' + nextPackage.name),
+  )?.[0];
   return (
-    before === `${exact ? '=' : ''}${priorPackage.version}` &&
-    after === `${exact ? '=' : ''}${nextPackage.version}`
+    transitions.some(({ product }) => product === producer) &&
+    typeof before === 'string' &&
+    cargoSatisfies(priorPackage.version, before) &&
+    (updateMinimum || !cargoSatisfies(nextPackage.version, before)) &&
+    after === desiredCargoPathDependencyVersion(before, nextPackage.version, updateMinimum)
   );
 }
 
-function localCargoPackageVersions(repo, commit, cache) {
+function localCargoContext(repo, commit, cache) {
   if (cache.has(commit)) return cache.get(commit);
   const versions = new Map();
-  const manifests = commitData(repo, commit, 'files')
-    .split('\0')
-    .filter((file) => file === 'Cargo.toml' || file.endsWith('/Cargo.toml'));
-  for (const file of manifests) {
-    const packageConfig = parseCargoManifest(repo, commit, file).package;
+  const files = commitData(repo, commit, 'files').split('\0');
+  const manifests = new Map(
+    files
+      .filter((file) => file === 'Cargo.toml' || file.endsWith('/Cargo.toml'))
+      .map((file) => [file, { manifest: parseCargoManifest(repo, commit, file) }]),
+  );
+  for (const { manifest } of manifests.values()) {
+    const packageConfig = manifest.package;
     if (
       packageConfig === null ||
       Array.isArray(packageConfig) ||
@@ -618,8 +658,66 @@ function localCargoPackageVersions(repo, commit, cache) {
     packageVersions.add(packageConfig.version);
     versions.set(packageConfig.name, packageVersions);
   }
-  cache.set(commit, versions);
-  return versions;
+  const config = showJson(repo, commit, 'release-please-config.json');
+  const released = showJson(repo, commit, '.release-please-manifest.json');
+  const ownerVersions = new Map(
+    Object.entries(config.packages).map(([file, entry]) => [entry.component, released[file]]),
+  );
+  const carriers = loadPublicationCatalog(TOOL)
+    .carriers.filter((carrier) => ownerVersions.has(carrier.product))
+    .map((carrier) => ({ ...carrier, version: ownerVersions.get(carrier.product) }));
+  const lock = files.includes('Cargo.lock')
+    ? parseStructured(show(repo, commit, 'Cargo.lock'), 'toml', 'Cargo.lock', commit)
+    : { package: [] };
+  for (const [name, version] of cargoLocalVersions(new Map(), carriers, lock)) {
+    if (!versions.has(name)) versions.set(name, new Set([version]));
+  }
+  const result = { versions, manifests };
+  cache.set(commit, result);
+  return result;
+}
+
+function cargoSameOwnerVersionChange(context) {
+  if (path.posix.basename(context.file) !== 'Cargo.toml') return false;
+  const owners = new Map(
+    Object.entries(context.products).flatMap(([id, product]) =>
+      (product.registry_packages ?? [])
+        .filter((name) => name.startsWith('crates:'))
+        .map((name) => [name.slice(7), id]),
+    ),
+  );
+  const products = Object.fromEntries(
+    Object.entries(context.products).map(([id, product]) => [
+      id,
+      { ...product, version: context.productVersions.get(id) ?? product.version },
+    ]),
+  );
+  const bindings = cargoSameOwnerDependencyBindings(
+    context.beforeRoot,
+    owners,
+    products,
+    new Set(context.transitions.map(({ product }) => product)),
+    { manifests: localCargoContext(context.repo, context.parent, context.cargoVersions).manifests },
+  );
+  return bindings.some((binding) => {
+    const prior = valueAt(context.beforeRoot, binding.entryParts);
+    const next = valueAt(context.afterRoot, binding.entryParts);
+    const before = typeof prior === 'string' ? { version: prior } : prior;
+    const after = typeof next === 'string' ? { version: next } : next;
+    const parts =
+      typeof prior === 'string' ? binding.entryParts : [...binding.entryParts, 'version'];
+    if (pathKey(parts) !== pathKey(context.parts) || !before || !after) return false;
+    const owner = owners.get(before.package ?? binding.name);
+    const transition = context.transitions.find(({ product }) => product === owner);
+    return (
+      transition &&
+      before.version ===
+        desiredCargoPathDependencyVersion(before.version, transition.before, true) &&
+      after.version === binding.expected &&
+      semanticDiffs({ ...before, version: undefined }, { ...after, version: undefined }).length ===
+        0
+    );
+  });
 }
 
 function cargoLockVersionChange({
@@ -635,6 +733,32 @@ function cargoLockVersionChange({
   cargoVersions,
 }) {
   const names = parts.map(String);
+  if (
+    path.posix.basename(file) === 'Cargo.lock' &&
+    names.length === 4 &&
+    names[0] === 'package' &&
+    names[2] === 'dependencies' &&
+    /^[0-9]+$/u.test(names[1]) &&
+    /^[0-9]+$/u.test(names[3]) &&
+    typeof before === 'string' &&
+    typeof after === 'string'
+  ) {
+    const prior = /^([^ ]+) ([^ ]+)$/u.exec(before);
+    const next = /^([^ ]+) ([^ ]+)$/u.exec(after);
+    if (!prior || !next || prior[1] !== next[1]) return false;
+    const local = beforeRoot.package.flatMap((entry, index) =>
+      entry.name === prior[1] && entry.version === prior[2] && !entry.source ? [index] : [],
+    );
+    const changed = local.length === 1 ? afterRoot.package[local[0]] : undefined;
+    return (
+      changed?.name === next[1] &&
+      changed.version === next[2] &&
+      changed.source === undefined &&
+      localCargoContext(repo, parent, cargoVersions).versions.get(prior[1])?.has(prior[2]) ===
+        true &&
+      localCargoContext(repo, commit, cargoVersions).versions.get(next[1])?.has(next[2]) === true
+    );
+  }
   if (
     path.posix.basename(file) !== 'Cargo.lock' ||
     names.length !== 3 ||
@@ -661,9 +785,9 @@ function cargoLockVersionChange({
     return false;
   }
   return (
-    localCargoPackageVersions(repo, parent, cargoVersions).get(priorPackage.name)?.has(before) ===
+    localCargoContext(repo, parent, cargoVersions).versions.get(priorPackage.name)?.has(before) ===
       true &&
-    localCargoPackageVersions(repo, commit, cargoVersions).get(priorPackage.name)?.has(after) ===
+    localCargoContext(repo, commit, cargoVersions).versions.get(priorPackage.name)?.has(after) ===
       true
   );
 }
@@ -680,6 +804,26 @@ function authorizedDerivedStructuredChange(context, rules) {
     return true;
   }
   const rule = rules.structured.get(structuredRuleKey(context.type, context.file, context.parts));
+  const cargoPath = context.type === 'toml' ? cargoDependencyEntryPath(context.parts) : undefined;
+  if (cargoPath && typeof valueAt(context.beforeRoot, cargoPath)?.path === 'string') {
+    const consumer =
+      rule?.consumerProduct ??
+      Object.entries(context.products).find(([, product]) =>
+        product.registry_packages?.includes('crates:' + context.beforeRoot.package?.name),
+      )?.[0];
+    if (
+      consumer &&
+      context.products[consumer].registry_packages?.some((name) => name.startsWith('crates:')) &&
+      !context.transitions.some(({ product }) => product === consumer)
+    )
+      return false;
+    return cargoDependencyVersionChange({
+      ...context,
+      updateMinimum: Boolean(
+        consumer && context.transitions.some(({ product }) => product === consumer),
+      ),
+    });
+  }
   if (rule !== undefined)
     return productTransition(
       rule,
@@ -689,7 +833,11 @@ function authorizedDerivedStructuredChange(context, rules) {
       context.productVersions,
     );
   if (context.type !== 'toml') return false;
-  return cargoDependencyVersionChange(context) || cargoLockVersionChange(context);
+  return (
+    cargoDependencyVersionChange(context) ||
+    cargoSameOwnerVersionChange(context) ||
+    cargoLockVersionChange(context)
+  );
 }
 
 function structuredType(file) {
@@ -801,8 +949,11 @@ function validateAllowedFileSemantics({
   derivedFiles,
   transitions,
   productVersions,
+  products,
+  buildBound,
+  suppliedBuildBound,
 }) {
-  const derivedRules = derivedVersionRules();
+  const derivedRules = derivedVersionRules(products, buildBound, suppliedBuildBound);
   const cargoVersions = new Map();
   for (const file of changed) {
     if (file === '.release-please-manifest.json' || changelogs.has(file)) continue;
@@ -857,6 +1008,7 @@ function validateAllowedFileSemantics({
             transitions,
             cargoVersions,
             productVersions,
+            products,
           },
           derivedRules,
         )
@@ -935,7 +1087,10 @@ export function releaseProductsFromManifests(config, before, after) {
   return changedProducts;
 }
 
-export function verifyReleaseCommit({ repo = ROOT, headRef = 'HEAD', products }) {
+export function verifyReleaseCommit(options) {
+  const { repo = ROOT, headRef = 'HEAD', products } = options;
+  const metadata = loadProducts(TOOL);
+  const buildBound = resolveBuildBoundCompatibilityProducts(metadata, options);
   if (
     !Array.isArray(products) ||
     products.length === 0 ||
@@ -1145,9 +1300,11 @@ export function verifyReleaseCommit({ repo = ROOT, headRef = 'HEAD', products })
     productVersions: new Map(
       [...byProduct].map(([product, { packagePath }]) => [product, after[packagePath]]),
     ),
+    products: metadata,
+    buildBound,
+    suppliedBuildBound: Object.hasOwn(options, 'buildBound'),
   });
 
-  const metadata = loadProducts(TOOL);
   for (const entry of publicSupportEntries()) {
     const transition = transitions.find(({ product }) => product === entry.product);
     if (!transition || transition.before === '0.0.0') continue;
@@ -1171,13 +1328,14 @@ export function verifyReleaseCommit({ repo = ROOT, headRef = 'HEAD', products })
   };
 }
 
-export function latestVerifiedReleaseCommit({ repo = ROOT, headRef = 'HEAD' } = {}) {
+export function latestVerifiedReleaseCommit(options = {}) {
+  const { repo = ROOT, headRef = 'HEAD' } = options;
   const { release, commit } = releaseHistory(repo);
   if (releaseCommit(repo, headRef) !== commit)
     throw error('latest release history belongs to another head');
   if (release === '') return null;
   const { products } = deriveReleaseProducts({ repo, headRef: release });
-  return verifyReleaseCommit({ repo, headRef: release, products });
+  return verifyReleaseCommit({ ...options, repo, headRef: release, products });
 }
 
 function parseArgs(argv) {

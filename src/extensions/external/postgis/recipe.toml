@@ -106,6 +106,13 @@ licenses = [
   "share/licenses/sqlite/LICENSE.md",
 ]
 
+# Windows incorporates the aggregate dependencies into each ABI module.
+[artifacts.native_dependency_modules_by_target]
+windows-x64-msvc = [
+  "lib/postgresql/postgis_raster-3.so",
+  "lib/postgresql/postgis_topology-3.so",
+]
+
 [[runtime_environment]]
 name = "GDAL_DATA"
 path = "share/postgresql/gdal"

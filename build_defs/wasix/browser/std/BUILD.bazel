@@ -1,0 +1,32 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/foundation:bun.bzl", "bun_test")
+load(":defs.bzl", "nightly_artifact")
+
+package(default_visibility = ["//visibility:public"])
+exports_files(["metadata.mts", "build-script.mts", "receipt.mts", "repositories.bzl", "defs.bzl"])
+
+bun_test(name = "metadata_test", entry_point = "metadata.test.mts", data = ["metadata.mts"])
+bun_test(name = "build_script_test", entry_point = "build-script.test.mts", data = ["build-script.mts"])
+nightly_artifact(name = "stdlib", artifact = "@browser_rust_std//:stdlib", tags = ["manual"])
+nightly_artifact(name = "construction_receipt", artifact = "@browser_rust_std//:construction_receipt", tags = ["manual"])
+
+# Keep registration cheap: only a selected nightly configuration loads the
+# immutable compiler/source repository and constructs its actual sysroot.
+toolchain(
+    name = "host_toolchain",
+    toolchain = "@browser_rust_std//:host_compiler",
+    toolchain_type = "@rules_rust//rust:toolchain",
+    target_settings = ["@rules_rust//rust/toolchain/channel:nightly"],
+    exec_compatible_with = ["@platforms//cpu:x86_64", "@platforms//os:linux"],
+    target_compatible_with = ["@platforms//cpu:x86_64", "@platforms//os:linux"],
+)
+toolchain(
+    name = "wasm_toolchain",
+    toolchain = "@browser_rust_std//:wasm_compiler",
+    toolchain_type = "@rules_rust//rust:toolchain",
+    target_settings = ["@rules_rust//rust/toolchain/channel:nightly"],
+    exec_compatible_with = ["@platforms//cpu:x86_64", "@platforms//os:linux"],
+    target_compatible_with = ["@platforms//cpu:wasm32", "@rules_rust//rust/platform/os:unknown"],
+)
+
+source_quality_files()

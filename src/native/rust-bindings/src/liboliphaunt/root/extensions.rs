@@ -1,8 +1,9 @@
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use super::NativeRuntimeProfile;
 use super::files::copy_file_preserving_permissions;
 use crate::error::{Error, Result};
 use crate::extension::{
@@ -36,7 +37,211 @@ pub(super) fn core_share_file(relative: &Path) -> bool {
 pub(super) fn packaged_extension_module_files() -> BTreeSet<String> {
     Extension::ALL
         .iter()
-        .flat_map(|extension| extension.native_module_files())
+        .flat_map(|extension| {
+            extension
+                .native_module_files()
+                .chain(extension.native_dependency_module_files())
+        })
+        .collect()
+}
+
+pub(super) struct ResolvedExtensionModules {
+    pub(super) extension: Extension,
+    pub(super) source_root: PathBuf,
+    pub(super) files: Vec<String>,
+    pub(super) embedded_fallback_file: Option<String>,
+}
+
+impl ResolvedExtensionModules {
+    pub(super) fn sql_members(&self) -> impl Iterator<Item = &'static str> {
+        self.extension
+            .sql_members()
+            .iter()
+            .copied()
+            .filter(|member| {
+                *member == self.extension.sql_name()
+                    || self.extension.package().is_none_or(|package| {
+                        let prefix = format!(
+                            "extension/{}/share/postgresql/extension/{member}",
+                            package.product
+                        );
+                        package.resources.iter().any(|resource| {
+                            resource.0 == format!("{prefix}.control")
+                                || resource
+                                    .0
+                                    .strip_prefix(&format!("{prefix}--"))
+                                    .is_some_and(|file| file.ends_with(".sql"))
+                        })
+                    })
+            })
+    }
+
+    pub(super) fn data_files(&self) -> impl Iterator<Item = &'static str> {
+        extension_data_files(self.extension)
+            .iter()
+            .copied()
+            .filter(|relative| {
+                self.extension.package().is_none_or(|package| {
+                    let path = format!("extension/{}/share/postgresql/{relative}", package.product);
+                    package.resources.iter().any(|resource| resource.0 == path)
+                })
+            })
+    }
+
+    pub(super) fn module_source(
+        &self,
+        profile: NativeRuntimeProfile,
+        embedded_modules: Option<&Path>,
+        module: &str,
+    ) -> Result<PathBuf> {
+        let directory = if profile.needs_embedded_modules() {
+            "lib/modules"
+        } else {
+            "lib/postgresql"
+        };
+        let source = self.source_root.join(directory).join(module);
+        if !profile.needs_embedded_modules()
+            || source.is_file()
+            || self.embedded_fallback_file.as_deref() != Some(module)
+        {
+            return Ok(source);
+        }
+        embedded_modules
+            .map(|directory| directory.join(module))
+            .ok_or_else(|| {
+                Error::Engine(
+                    "native liboliphaunt runtime requires embedded PostgreSQL extension modules"
+                        .to_owned(),
+                )
+            })
+    }
+}
+
+pub(super) fn resolve_extension_modules(
+    profile: NativeRuntimeProfile,
+    install_dir: &Path,
+    extension_artifact_dirs: &[PathBuf],
+    extensions: &[Extension],
+) -> Result<Vec<ResolvedExtensionModules>> {
+    #[derive(serde::Deserialize)]
+    struct MemberDescriptor {
+        schema: String,
+        sql_name: String,
+        dependency_modules: Vec<String>,
+    }
+
+    let module_profile = if profile.needs_embedded_modules() {
+        "modules"
+    } else {
+        "postgresql"
+    };
+
+    extensions
+        .iter()
+        .map(|&extension| {
+            let source_root = super::runtime::extension_artifact_root_for(
+                install_dir,
+                extension_artifact_dirs,
+                extension,
+            )
+            .to_path_buf();
+            let main_module = extension.native_module_file();
+            let candidates: Vec<_> = extension.native_dependency_module_files().collect();
+            let mut files: Vec<_> = extension.native_module_files().collect();
+            let mut embedded_fallback_file = None;
+            let dependencies = if let Some(package) = extension.package() {
+                // The immutable resource index owns the selected package's shape;
+                // older carriers may statically link what a new recipe splits out.
+                let indexed = |module: &str| {
+                    let relative = format!(
+                        "extension/{}/lib/{module_profile}/{module}",
+                        package.product
+                    );
+                    package
+                        .resources
+                        .iter()
+                        .any(|resource| resource.0 == relative)
+                };
+                if profile.needs_embedded_modules()
+                    && main_module.as_ref().is_some_and(|module| !indexed(module))
+                {
+                    embedded_fallback_file = main_module.clone();
+                }
+                files.retain(|module| Some(module) == main_module.as_ref() || indexed(module));
+                candidates
+                    .iter()
+                    .filter(|module| indexed(module))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            } else {
+                let descriptor_path = source_root.join("extension.json");
+                match fs::read(&descriptor_path) {
+                    Ok(bytes) => {
+                        let descriptor: MemberDescriptor =
+                            serde_json::from_slice(&bytes).map_err(|error| {
+                                Error::Engine(format!(
+                                    "read native extension descriptor {}: {error}",
+                                    descriptor_path.display()
+                                ))
+                            })?;
+                        if descriptor.schema != "oliphaunt-extension-member-payload-v1"
+                            || descriptor.sql_name != extension.sql_name()
+                            || descriptor.dependency_modules.iter().any(|module| {
+                                !(candidates.contains(module)
+                                    || files.contains(module)
+                                        && Some(module) != main_module.as_ref())
+                            })
+                            || descriptor
+                                .dependency_modules
+                                .iter()
+                                .collect::<BTreeSet<_>>()
+                                .len()
+                                != descriptor.dependency_modules.len()
+                        {
+                            return Err(Error::Engine(format!(
+                                "invalid native extension module declaration in {}",
+                                descriptor_path.display()
+                            )));
+                        }
+                        descriptor
+                            .dependency_modules
+                            .into_iter()
+                            .filter(|module| candidates.contains(module))
+                            .collect()
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        // Undeclared legacy installs expose only present dependency
+                        // sidecars. Actual loading still proves their runtime linkage.
+                        if profile.needs_embedded_modules() {
+                            embedded_fallback_file = main_module.clone();
+                        }
+                        candidates
+                            .into_iter()
+                            .filter(|module| {
+                                source_root
+                                    .join("lib")
+                                    .join(module_profile)
+                                    .join(module)
+                                    .is_file()
+                            })
+                            .collect()
+                    }
+                    Err(error) => {
+                        return Err(Error::Engine(format!(
+                            "read native extension descriptor {}: {error}",
+                            descriptor_path.display()
+                        )));
+                    }
+                }
+            };
+            files.extend(dependencies);
+            Ok(ResolvedExtensionModules {
+                extension,
+                source_root,
+                files,
+                embedded_fallback_file,
+            })
+        })
         .collect()
 }
 
@@ -140,6 +345,242 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    #[test]
+    fn module_resolution_preserves_legacy_static_and_frozen_package_shapes() {
+        let temp = TempTree::new("frozen-module-declarations");
+        let root = temp.path().join("postgis");
+        write_file(
+            &root.join("share/postgresql/extension/postgis.control"),
+            b"postgis",
+        );
+        let main = Extension::POSTGIS.native_module_file().unwrap();
+        let dependency = Extension::POSTGIS
+            .native_dependency_module_files()
+            .next()
+            .unwrap();
+        let resolve = |profile, extension| {
+            resolve_extension_modules(
+                profile,
+                temp.path(),
+                std::slice::from_ref(&root),
+                &[extension],
+            )
+            .unwrap()
+            .remove(0)
+            .files
+        };
+
+        assert_eq!(
+            resolve(NativeRuntimeProfile::PostgresServer, Extension::POSTGIS),
+            Extension::POSTGIS.native_module_files().collect::<Vec<_>>(),
+            "statically linked installs still require every owned PostgreSQL module"
+        );
+        write_file(
+            &root.join("lib/postgresql").join(&dependency),
+            b"declared candidate",
+        );
+        assert_eq!(
+            resolve(NativeRuntimeProfile::PostgresServer, Extension::POSTGIS),
+            Extension::POSTGIS
+                .native_module_files()
+                .chain([dependency.clone()])
+                .collect::<Vec<_>>()
+        );
+
+        static OLD_PACKAGE: crate::ExtensionPackage = crate::ExtensionPackage {
+            product: "oliphaunt-extension-postgis",
+            version: "3.6.3",
+            runtime_version: "0.3.3",
+            resources: &[
+                (
+                    "extension/oliphaunt-extension-postgis/lib/postgresql/postgis-3.so",
+                    b"static",
+                    "unused-in-resolver",
+                    true,
+                ),
+                (
+                    "extension/oliphaunt-extension-postgis/share/postgresql/proj/proj.db",
+                    b"proj",
+                    "unused-in-resolver",
+                    false,
+                ),
+            ],
+        };
+        assert_eq!(
+            resolve(
+                NativeRuntimeProfile::PostgresServer,
+                Extension::POSTGIS.with_package(&OLD_PACKAGE)
+            ),
+            vec![main.clone()],
+            "an old immutable package must not inherit a new producer's module layout"
+        );
+        let frozen = resolve_extension_modules(
+            NativeRuntimeProfile::PostgresServer,
+            temp.path(),
+            std::slice::from_ref(&root),
+            &[Extension::POSTGIS.with_package(&OLD_PACKAGE)],
+        )
+        .unwrap();
+        assert_eq!(frozen[0].sql_members().collect::<Vec<_>>(), ["postgis"]);
+        assert_eq!(frozen[0].data_files().collect::<Vec<_>>(), ["proj/proj.db"]);
+
+        let selected_path = Box::leak(
+            format!("extension/oliphaunt-extension-postgis/lib/modules/{dependency}")
+                .into_boxed_str(),
+        );
+        let foreign_path = Box::leak(
+            format!("extension/other-product/lib/postgresql/{dependency}").into_boxed_str(),
+        );
+        let indexed_package = Box::leak(Box::new(crate::ExtensionPackage {
+            product: OLD_PACKAGE.product,
+            version: "3.6.4",
+            runtime_version: OLD_PACKAGE.runtime_version,
+            resources: Box::leak(
+                vec![
+                    (
+                        selected_path as &str,
+                        b"dynamic".as_slice(),
+                        "unused-in-resolver",
+                        true,
+                    ),
+                    (
+                        foreign_path as &str,
+                        b"foreign".as_slice(),
+                        "unused-in-resolver",
+                        true,
+                    ),
+                ]
+                .into_boxed_slice(),
+            ),
+        }));
+        assert_eq!(
+            resolve(
+                NativeRuntimeProfile::OliphauntEmbedded,
+                Extension::POSTGIS.with_package(indexed_package)
+            ),
+            vec![main.clone(), dependency.clone()]
+        );
+        assert_eq!(
+            resolve(
+                NativeRuntimeProfile::PostgresServer,
+                Extension::POSTGIS.with_package(indexed_package)
+            ),
+            vec![main.clone()],
+            "a static server profile must not inherit an embedded dependency"
+        );
+        let server_path = Box::leak(
+            format!("extension/oliphaunt-extension-postgis/lib/postgresql/{dependency}")
+                .into_boxed_str(),
+        );
+        let server_package = Box::leak(Box::new(crate::ExtensionPackage {
+            resources: Box::leak(
+                vec![(
+                    server_path as &str,
+                    b"dynamic".as_slice(),
+                    "unused-in-resolver",
+                    true,
+                )]
+                .into_boxed_slice(),
+            ),
+            ..*indexed_package
+        }));
+        assert_eq!(
+            resolve(
+                NativeRuntimeProfile::PostgresServer,
+                Extension::POSTGIS.with_package(server_package)
+            ),
+            vec![main.clone(), dependency.clone()]
+        );
+        assert_eq!(
+            resolve(
+                NativeRuntimeProfile::OliphauntEmbedded,
+                Extension::POSTGIS.with_package(server_package)
+            ),
+            vec![main.clone()],
+            "a static embedded profile must not inherit a server dependency"
+        );
+        fs::remove_file(root.join("lib/postgresql").join(&dependency)).unwrap();
+        assert_eq!(
+            resolve(
+                NativeRuntimeProfile::OliphauntEmbedded,
+                Extension::POSTGIS.with_package(indexed_package)
+            ),
+            vec![main, dependency],
+            "a missing materialized file must not erase its frozen package requirement"
+        );
+    }
+
+    #[test]
+    fn current_member_declarations_bind_missing_modules_and_reject_other_members() {
+        let temp = TempTree::new("current-module-declarations");
+        let root = temp.path().join("postgis");
+        write_file(
+            &root.join("share/postgresql/extension/postgis.control"),
+            b"postgis",
+        );
+        let dependency = Extension::POSTGIS
+            .native_dependency_module_files()
+            .next()
+            .unwrap();
+        let main = Extension::POSTGIS.native_module_file().unwrap();
+        let declared_modules: Vec<_> = Extension::POSTGIS
+            .native_module_files()
+            .filter(|module| *module != main)
+            .chain([dependency.clone()])
+            .collect();
+        let descriptor = serde_json::json!({
+            "schema": "oliphaunt-extension-member-payload-v1", "sql_name": "postgis", "dependency_modules": &declared_modules,
+        });
+        write_file(
+            &root.join("extension.json"),
+            descriptor.to_string().as_bytes(),
+        );
+        let modules = resolve_extension_modules(
+            NativeRuntimeProfile::PostgresServer,
+            temp.path(),
+            std::slice::from_ref(&root),
+            &[Extension::POSTGIS],
+        )
+        .unwrap();
+        assert_eq!(
+            modules[0].files,
+            Extension::POSTGIS
+                .native_module_files()
+                .chain([dependency.clone()])
+                .collect::<Vec<_>>()
+        );
+        for (key, value) in [
+            ("sql_name", serde_json::json!("hstore")),
+            ("schema", serde_json::json!("unknown")),
+            (
+                "dependency_modules",
+                serde_json::json!(["../undeclared.so"]),
+            ),
+            (
+                "dependency_modules",
+                serde_json::json!([Extension::HSTORE.native_module_file().unwrap()]),
+            ),
+            ("dependency_modules", serde_json::json!([&main])),
+            (
+                "dependency_modules",
+                serde_json::json!([&dependency, &dependency]),
+            ),
+        ] {
+            let mut changed = descriptor.clone();
+            changed[key] = value;
+            write_file(&root.join("extension.json"), changed.to_string().as_bytes());
+            assert!(
+                resolve_extension_modules(
+                    NativeRuntimeProfile::PostgresServer,
+                    temp.path(),
+                    std::slice::from_ref(&root),
+                    &[Extension::POSTGIS]
+                )
+                .is_err()
+            );
+        }
+    }
 
     #[test]
     fn create_extension_assets_require_control_and_sql_files() {

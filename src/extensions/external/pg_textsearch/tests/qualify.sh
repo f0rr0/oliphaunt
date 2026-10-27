@@ -163,36 +163,7 @@ psql_db() {
 
 start_server
 psql_db postgres -c 'CREATE DATABASE pg_textsearch_upgrade' >/dev/null
-psql_db pg_textsearch_upgrade -v old_version="$old_version" <<'SQL'
-CREATE EXTENSION pg_textsearch VERSION :'old_version';
-CREATE TABLE upgrade_docs(id integer PRIMARY KEY, body text NOT NULL);
-INSERT INTO upgrade_docs
-SELECT id,
-       CASE
-         WHEN id = 1 THEN 'postgres database postgres database query migration'
-         WHEN id = 3 THEN 'legacyalpha legacyalpha persisted posting'
-         WHEN id = 4 THEN 'deletionproof deletionproof persisted posting'
-         WHEN id = 5 THEN 'legacybeta legacybeta persisted posting'
-         WHEN id = 6 THEN 'deletionproof surviving persisted posting'
-         WHEN id % 2 = 0 THEN 'postgres database guide'
-         ELSE 'unrelated document about wildlife'
-       END
-FROM generate_series(1, 256) AS id;
-CREATE INDEX upgrade_docs_bm25 ON upgrade_docs USING bm25(body)
-  WITH (text_config = 'english');
-SELECT bm25_spill_index('upgrade_docs_bm25');
-DO $$
-DECLARE top_id integer;
-BEGIN
-  SELECT id INTO top_id
-  FROM upgrade_docs
-  ORDER BY body <@> to_bm25query('postgres database', 'upgrade_docs_bm25')
-  LIMIT 1;
-  IF top_id IS DISTINCT FROM 1 THEN
-    RAISE EXCEPTION 'old pg_textsearch query returned unexpected top id %', top_id;
-  END IF;
-END $$;
-SQL
+psql_db pg_textsearch_upgrade -v old_version="$old_version" -f "$script_dir/seed.sql"
 stop_server
 
 find "$extension_dir" -maxdepth 1 -type f -name 'pg_textsearch--*.sql' -delete
@@ -201,67 +172,12 @@ install -m 0644 "$source_runtime/share/postgresql/extension/pg_textsearch.contro
 install -m 0644 "${current_sql_files[@]}" "$extension_dir/"
 
 start_server
-psql_db pg_textsearch_upgrade <<'SQL'
-DO $$
-DECLARE top_id integer;
-BEGIN
-  SELECT id INTO top_id
-  FROM upgrade_docs
-  ORDER BY body <@> to_bm25query('postgres database', 'upgrade_docs_bm25')
-  LIMIT 1;
-  IF top_id IS DISTINCT FROM 1 THEN
-    RAISE EXCEPTION 'pre-upgrade query with the current library returned unexpected top id %', top_id;
-  END IF;
-END $$;
-ALTER EXTENSION pg_textsearch UPDATE;
-INSERT INTO upgrade_docs VALUES
-  (1000, 'upgrade sentinel upgrade sentinel upgrade sentinel migration proof');
-UPDATE upgrade_docs
-SET body = 'mutationproof mutationproof updated persisted row'
-WHERE id = 2;
-DELETE FROM upgrade_docs WHERE id = 4;
-SELECT bm25_force_merge('upgrade_docs_bm25');
-SQL
+psql_db pg_textsearch_upgrade -f "$script_dir/upgrade.sql"
 
 assert_upgraded_state() {
   local database="$1"
   local installed_version
-  psql_db "$database" <<'SQL'
-DO $$
-DECLARE
-  actual_body text;
-  actual_count bigint;
-  top_id integer;
-  probe record;
-BEGIN
-  SELECT count(*) INTO actual_count FROM upgrade_docs;
-  IF actual_count IS DISTINCT FROM 256 THEN
-    RAISE EXCEPTION 'upgraded table contains % rows, expected 256', actual_count;
-  END IF;
-
-  SELECT body INTO actual_body FROM upgrade_docs WHERE id = 2;
-  IF actual_body IS DISTINCT FROM 'mutationproof mutationproof updated persisted row' THEN
-    RAISE EXCEPTION 'updated row 2 has unexpected body %', actual_body;
-  END IF;
-  IF EXISTS (SELECT 1 FROM upgrade_docs WHERE id = 4) THEN
-    RAISE EXCEPTION 'deleted row 4 is still visible';
-  END IF;
-
-  FOR probe IN SELECT * FROM (VALUES
-    ('postgres database', 1), ('legacyalpha', 3), ('legacybeta', 5),
-    ('mutationproof', 2), ('upgrade sentinel', 1000), ('deletionproof', 6)
-  ) AS expected(term, id)
-  LOOP
-    SELECT id INTO top_id
-    FROM upgrade_docs
-    ORDER BY body <@> to_bm25query(probe.term, 'upgrade_docs_bm25')
-    LIMIT 1;
-    IF top_id IS DISTINCT FROM probe.id THEN
-      RAISE EXCEPTION 'upgraded query % returned id %, expected %', probe.term, top_id, probe.id;
-    END IF;
-  END LOOP;
-END $$;
-SQL
+  psql_db "$database" -f "$script_dir/verify.sql"
   installed_version="$(psql_db "$database" -Atc \
     "SELECT extversion FROM pg_extension WHERE extname = 'pg_textsearch'")"
   [ "$installed_version" = "$current_version" ] || \

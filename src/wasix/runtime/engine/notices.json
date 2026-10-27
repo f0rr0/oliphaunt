@@ -1,0 +1,149 @@
+{
+  "source": {
+    "v8_commit": "b0a55a7dad7f536cce1f9aaddba89894c8533946",
+    "wasmer_commit": "82ff099e082da586b38af79986abbb8b677f8baf",
+    "wee8_library_sha256": "04061d2035659457dcedb2e695ab3ef50de97d3ab71579b4fe824523c47f582a"
+  },
+  "notices": [
+    {
+      "id": "v8",
+      "name": "V8",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/LICENSE",
+      "sha256": "6ab33af8774a0f396ee3aeeb761e3229057682d6f9fa7f572e390c2cb3a6e509"
+    },
+    {
+      "id": "v8-bsd",
+      "name": "V8 legacy BSD notice",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/LICENSE.v8",
+      "sha256": "4af93c12062c58058378de2397dc1c92bbff9ddfb1d583a01c84127557ce97ca"
+    },
+    {
+      "id": "wasm-api",
+      "name": "WebAssembly C and C++ API",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/third_party/wasm-api/LICENSE",
+      "sha256": "c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08"
+    },
+    {
+      "id": "rapidhash",
+      "name": "rapidhash",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/third_party/rapidhash-v8/LICENSE",
+      "sha256": "db672df7faf793fbe28b8074fdd10822363e1525816b45c9627754885de842b0"
+    },
+    {
+      "id": "siphash",
+      "name": "SipHash",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/third_party/siphash/LICENSE",
+      "sha256": "36ffd9dc085d529a7e60e1276d73ae5a030b020313e6c5408593a6ae2af39673"
+    },
+    {
+      "id": "utf8-decoder",
+      "name": "UTF-8 decoder",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/third_party/utf8-decoder/LICENSE",
+      "sha256": "3f712e5fbdfdbd5ee7d9b8c8152580220df55de47f4eba2f26c95c4de19ad096"
+    },
+    {
+      "id": "valgrind",
+      "name": "Valgrind client API header",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/third_party/valgrind/LICENSE",
+      "sha256": "ebf25b8ce59c9e8883acd1ca75b6fc121937ca034f666c4077d2be739d2e1622"
+    },
+    {
+      "id": "glibc",
+      "name": "GNU C Library math routines",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/third_party/glibc/LICENSE",
+      "sha256": "b634ab5640e258563c536e658cad87080553df6f34f62269a21d554844e58bfe"
+    },
+    {
+      "id": "icu",
+      "name": "ICU and Unicode data",
+      "url": "https://chromium.googlesource.com/chromium/deps/icu/+/c9fb4b3a6fb54aa8c20a03bbcaa0a4a985ffd34b/LICENSE?format=TEXT",
+      "sha256": "4f84f7771f9645df2a8c241aa53a9cb6af36de156f55d2102082696add438bea",
+      "encoding": "gitiles-base64",
+      "text_sha256": "17510cf7a58b4879b887ec05a45d72cf1b73544dd9ec7e72f20110ed104229ee"
+    },
+    {
+      "id": "zlib",
+      "name": "zlib",
+      "url": "https://chromium.googlesource.com/chromium/src/third_party/zlib/+/788cb3c270e8700b425c7bdca1f9ce6b0c1400a9/LICENSE?format=TEXT",
+      "sha256": "a933cce44298f130692ed93dd7820bb26de792251c4b4c4677bf746f4dd9492d",
+      "encoding": "gitiles-base64",
+      "text_sha256": "e1cfcc55c325b3f78cf55df9664abaa066e2271dffe8213347d9fccdfbac8f2c"
+    },
+    {
+      "id": "highway-bsd",
+      "name": "Highway BSD license alternative",
+      "url": "https://raw.githubusercontent.com/google/highway/00fe003dac355b979f36157f9407c7c46448958e/LICENSE-BSD3",
+      "sha256": "d25e82e26acd42ca3ccc9993622631163425b869b9e16284226d534cff6470f2"
+    },
+    {
+      "id": "highway-apache",
+      "name": "Highway Apache license alternative",
+      "url": "https://raw.githubusercontent.com/google/highway/00fe003dac355b979f36157f9407c7c46448958e/LICENSE",
+      "sha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1"
+    },
+    {
+      "id": "fast-float",
+      "name": "fast_float",
+      "url": "https://raw.githubusercontent.com/fastfloat/fast_float/cb1d42aaa1e14b09e1452cfdef373d051b8c02a4/LICENSE-MIT",
+      "sha256": "e562f3f974ced7e69dd1db77b820b36bcf8f30377f1aa105723fba449c53c4e6"
+    },
+    {
+      "id": "fp16",
+      "name": "FP16",
+      "url": "https://raw.githubusercontent.com/Maratyszcza/FP16/0a92994d729ff76a58f692d3028ca1b64b145d91/LICENSE",
+      "sha256": "17e4f539024be2749ee729d1e2f01d24cef12ece8c9bf18e91a4349be29c80bf"
+    },
+    {
+      "id": "abseil",
+      "name": "Abseil",
+      "url": "https://chromium.googlesource.com/chromium/src/third_party/abseil-cpp/+/3fbb10e80d80e3430224b75add53c47c7a711612/LICENSE?format=TEXT",
+      "sha256": "cb63961fac969b523344c5c40ec27ef60d7e8c7b34d2ef63548eb19f35a261e4",
+      "encoding": "gitiles-base64",
+      "text_sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+    },
+    {
+      "id": "simdutf",
+      "name": "simdutf",
+      "url": "https://chromium.googlesource.com/chromium/src/third_party/simdutf/+/40d1fa26cd5ca221605c974e22c001ca2fb12fde/LICENSE?format=TEXT",
+      "sha256": "978d0d3cf8b2907e241ef30912ed5b277b4c37aa7d51f35d96485293621723d4",
+      "encoding": "gitiles-base64",
+      "text_sha256": "fc8dbc04e03ad4efc08a647ffe7f995b811a95bc04c0e85a56d5277c6593fa5f"
+    },
+    {
+      "id": "inspector-protocol",
+      "name": "Inspector protocol",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/third_party/inspector_protocol/LICENSE",
+      "sha256": "450ebb9e9e50c2809d9ca581931fc8946d8d5aa0c8c35aae9ac471342fe4a88e"
+    },
+    {
+      "id": "strongtalk",
+      "name": "Strongtalk assembler",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/src/codegen/assembler.h",
+      "sha256": "f2a872a26fcb7c96944f65917308247cf045adfe8d579273a76ca6de23529112",
+      "lines": [1, 34],
+      "text_sha256": "825b7c5672e13a64e7db076600f0c5c0dd748ec8291f3ab7a9e656a715e9bb78"
+    },
+    {
+      "id": "fdlibm",
+      "name": "fdlibm math routines",
+      "url": "https://raw.githubusercontent.com/v8/v8/b0a55a7dad7f536cce1f9aaddba89894c8533946/src/base/ieee754.cc",
+      "sha256": "1bf999809d4c4c1d31ad5ff3578d32614796f159e08b9e7782560d017721a0c2",
+      "lines": [1, 15],
+      "text_sha256": "e23511fdb65d0fa3401f23e722af6a71f451ae949244857e6a9487de972b7dea"
+    },
+    {
+      "id": "chromium-bsd",
+      "name": "Chromium BSD terms referenced by zlib optimizations",
+      "url": "https://chromium.googlesource.com/chromium/src/+/f0a564a4cb20ba0d90c4872929ddb6f01ab7cbbc/LICENSE?format=TEXT",
+      "sha256": "363eddfec00830d4826f38173bd40a17eeada40a947a8d93b935371a1ae5a6d1",
+      "encoding": "gitiles-base64",
+      "text_sha256": "368cca1106be99d39ecd32a38d8305585d802a475effb66380b91ffc9bcf709b"
+    },
+    {
+      "id": "wasmer",
+      "name": "Wasmer and WASIX source",
+      "url": "https://raw.githubusercontent.com/wasmerio/wasmer/82ff099e082da586b38af79986abbb8b677f8baf/LICENSE",
+      "sha256": "76dc7d305458d07478bc62669fe53dbfd3b94b95c5e00fbb45af1f492cbd7284"
+    }
+  ]
+}

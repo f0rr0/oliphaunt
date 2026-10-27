@@ -1,0 +1,37 @@
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "oliphaunt-wasix-tools-installed-consumer",
+      "devDependencies": {
+        "@oliphaunt/wasix-ts": "0.2.2",
+        "@types/node": "24.12.4",
+        "typescript": "6.0.3",
+      },
+    },
+  },
+  "packages": {
+    "@oliphaunt/liboliphaunt-wasix": ["@oliphaunt/liboliphaunt-wasix@0.3.2", "", {}, "sha512-MJ/MbFuYcR7UhnlpMtO1gFsBvKrszasD5nZT1WpvlJiaNKbNvN3pHbNyZ7UyO5e21Lb3bHBKci7BqPsOfVkU9g=="],
+
+    "@oliphaunt/ts-query": ["@oliphaunt/ts-query@0.1.1", "", {}, "sha512-QV9Sv0S80qyCfJpgtGd6167nA3rvNdJ1gyFYb+ro11jZlElRALVwMntSdBeiggHK12BXg6BvPuIVora0OC62QQ=="],
+
+    "@oliphaunt/wasix-napi-darwin-arm64": ["@oliphaunt/wasix-napi-darwin-arm64@0.2.1", "", { "os": "darwin", "cpu": "arm64" }, "sha512-kOuWdl6f53/uMDltjTm2nIcLOj9dgDLLKvSR8ZNsaa4ysQ1a8UlV1rLFpGyBF9ySDZCyitGFm4b/3XTwrmm7qA=="],
+
+    "@oliphaunt/wasix-napi-linux-arm64-gnu": ["@oliphaunt/wasix-napi-linux-arm64-gnu@0.2.1", "", { "os": "linux", "cpu": "arm64" }, "sha512-GZ9W7/xtdPoEJpSsA42XOFsUhzQhyrB8dhXuaLPIOkAdRrr8lPxpnOjJSfqy2Jnl6dB0dxsFs0qIX+0Gg8Q6CA=="],
+
+    "@oliphaunt/wasix-napi-linux-x64-gnu": ["@oliphaunt/wasix-napi-linux-x64-gnu@0.2.1", "", { "os": "linux", "cpu": "x64" }, "sha512-EO3rHfriV/PtTW+CoG+RXjUF4Rbv06IVTnsjz8n/s3YKz9Yu7nKWptEKvqShbRONshuuOnhkecYzjl8C4okJTw=="],
+
+    "@oliphaunt/wasix-napi-win32-x64-msvc": ["@oliphaunt/wasix-napi-win32-x64-msvc@0.2.1", "", { "os": "win32", "cpu": "x64" }, "sha512-WUo9A/EeOsisMgplvAutc41BfVLwFcC+U7kHo9/3wT0pqEunSackH/yavcNsJ8efYl7g0hqZiKt67gH+AYfwHg=="],
+
+    "@oliphaunt/wasix-ts": ["@oliphaunt/wasix-ts@0.2.2", "", { "dependencies": { "@oliphaunt/liboliphaunt-wasix": "0.3.2", "@oliphaunt/ts-query": "0.1.1", "fzstd": "0.1.1" }, "optionalDependencies": { "@oliphaunt/wasix-napi-darwin-arm64": "0.2.1", "@oliphaunt/wasix-napi-linux-arm64-gnu": "0.2.1", "@oliphaunt/wasix-napi-linux-x64-gnu": "0.2.1", "@oliphaunt/wasix-napi-win32-x64-msvc": "0.2.1" } }, "sha512-zgu2jbaIpIY3S3OvbdX4JpJfwCfS2GBynR0RCAXwgxD6VPKhlsi9AAC6LNAT05923OI4RL5QiCGYctcUgUwbDQ=="],
+
+    "@types/node": ["@types/node@24.12.4", "", { "dependencies": { "undici-types": "~7.16.0" } }, "sha512-GUUEShf+PBCGW2KaXwcIt3Yk+e3pkKwWKb9GSyM9WQVE+ep2jzmHdGsHzu4wgcZy5fN9FBdVzjpBQsYlpfpgLA=="],
+
+    "fzstd": ["fzstd@0.1.1", "", {}, "sha512-dkuVSOKKwh3eas5VkJy1AW1vFpet8TA/fGmVA5krThl8YcOVE/8ZIoEA1+U1vEn5ckxxhLirSdY837azmbaNHA=="],
+
+    "typescript": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
+
+    "undici-types": ["undici-types@7.16.0", "", {}, "sha512-Zz+aZWSj8LE6zoxD+xrjh4VfkIG8Ya6LvYkZqtUQGJPZjYl53ypCaUwWqo7eI0x66KBGeRo+mlBEkMSeSZ38Nw=="],
+  }
+}

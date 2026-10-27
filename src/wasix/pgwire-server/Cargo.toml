@@ -1,14 +1,14 @@
 [package]
 name = "oliphaunt-pgwire-server"
 version = "0.2.1"
-edition = "2024"
-rust-version = "1.93"
-license = "MIT"
+edition.workspace = true
+rust-version = "1.96"
+license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "PostgreSQL socket server and CLI for embedded Oliphaunt databases."
 readme = "README.md"
-exclude = ["moon.yml", "release.toml", "tools"]
+exclude = ["BUILD.bazel", "moon.yml", "release.toml", "tools"]
 
 [features]
 default = ["wasix"]
@@ -58,8 +58,8 @@ extension-vector = ["extensions", "oliphaunt-wasix/extension-vector"]
 
 [dependencies]
 anyhow = "1"
-oliphaunt-query = { path = "../../query/rust", version = "0.1.1" }
-oliphaunt-wasix = { path = "../sdks/rust", version = "0.3.2", optional = true }
+oliphaunt-query = { version = "0.1.1" }
+oliphaunt-wasix = { workspace = true, optional = true }
 tempfile = { version = "3", optional = true }
 tokio = { version = "1", features = ["sync"], optional = true }
 tracing = { version = "0.1", optional = true }

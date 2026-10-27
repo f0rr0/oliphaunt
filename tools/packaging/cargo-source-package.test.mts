@@ -19,7 +19,9 @@ import {
   cargoPackageRelativePathParts,
   createDeterministicTar,
   fitCargoPayloadParts,
+  packagedCargoManifestText,
   packageGeneratedCargoSource,
+  parseCargoPackageNameVersion,
 } from './cargo-source-package.mts';
 import { readPortableArchiveEntries } from './portable-archive.mts';
 import { assertReleaseNoticesInArchive } from './release-notices.mts';
@@ -121,6 +123,40 @@ if (['prepare', 'verify'].includes(process.argv[2])) {
   } else throw new Error('expected prepare or verify');
   process.exit(0);
 }
+
+test('standalone public manifests resolve inherited requirements and structurally remove every path', () => {
+  const source =
+    '[package]\nname="sdk"\nversion="0.3.2"\nworkspace="../adapters"\n[dependencies]\nquery={workspace=true,optional=true}\n[build-dependencies]\nhelper={path="../helper",version="0.3.2"}\n[target.\'cfg(unix)\'.dependencies]\nruntime={path="../runtime",version="=0.3.2"}\n[workspace]\n';
+  const text = packagedCargoManifestText(
+    source,
+    '[workspace.dependencies]\nquery={version="=0.1.1",features=["std"]}\n',
+  );
+  assert.deepEqual(parseCargoPackageNameVersion(text, 'normalized manifest'), {
+    name: 'sdk',
+    version: '0.3.2',
+  });
+  assert.throws(
+    () =>
+      parseCargoPackageNameVersion('[package]\nname="sdk"\nversion={workspace=true}\n', 'source'),
+    /package.name and package.version/u,
+  );
+  assert.throws(
+    () => parseCargoPackageNameVersion('[package', 'invalid source'),
+    /valid Cargo TOML/u,
+  );
+  const standalone = Bun.TOML.parse(text);
+  assert.deepEqual(standalone.dependencies.query, {
+    version: '=0.1.1',
+    features: ['std'],
+    optional: true,
+  });
+  assert.deepEqual(standalone['build-dependencies'].helper, { version: '0.3.2' });
+  assert.deepEqual(standalone.target['cfg(unix)'].dependencies.runtime, { version: '=0.3.2' });
+  assert.equal(standalone.package.workspace, undefined);
+  assert.deepEqual(standalone.workspace, {});
+  assert.equal(text.match(/\["workspace"\]/gu)?.length, 1);
+  assert.throws(() => packagedCargoManifestText(source), /inheritance/);
+});
 
 test('payload splitting follows compressed crate size and preserves every byte', (t) => {
   const { root } = fixture(t, 'compressed-parts');
@@ -238,4 +274,49 @@ test('generated Cargo carriers match Cargo-selected source bytes and reject link
     /regular files/,
   );
   assert.throws(() => createDeterministicTar(source, 'unsafe', {}), /regular files/);
+});
+
+test('generated Cargo carriers apply explicit archive modes and preserve source modes by default', (t) => {
+  const { root, source } = fixture(t, 'generated-cargo-modes');
+  writeFileSync(path.join(source, 'Cargo.toml'), manifest('generated-modes'));
+  const writable = path.join(source, 'src/lib.rs');
+  const executable = path.join(source, 'build.rs');
+  writeFileSync(writable, 'pub const VALUE: u32 = 42;\n');
+  writeFileSync(executable, 'fn main() {}\n');
+  chmodSync(writable, 0o666);
+  chmodSync(executable, 0o755);
+
+  const archive = (directory, options = {}) =>
+    readPortableArchiveEntries(
+      packageGeneratedCargoSource(
+        path.join(source, 'Cargo.toml'),
+        path.join(root, directory),
+        options,
+      ),
+    );
+  const fixed = archive('fixed', { fixedFileMode: 0o644 });
+  for (const [name, entry] of fixed) {
+    assert.equal(entry.mode, entry.isFile ? 0o644 : 0o755, name);
+  }
+  assert.equal(
+    fixed.get('generated-modes-0.1.0/src/lib.rs').data().toString(),
+    readFileSync(writable, 'utf8'),
+  );
+  assert.equal(
+    fixed.get('generated-modes-0.1.0/build.rs').data().toString(),
+    readFileSync(executable, 'utf8'),
+  );
+
+  const preserved = archive('preserved');
+  assert.equal(
+    preserved.get('generated-modes-0.1.0/src/lib.rs').mode,
+    statSync(writable).mode & 0o777,
+  );
+  assert.equal(
+    preserved.get('generated-modes-0.1.0/build.rs').mode,
+    statSync(executable).mode & 0o777,
+  );
+  if (process.platform !== 'win32') {
+    assert.equal(preserved.get('generated-modes-0.1.0/build.rs').mode, 0o755);
+  }
 });

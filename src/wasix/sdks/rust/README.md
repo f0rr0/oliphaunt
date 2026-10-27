@@ -8,7 +8,7 @@ Host WebAssembly PostgreSQL in a Rust application. The synchronous handle must b
 cargo add oliphaunt-wasix
 ```
 
-The [quickstart](https://oliphaunt.dev/docs/sdk/wasix-rust) covers prerequisites and the versions documented by the current site. Pin dependencies in your application manifest or lockfile.
+The [quickstart](https://oliphaunt.dev/docs/sdk/wasix-rust) covers prerequisites. Pin dependencies in your application manifest or lockfile.
 
 ## First query
 

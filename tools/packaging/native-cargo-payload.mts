@@ -1,4 +1,4 @@
-import { assertSameStringSet } from './release-carrier.mts';
+import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
   closeSync,
@@ -15,6 +15,12 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import {
+  allArtifactTargets,
+  compareText,
+  currentProductVersion,
+  ROOT,
+} from '../release/release-artifact-targets.mts';
+import {
   createDeterministicTar,
   fitCargoPayloadParts,
   packageGeneratedCargoSource,
@@ -27,22 +33,11 @@ import {
   releaseProfilePackageLicense,
   stageReleaseNotices,
 } from './release-notices.mts';
-import {
-  allArtifactTargets,
-  compareText,
-  currentProductVersion,
-  ROOT,
-} from '../release/release-artifact-targets.mts';
 
 const PREFIX = 'native-cargo-payload.mts';
 const PRODUCT = 'liboliphaunt-native';
 const CRATES_IO_MAX_BYTES = 10 * 1024 * 1024;
 const DEFAULT_PART_BYTES = 64 * 1024 * 1024;
-export const NATIVE_CARGO_CARRIER_LICENSES = Object.freeze({
-  'native-runtime': releaseProfilePackageLicense('native-runtime').spdx,
-  'native-tools': releaseProfilePackageLicense('native-tools').spdx,
-  'code-facade': releaseProfilePackageLicense('code-facade').spdx,
-});
 
 const AGGREGATOR_BUILD_RS = String.raw`use std::collections::BTreeMap;
 use std::env;
@@ -58,7 +53,7 @@ const TARGET: &str = __TARGET__;
 const PART_ROOTS: &[&str] = &[
 __PART_ROOTS__
 ];
-const FILE_SHA256: &[(&str, &str)] = &[
+const FILE_SHA256: &[(&str, &str, bool)] = &[
 __FILE_SHA256__
 ];
 
@@ -124,15 +119,15 @@ fn emit_manifest() {
             .expect("payload file stays under payload root")
             .to_string_lossy()
             .replace('\\', "/");
-        let sha256 = FILE_SHA256.iter()
-            .find_map(|(candidate, digest)| (*candidate == relative).then_some(*digest))
+        let (sha256, executable) = FILE_SHA256.iter()
+            .find_map(|(candidate, digest, executable)| (*candidate == relative).then_some((*digest, *executable)))
             .unwrap_or_else(|| panic!("reconstructed liboliphaunt payload has undeclared file {relative}"));
         text.push_str(&format!(
             "\n[[files]]\nsource = {:?}\nrelative = {:?}\nsha256 = {:?}\nexecutable = {}\n",
             file.display().to_string(),
             relative,
             sha256,
-            is_executable_relative(&relative),
+            executable,
         ));
     }
     fs::write(&manifest, text).expect("write liboliphaunt native artifact manifest");
@@ -232,9 +227,6 @@ fn collect_files_inner(path: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> 
     Ok(())
 }
 
-fn is_executable_relative(relative: &str) -> bool {
-    relative.starts_with("runtime/bin/") || relative.starts_with("bin/")
-}
 `;
 
 export function fail(message) {
@@ -304,16 +296,25 @@ function tomlString(value) {
   return JSON.stringify(value);
 }
 
-function cargoIncludeMembers(profile, baseMembers) {
+function cargoIncludeMembers(profile, baseMembers, noticeSourceRoot) {
   return JSON.stringify([
     ...baseMembers,
-    ...releaseNoticeRows({ profile }).map((row) => row.member),
+    ...releaseNoticeRows({ profile, sourceRoot: noticeSourceRoot }).map((row) => row.member),
   ]);
 }
 
 function writePartCrate(
   crateDir,
-  { targetId, index, version, packageBase, artifactProduct, artifactLabel, noticeProfile },
+  {
+    targetId,
+    index,
+    version,
+    packageBase,
+    artifactProduct,
+    artifactLabel,
+    noticeProfile,
+    noticeSourceRoot,
+  },
 ) {
   rmSync(crateDir, { recursive: true, force: true });
   const name = partPackageName(targetId, index, { packageBase });
@@ -330,10 +331,10 @@ description = "Cargo payload part ${String(index).padStart(3, '0')} for the ${ta
 readme = "README.md"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
-license = "${NATIVE_CARGO_CARRIER_LICENSES[noticeProfile]}"
+license = "${releaseProfilePackageLicense(noticeProfile, { sourceRoot: noticeSourceRoot }).spdx}"
 links = "${links}"
 build = "build.rs"
-include = ${cargoIncludeMembers(noticeProfile, ['Cargo.toml', 'README.md', 'build.rs', 'src/**', 'payload/**'])}
+include = ${cargoIncludeMembers(noticeProfile, ['Cargo.toml', 'README.md', 'build.rs', 'src/**', 'payload/**'], noticeSourceRoot)}
 
 [lib]
 path = "src/lib.rs"
@@ -377,8 +378,11 @@ fn main() {
 }
 `,
   );
-  stageReleaseNotices(crateDir, { profile: noticeProfile });
-  assertReleaseNoticesInDirectory(crateDir, { profile: noticeProfile });
+  stageReleaseNotices(crateDir, { profile: noticeProfile, sourceRoot: noticeSourceRoot });
+  assertReleaseNoticesInDirectory(crateDir, {
+    profile: noticeProfile,
+    sourceRoot: noticeSourceRoot,
+  });
 }
 
 function writeAggregatorCrate(
@@ -392,6 +396,7 @@ function writeAggregatorCrate(
     artifactKind,
     artifactLabel,
     payloadFiles,
+    noticeSourceRoot,
   },
 ) {
   rmSync(crateDir, { recursive: true, force: true });
@@ -420,10 +425,10 @@ description = "Cargo artifact crate for the ${target.target} ${artifactLabel}."
 readme = "README.md"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
-license = "${NATIVE_CARGO_CARRIER_LICENSES['code-facade']}"
+license = "${releaseProfilePackageLicense('code-facade', { sourceRoot: noticeSourceRoot }).spdx}"
 links = "${links}"
 build = "build.rs"
-include = ${cargoIncludeMembers('code-facade', ['Cargo.toml', 'README.md', 'build.rs', 'src/**'])}
+include = ${cargoIncludeMembers('code-facade', ['Cargo.toml', 'README.md', 'build.rs', 'src/**'], noticeSourceRoot)}
 
 [lib]
 path = "src/lib.rs"
@@ -464,12 +469,18 @@ pub const LIBRARY_RELATIVE_PATH: &str = "${libraryRelativePath}";
       .replace(
         '__FILE_SHA256__',
         payloadFiles
-          .map(({ relative, sha256 }) => `    (${tomlString(relative)}, ${tomlString(sha256)}),`)
+          .map(
+            ({ relative, sha256, executable }) =>
+              `    (${tomlString(relative)}, ${tomlString(sha256)}, ${executable}),`,
+          )
           .join('\n'),
       ),
   );
-  stageReleaseNotices(crateDir, { profile: 'code-facade' });
-  assertReleaseNoticesInDirectory(crateDir, { profile: 'code-facade' });
+  stageReleaseNotices(crateDir, { profile: 'code-facade', sourceRoot: noticeSourceRoot });
+  assertReleaseNoticesInDirectory(crateDir, {
+    profile: 'code-facade',
+    sourceRoot: noticeSourceRoot,
+  });
 }
 
 function walkFiles(root) {
@@ -491,11 +502,28 @@ function walkFiles(root) {
   return files.sort(compareText);
 }
 
-function frozenPayloadFiles(root) {
-  return walkFiles(root).map((file) => ({
-    relative: path.relative(root, file).split(path.sep).join('/'),
-    sha256: createHash('sha256').update(readFileSync(file)).digest('hex'),
-  }));
+function frozenPayloadFiles(root, executableFiles?: readonly string[]) {
+  const executables = executableFiles === undefined ? undefined : new Set(executableFiles);
+  const files = walkFiles(root).map((file) => {
+    const relative = path.relative(root, file).split(path.sep).join('/');
+    return {
+      relative,
+      sha256: createHash('sha256').update(readFileSync(file)).digest('hex'),
+      executable: executables
+        ? executables.has(relative)
+        : relative.startsWith('runtime/bin/') || relative.startsWith('bin/'),
+    };
+  });
+  if (executables)
+    assert.deepEqual(
+      files
+        .filter(({ executable }) => executable)
+        .map(({ relative }) => relative)
+        .sort(compareText),
+      [...executableFiles].sort(compareText),
+      'declared executable native payload files',
+    );
+  return files;
 }
 
 function nextPartDir(
@@ -503,7 +531,7 @@ function nextPartDir(
   targetId,
   index,
   version,
-  { packageBase, artifactProduct, artifactLabel, noticeProfile },
+  { packageBase, artifactProduct, artifactLabel, noticeProfile, noticeSourceRoot },
 ) {
   const crateDir = path.join(sourceRoot, partPackageName(targetId, index, { packageBase }));
   writePartCrate(crateDir, {
@@ -514,6 +542,7 @@ function nextPartDir(
     artifactProduct,
     artifactLabel,
     noticeProfile,
+    noticeSourceRoot,
   });
   return crateDir;
 }
@@ -531,7 +560,16 @@ function copyPayloadFile(source, destination) {
 function buildPartCrates(
   extractedRoot,
   sourceRoot,
-  { targetId, version, partBytes, packageBase, artifactProduct, artifactLabel, noticeProfile },
+  {
+    targetId,
+    version,
+    partBytes,
+    packageBase,
+    artifactProduct,
+    artifactLabel,
+    noticeProfile,
+    noticeSourceRoot,
+  },
 ) {
   const partDirs = [];
   let currentDir;
@@ -546,6 +584,7 @@ function buildPartCrates(
       artifactProduct,
       artifactLabel,
       noticeProfile,
+      noticeSourceRoot,
     });
     partDirs.push(partDir);
     return partDir;
@@ -605,15 +644,21 @@ function validateCrateSize(cratePath) {
   }
 }
 
-export function freezeSourceCrate(packageData, outputDir, cargoTargetDir) {
+export function freezeSourceCrate(
+  packageData,
+  outputDir,
+  cargoTargetDir,
+  { noticeSourceRoot } = {},
+) {
   const generated = packageGeneratedCargoSource(
     packageData.manifestPath,
     path.join(cargoTargetDir, 'strict-package', packageData.name),
-    { root: ROOT, fail, rel },
+    { root: ROOT, fail, rel, fixedFileMode: 0o644 },
   );
   assertReleaseNoticesInArchive(generated, {
     prefix: `${packageData.name}-${packageData.version}`,
     profile: packageData.noticeProfile,
+    sourceRoot: noticeSourceRoot,
   });
   validateCrateSize(generated);
   const cratePath = path.join(outputDir, path.basename(generated));
@@ -621,7 +666,7 @@ export function freezeSourceCrate(packageData, outputDir, cargoTargetDir) {
   return { ...packageData, cratePath };
 }
 
-export function packagePayload(
+export function packagePayloadParts(
   payloadRoot,
   sourceRoot,
   outputDir,
@@ -635,6 +680,7 @@ export function packagePayload(
     artifactKind,
     artifactLabel,
     noticeProfile,
+    noticeSourceRoot,
   },
 ) {
   const partDirs = fitCargoPayloadParts(
@@ -647,6 +693,7 @@ export function packagePayload(
         artifactProduct,
         artifactLabel,
         noticeProfile,
+        noticeSourceRoot,
       }),
     (partDir) => {
       // Every file here was generated for this payload part; no source selection
@@ -657,24 +704,14 @@ export function packagePayload(
       const crate = path.join(probeDir, `${packageRoot}.crate`);
       writeFileSync(
         crate,
-        canonicalGzipSync(createDeterministicTar(partDir, packageRoot, { fail })),
+        canonicalGzipSync(
+          createDeterministicTar(partDir, packageRoot, { fail, fixedFileMode: 0o644 }),
+        ),
       );
       return crate;
     },
     partBytes,
   );
-  const aggregatorDir = path.join(sourceRoot, cargoPackageName(target.target, { packageBase }));
-  writeAggregatorCrate(aggregatorDir, {
-    target,
-    version,
-    partCount: partDirs.length,
-    packageBase,
-    artifactProduct,
-    artifactKind,
-    artifactLabel,
-    payloadFiles: frozenPayloadFiles(payloadRoot),
-  });
-
   const packages = [];
   for (let offset = 0; offset < partDirs.length; offset += 1) {
     const partNumber = offset + 1;
@@ -684,6 +721,7 @@ export function packagePayload(
     assertReleaseNoticesInArchive(cratePath, {
       prefix: `${name}-${version}`,
       profile: noticeProfile,
+      sourceRoot: noticeSourceRoot,
     });
     validateCrateSize(cratePath);
     const output = path.join(outputDir, path.basename(cratePath));
@@ -701,6 +739,33 @@ export function packagePayload(
       index: partNumber,
     });
   }
+  return packages;
+}
+
+export function packagePayload(payloadRoot, sourceRoot, outputDir, cargoTargetDir, options) {
+  const packages = packagePayloadParts(payloadRoot, sourceRoot, outputDir, cargoTargetDir, options);
+  const {
+    target,
+    version,
+    packageBase,
+    artifactProduct,
+    artifactKind,
+    artifactLabel,
+    noticeSourceRoot,
+    executableFiles,
+  } = options;
+  const aggregatorDir = path.join(sourceRoot, cargoPackageName(target.target, { packageBase }));
+  writeAggregatorCrate(aggregatorDir, {
+    target,
+    version,
+    partCount: packages.length,
+    packageBase,
+    artifactProduct,
+    artifactKind,
+    artifactLabel,
+    payloadFiles: frozenPayloadFiles(payloadRoot, executableFiles),
+    noticeSourceRoot,
+  });
   packages.push(
     freezeSourceCrate(
       {
@@ -716,6 +781,7 @@ export function packagePayload(
       },
       outputDir,
       cargoTargetDir,
+      { noticeSourceRoot },
     ),
   );
   return packages;
@@ -870,10 +936,10 @@ export function validateCargoArtifactPackages(
     ...expectedAggregators,
     ...(expectedFacade ? [expectedFacade] : []),
   ]);
-  assertSameStringSet(
+  assert.deepEqual(
+    [...configuredCrates].sort(compareText),
+    [...expectedRegistryCrates].sort(compareText),
     `${product} crates.io packages must match native runtime/tool artifact packages`,
-    configuredCrates,
-    expectedRegistryCrates,
   );
   const aggregators = new Set();
   const facades = new Set();

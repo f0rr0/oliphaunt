@@ -1,0 +1,8 @@
+load("@oliphaunt//build_defs/native:postgres.bzl", "postgres_native_targets")
+load(":version.bzl", "POSTGRES_VERSION")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["contrib/**", "src/include/**/*.h", "src/backend/catalog/*.sql", "src/bin/pg_dump/*.c"]))
+
+postgres_native_targets(version = POSTGRES_VERSION)

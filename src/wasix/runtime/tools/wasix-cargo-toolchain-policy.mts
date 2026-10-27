@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveCargoWorkspaceInheritance } from '../../../../tools/packaging/cargo-manifest.mts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const CARGO_DEPENDENCY_SOURCE_KEYS = Object.freeze([
@@ -14,6 +15,7 @@ const CARGO_DEPENDENCY_SOURCE_KEYS = Object.freeze([
 ]);
 
 export const WASIX_TOOLCHAIN_PATH = 'src/wasix/runtime/toolchain.toml';
+export const WASIX_ENGINE_SOURCES_PATH = 'src/wasix/runtime/engine/sources.json';
 
 const REQUIRED_WASIX_TOOLCHAIN_PACKAGES = new Map([
   ['wasmer', 'wasmer'],
@@ -34,10 +36,13 @@ const REQUIRED_WASIX_TOOLCHAIN_PACKAGES = new Map([
 
 const REQUIRED_CONSUMER_PIN_POLICIES = new Map(
   [...REQUIRED_WASIX_TOOLCHAIN_PACKAGES]
-    .filter(([, versionKey]) => versionKey === 'wasmerWasix')
+    .filter(
+      ([name, versionKey]) =>
+        name === 'wasmer' || name === 'wasmer-types' || versionKey === 'wasmerWasix',
+    )
     .map(([name, versionKey]) => [
       name,
-      Object.freeze({ versionKey, defaultFeaturesDisabled: true }),
+      Object.freeze({ versionKey, defaultFeaturesDisabled: name !== 'wasmer-types' }),
     ]),
 );
 REQUIRED_CONSUMER_PIN_POLICIES.set(
@@ -79,6 +84,30 @@ export function canonicalWasixCargoToolchainVersions(root = ROOT) {
   });
 }
 
+export function canonicalWasixEngineSourcePackages(
+  root = ROOT,
+  toolchainVersions = canonicalWasixCargoToolchainVersions(root),
+) {
+  const file = path.join(root, WASIX_ENGINE_SOURCES_PATH);
+  let data;
+  try {
+    data = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (cause) {
+    throw new Error(`${WASIX_ENGINE_SOURCES_PATH} cannot be read as JSON: ${cause.message}`);
+  }
+  const crates = objectTable(data.crates);
+  for (const [name, crate] of Object.entries(crates)) {
+    const versionKey = REQUIRED_WASIX_TOOLCHAIN_PACKAGES.get(name);
+    const expected = toolchainVersions[versionKey];
+    if (typeof expected !== 'string' || crate?.version !== expected) {
+      throw new Error(
+        `${WASIX_ENGINE_SOURCES_PATH} crates.${name}.version must match ${WASIX_TOOLCHAIN_PATH}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(crate?.version)}`,
+      );
+    }
+  }
+  return Object.freeze(Object.keys(crates));
+}
+
 function dependencyVersion(spec) {
   if (typeof spec === 'string') return spec;
   return typeof spec?.version === 'string' ? spec.version : null;
@@ -90,55 +119,126 @@ function dependencyName(key, spec) {
 
 export function validateWasixConsumerDependencyPins(
   manifest,
-  { manifestPath = 'src/wasix/sdks/rust/Cargo.toml', toolchainVersions } = {},
+  {
+    manifestPath = 'src/wasix/sdks/rust/Cargo.toml',
+    toolchainVersions,
+    engineSourcePackages = canonicalWasixEngineSourcePackages(ROOT, toolchainVersions),
+    workspace,
+  } = {},
 ) {
+  if (workspace) manifest = resolveCargoWorkspaceInheritance(manifest, workspace);
   const failures = [];
-  const dependencies = objectTable(manifest?.dependencies);
-  for (const [name, policy] of REQUIRED_CONSUMER_PIN_POLICIES) {
-    const expectedVersion = toolchainVersions?.[policy.versionKey];
-    if (typeof expectedVersion !== 'string' || expectedVersion.length === 0) {
-      failures.push(
-        `${manifestPath}: missing canonical ${policy.versionKey} toolchain version for ${name}`,
-      );
-      continue;
-    }
-    const matches = Object.entries(dependencies).filter(
-      ([key, spec]) => dependencyName(key, spec) === name,
-    );
-    if (matches.length !== 1) {
-      failures.push(
-        `${manifestPath} must declare non-optional ${name} exactly once, found ${matches.length}`,
-      );
-      continue;
-    }
-    const [[key, spec]] = matches;
-    const actualVersion = dependencyVersion(spec);
-    if (actualVersion !== `=${expectedVersion}`) {
-      failures.push(
-        `${manifestPath} dependencies.${key} must pin ${name} exactly to =${expectedVersion}, got ${JSON.stringify(actualVersion)}`,
-      );
-    }
-    if (typeof spec === 'object' && spec !== null && spec.optional === true) {
-      failures.push(`${manifestPath} dependencies.${key} must keep ${name} non-optional`);
-    }
-    if (
-      policy.defaultFeaturesDisabled &&
-      (typeof spec !== 'object' || spec === null || spec['default-features'] !== false)
-    ) {
-      failures.push(
-        `${manifestPath} dependencies.${key} must set default-features = false for ${name}`,
-      );
-    }
-    if (typeof spec === 'object' && spec !== null) {
-      const sourceKeys = CARGO_DEPENDENCY_SOURCE_KEYS.filter((sourceKey) =>
-        Object.hasOwn(spec, sourceKey),
-      );
-      if (sourceKeys.length > 0) {
+  const targets = objectTable(manifest?.target);
+  for (const [selector, target] of Object.entries(targets)) {
+    if (selector === 'cfg(windows)' || selector === 'cfg(not(windows))') continue;
+    for (const [key, spec] of Object.entries(objectTable(target?.dependencies))) {
+      const name = dependencyName(key, spec).replace(/^oliphaunt-/u, '');
+      if (REQUIRED_CONSUMER_PIN_POLICIES.has(key) || REQUIRED_CONSUMER_PIN_POLICIES.has(name)) {
         failures.push(
-          `${manifestPath} dependencies.${key} must resolve ${name} from crates.io without source selectors, found ${sourceKeys.join(', ')}`,
+          `${manifestPath} target.${selector}.dependencies.${key} must declare toolchain pins in cfg(windows) or cfg(not(windows))`,
         );
       }
     }
   }
+  for (const windows of [false, true]) {
+    const selector = windows ? 'cfg(windows)' : 'cfg(not(windows))';
+    const renamedPackages = new Set(windows ? engineSourcePackages : []);
+    const sdkVersion = manifest?.package?.version;
+    if (windows && (typeof sdkVersion !== 'string' || sdkVersion.length === 0)) {
+      failures.push(
+        `${manifestPath} must declare its SDK package version for the Windows engine family`,
+      );
+    }
+    const tables = [
+      ['dependencies', objectTable(manifest?.dependencies)],
+      [`target.${selector}.dependencies`, objectTable(targets[selector]?.dependencies)],
+    ];
+    validateDependencyTable(tables, renamedPackages, sdkVersion, windows);
+  }
   return failures;
+
+  function validateDependencyTable(tables, renamedPackages, sdkVersion, windows) {
+    for (const [name, policy] of REQUIRED_CONSUMER_PIN_POLICIES) {
+      const expectedPackage = renamedPackages.has(name) ? `oliphaunt-${name}` : name;
+      const expectedVersion = renamedPackages.has(name)
+        ? sdkVersion
+        : toolchainVersions?.[policy.versionKey];
+      if (typeof expectedVersion !== 'string' || expectedVersion.length === 0) {
+        failures.push(
+          `${manifestPath}: missing canonical ${policy.versionKey} toolchain version for ${name}`,
+        );
+        continue;
+      }
+      const matches = tables.flatMap(([tablePath, dependencies]) =>
+        Object.entries(dependencies)
+          .filter(
+            ([key, spec]) =>
+              key === name || [name, expectedPackage].includes(dependencyName(key, spec)),
+          )
+          .map(([key, spec]) => [tablePath, key, spec]),
+      );
+      if (matches.length !== 1) {
+        failures.push(
+          `${manifestPath} ${windows ? 'Windows' : 'non-Windows'} must declare non-optional ${name} exactly once, found ${matches.length}`,
+        );
+        continue;
+      }
+      const [[tablePath, key, spec]] = matches;
+      const context = `${manifestPath} ${tablePath}.${key}`;
+      if (key !== name || dependencyName(key, spec) !== expectedPackage) {
+        failures.push(`${context} must use alias ${name} for package ${expectedPackage}`);
+      }
+      const actualVersion = dependencyVersion(spec);
+      if (actualVersion !== `=${expectedVersion}`) {
+        failures.push(
+          `${context} must pin ${expectedPackage} exactly to =${expectedVersion}, got ${JSON.stringify(actualVersion)}`,
+        );
+      }
+      if (typeof spec === 'object' && spec !== null && spec.optional === true) {
+        failures.push(`${context} must keep ${expectedPackage} non-optional`);
+      }
+      if (
+        policy.defaultFeaturesDisabled &&
+        (typeof spec !== 'object' || spec === null || spec['default-features'] !== false)
+      ) {
+        failures.push(`${context} must set default-features = false for ${expectedPackage}`);
+      }
+      if (typeof spec === 'object' && spec !== null) {
+        const sourceKeys = CARGO_DEPENDENCY_SOURCE_KEYS.filter((sourceKey) =>
+          Object.hasOwn(spec, sourceKey),
+        );
+        if (sourceKeys.length > 0) {
+          failures.push(
+            `${context} must resolve ${expectedPackage} from crates.io without source selectors, found ${sourceKeys.join(', ')}`,
+          );
+        }
+      }
+      const requiredFeatures =
+        name === 'wasmer'
+          ? windows
+            ? ['v8', 'headless']
+            : ['sys', 'headless', 'compiler', 'wasmer-artifact-load']
+          : name === 'wasmer-wasix'
+            ? ['sys-minimal', 'sys-poll', 'host-vnet', 'time', ...(windows ? ['v8'] : [])]
+            : [];
+      const features = Array.isArray(spec?.features) ? spec.features : [];
+      const missingFeatures = requiredFeatures.filter((feature) => !features.includes(feature));
+      if (missingFeatures.length > 0) {
+        failures.push(
+          `${context} must enable features ${missingFeatures.join(', ')} for ${expectedPackage}`,
+        );
+      }
+      const forbiddenFeatures = windows
+        ? name === 'wasmer'
+          ? ['compiler', 'llvm', 'cranelift', 'singlepass']
+          : []
+        : ['v8'];
+      const conflictingFeatures = forbiddenFeatures.filter((feature) => features.includes(feature));
+      if (conflictingFeatures.length > 0) {
+        failures.push(
+          `${context} must not enable features ${conflictingFeatures.join(', ')} for ${expectedPackage}`,
+        );
+      }
+    }
+  }
 }

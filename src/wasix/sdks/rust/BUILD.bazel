@@ -1,0 +1,169 @@
+load("//build_defs/quality:sources.bzl", "rust_quality_files", "source_quality_files")
+load("//build_defs/languages:rust.bzl", "cargo_doc_test", "cargo_generator", "cargo_integration_test", "cargo_library", "cargo_library_test", "cargo_package_env")
+load("@rules_rust//rust:defs.bzl", "rust_clippy_test", "rust_library")
+load("//build_defs/languages:source.bzl", "cargo_source_contract_test", "cargo_source_package")
+load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_MEMBERS", "PRODUCTS")
+load("//build_defs/resources:resources.bzl", "wasix_sdk_resource_test")
+load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+load("//build_defs/release:supplier.bzl", "shipping_suppliers")
+load("@wasix_tool_metadata//:targets.bzl", "WASIX_AOT_TARGETS")
+
+package(default_visibility = ["//visibility:public"])
+exports_files(["Cargo.toml", "THIRD_PARTY_NOTICES.md"])
+
+rust_library(
+    name = "shipping_supplier_fixture",
+    testonly = True,
+    srcs = ["tools/testdata/shipping_supplier_fixture.rs"],
+    edition = "2024",
+    tags = ["manual"],
+)
+
+PATH_DEPS = {
+    "liboliphaunt-wasix-portable": "@wasix_runtime_carriers//src/wasix/runtime/crates/assets:lib",
+    "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu": "@wasix_runtime_carriers//src/wasix/runtime/crates/aot/x86_64-unknown-linux-gnu:lib",
+    "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu": "@wasix_runtime_carriers//src/wasix/runtime/crates/aot/aarch64-unknown-linux-gnu:lib",
+    "liboliphaunt-wasix-aot-aarch64-apple-darwin": "@wasix_runtime_carriers//src/wasix/runtime/crates/aot/aarch64-apple-darwin:lib",
+    "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc": "@wasix_runtime_carriers//src/wasix/runtime/crates/aot/x86_64-pc-windows-msvc:lib",
+}
+
+cargo_package_env()
+cargo_generator(path_dependencies = PATH_DEPS, proc_macro_names = ["async-trait"])
+cargo_library(path_dependencies = PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":build_script")
+cargo_generator(name = "napi_build_script", path_dependencies = PATH_DEPS, features = ["__internal-napi"], proc_macro_names = ["async-trait"])
+cargo_library(name = "napi_lib", path_dependencies = PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":napi_build_script", features = ["__internal-napi"])
+_UNIT_TEST_DATA = ["//src/test-fixtures:rust_fixtures", "//src/database-resources:cluster_seed_contract_fixtures"]
+cargo_library_test(data = _UNIT_TEST_DATA)
+
+_CONTRIB_FEATURES = ["extension-" + member["sql-name"].replace("_", "-") for member in CONTRIB_MEMBERS]
+cargo_generator(name = "extension_carrier_build_script", path_dependencies = PATH_DEPS, features = _CONTRIB_FEATURES, proc_macro_names = ["async-trait"])
+cargo_library(name = "extension_carrier_lib", path_dependencies = PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":extension_carrier_build_script", features = _CONTRIB_FEATURES)
+cargo_library_test(name = "extension_carrier_unit_test", crate = ":extension_carrier_lib", features = _CONTRIB_FEATURES, rustc_env = {"OLIPHAUNT_DECLARED_CONTRIB_SQL_NAMES": json.encode([member["sql-name"] for member in CONTRIB_MEMBERS])}, path_dependencies = PATH_DEPS, data = _UNIT_TEST_DATA, tags = ["manual"])
+_CONTRIB_TOOLS_FEATURES = _CONTRIB_FEATURES + ["tools-execution"]
+_NAPI_RELEASE_FEATURES = ["__internal-napi"] + _CONTRIB_TOOLS_FEATURES
+_NAPI_RELEASE_PATH_DEPS = PATH_DEPS | {"liboliphaunt-wasix-portable": "//src/wasix/runtime/crates/assets:napi_release_lib"}
+cargo_generator(name = "napi_release_build_script", path_dependencies = _NAPI_RELEASE_PATH_DEPS, features = _NAPI_RELEASE_FEATURES, proc_macro_names = ["async-trait"])
+cargo_library(name = "napi_release_lib", path_dependencies = _NAPI_RELEASE_PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":napi_release_build_script", features = _NAPI_RELEASE_FEATURES)
+shipping_suppliers(name = "napi_release_compiled_suppliers", inputs = [])
+filegroup(name = "napi_release_compiled_files", srcs = ["//src/wasix/node-addon:release_addon"], output_group = "sdk_compiled")
+shipping_package(
+    name = "napi_release_compiled_shipping",
+    owner = "@oliphaunt_metadata//:product_oliphaunt-wasix-rust",
+    artifacts = [":napi_release_compiled_files"], ecosystem = "internal", package_name = "oliphaunt-wasix",
+    configuration = select({"@rules_rust//rust/platform:" + triple: target for target, triple in WASIX_AOT_TARGETS.items()}),
+    role = "compiled-source", suppliers = ":napi_release_compiled_suppliers",
+)
+shipping_export(name = "napi_release_compiled_shipping_export", packages = [":napi_release_compiled_shipping"], qualification = ["//src/wasix/node-addon:release_installed_test"], testonly = True)
+cargo_library(name = "extension_carrier_tools_lib", path_dependencies = PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":extension_carrier_build_script", features = _CONTRIB_TOOLS_FEATURES)
+cargo_library_test(name = "extension_carrier_tools_unit_test", crate = ":extension_carrier_tools_lib", features = _CONTRIB_TOOLS_FEATURES, rustc_env = {"OLIPHAUNT_DECLARED_CONTRIB_SQL_NAMES": json.encode([member["sql-name"] for member in CONTRIB_MEMBERS]), "OLIPHAUNT_DECLARED_TOOLS_VERSION": PRODUCTS["postgres-tools-wasix"]["version"]}, path_dependencies = PATH_DEPS, data = _UNIT_TEST_DATA, tags = ["manual"])
+
+# The host lane executes one representative module, rather than repeating the
+# exhaustive contrib lifecycle on each native executor. Tools are supplied as
+# final declared Files, so this variant does not construct WASIX tools locally.
+_HOST_SMOKE_FEATURES = ["extension-uuid-ossp", "tools-execution"]
+cargo_generator(name = "host_aot_smoke_build_script", path_dependencies = PATH_DEPS, features = _HOST_SMOKE_FEATURES, proc_macro_names = ["async-trait"])
+cargo_library(name = "host_aot_smoke_lib", path_dependencies = PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":host_aot_smoke_build_script", features = _HOST_SMOKE_FEATURES)
+cargo_library_test(name = "host_aot_smoke_unit_test", crate = ":host_aot_smoke_lib", features = _HOST_SMOKE_FEATURES, rustc_env = {"OLIPHAUNT_DECLARED_CONTRIB_SQL_NAMES": json.encode(["uuid-ossp"]), "OLIPHAUNT_DECLARED_TOOLS_VERSION": PRODUCTS["postgres-tools-wasix"]["version"]}, path_dependencies = PATH_DEPS, data = _UNIT_TEST_DATA, tags = ["manual"])
+
+_QUALITY_PATH_DEPS = {
+    name: "//" + label.split("//", 1)[1].removesuffix(":lib") + ":quality_lib"
+    for name, label in PATH_DEPS.items()
+}
+_TOOLS_PATH_DEPS = _QUALITY_PATH_DEPS | {
+    "oliphaunt-wasix-tools": "//src/wasix/postgres-tools:portable_cargo_lib",
+    "oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu": "//src/wasix/postgres-tools:aot_linux_arm64_gnu_cargo_lib",
+    "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu": "//src/wasix/postgres-tools:aot_linux_x64_gnu_cargo_lib",
+    "oliphaunt-wasix-tools-aot-aarch64-apple-darwin": "//src/wasix/postgres-tools:aot_macos_arm64_cargo_lib",
+    "oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc": "//src/wasix/postgres-tools:aot_windows_x64_msvc_cargo_lib",
+}
+cargo_generator(name = "quality_build_script", path_dependencies = _QUALITY_PATH_DEPS, proc_macro_names = ["async-trait"])
+cargo_library(name = "quality_lib", path_dependencies = _QUALITY_PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":quality_build_script")
+# Exercise extension descriptors with source-only carriers. Runtime execution
+# and embedded-payload checks remain in the constructed carrier qualifications.
+cargo_library_test(
+    name = "quality_unit_test",
+    crate = ":quality_lib",
+    features = ["extensions"],
+    args = [
+        "--skip", "oliphaunt::extensions::extension_tests::",
+        "--skip", "oliphaunt::base::tests::embedded_runtime_archive_hash_is_validated",
+    ],
+    data = _UNIT_TEST_DATA,
+)
+cargo_generator(name = "tools_build_script", path_dependencies = _TOOLS_PATH_DEPS, proc_macro_names = ["async-trait"], features = ["tools"])
+cargo_library(name = "tools_lib", path_dependencies = _TOOLS_PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":tools_build_script", features = ["extensions", "tools", "extension-vector"])
+# Runtime integration consumes the genuine constructed payloads. The quality
+# library deliberately permits absent payloads and cannot qualify execution.
+cargo_library(name = "runtime_test_lib", path_dependencies = PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":build_script", features = ["extensions"])
+_RESOURCE_PATH_DEPS = PATH_DEPS | {"oliphaunt-icu": "//src/database-resources/icu:icu_cargo_lib"}
+cargo_library(name = "resource_test_lib", path_dependencies = _RESOURCE_PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":build_script", features = ["icu"])
+cargo_doc_test(crate = ":quality_lib", size = "small")
+cargo_doc_test(name = "tools_doc_test", crate = ":tools_lib", features = ["tools"], size = "small")
+_INTEGRATION_ROOTS = glob(["tests/*.rs"])
+# These roots use the constructed runtime carriers, unlike the source-only
+# quality library/tool generators. Qualify their Clippy targets once with WASIX.
+_CONSTRUCTED_INTEGRATION_ROOTS = ["tests/resources.rs", "tests/runtime_smoke.rs"]
+[
+    cargo_integration_test(
+        name = "quality_" + source.removeprefix("tests/").removesuffix(".rs") + "_test",
+        source = source,
+        crate = ":tools_lib" if source == "tests/public_api.rs" else ":runtime_test_lib" if source == "tests/runtime_smoke.rs" else ":resource_test_lib" if source == "tests/resources.rs" else ":quality_lib",
+        features = ["extensions", "tools", "extension-vector"] if source == "tests/public_api.rs" else ["extensions"] if source == "tests/runtime_smoke.rs" else ["icu"] if source == "tests/resources.rs" else [],
+        path_dependencies = _TOOLS_PATH_DEPS if source == "tests/public_api.rs" else _RESOURCE_PATH_DEPS if source == "tests/resources.rs" else PATH_DEPS if source == "tests/runtime_smoke.rs" else _QUALITY_PATH_DEPS,
+        proc_macro_names = ["async-trait"],
+        data = ["//src/test-fixtures:rust_fixtures"],
+        tags = ["manual"],
+    )
+    for source in _INTEGRATION_ROOTS
+]
+rust_clippy_test(
+    name = "clippy_test",
+    targets = [":quality_lib", ":quality_unit_test", ":quality_build_script_"] + [":quality_" + source.removeprefix("tests/").removesuffix(".rs") + "_test" for source in _INTEGRATION_ROOTS if source not in _CONSTRUCTED_INTEGRATION_ROOTS],
+    transitive = False,
+    size = "small",
+)
+rust_clippy_test(
+    name = "constructed_clippy_test",
+    targets = [":quality_" + source.removeprefix("tests/").removesuffix(".rs") + "_test" for source in _CONSTRUCTED_INTEGRATION_ROOTS],
+    transitive = False,
+    size = "small",
+)
+cargo_integration_test(
+    name = "postgres_regression_test",
+    source = "tests/postgres_regression.rs",
+    path_dependencies = PATH_DEPS,
+    proc_macro_names = ["async-trait"],
+    data = ["//src/test-fixtures:rust_fixtures"],
+    size = "large",
+    timeout = "long",
+    tags = ["manual"],
+)
+wasix_sdk_resource_test(name = "resource_api_test")
+
+cargo_source_package(
+    product = "oliphaunt-wasix-rust",
+    fixtures = "src/testdata/",
+    qualification = [
+        ":source_package_test",
+        "//build_defs/languages/installed:wasix_sdk_source_compile_test",
+        ":quality_unit_test",
+        ":constructed_clippy_test",
+        ":quality_public_api_test",
+        ":doc_test",
+        ":tools_doc_test",
+        ":quality_runtime_smoke_test",
+        ":postgres_regression_test",
+        ":resource_api_test",
+        "//build_defs/extensions/wasix:contrib_incremental_installed_test",
+    ],
+)
+cargo_source_contract_test(
+    name = "source_package_test",
+    packages = [":crate"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "small",
+)
+
+source_quality_files()
+
+rust_quality_files()

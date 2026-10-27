@@ -1,0 +1,314 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/foundation:bun.bzl", "bun_binary", "bun_test")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load(":extensions.bzl", "extension_default_version", "extension_perl_runtime")
+load(":smoke.bzl", "desktop_members_sql_test")
+load("@oliphaunt_metadata//:metadata.bzl", "EXTENSION_COMPATIBILITY")
+load("//build_defs/extensions:platforms.bzl", NATIVE_EXTENSION_COMPATIBLE = "NATIVE_EXTENSION_LINUX_COMPATIBLE", NATIVE_EXTENSION_DESKTOP_COMPATIBLE = "NATIVE_EXTENSION_COMPATIBLE")
+load(":native_carriers.bzl", "native_extension_carrier_helpers", "native_extension_carrier_legal", "native_extension_carrier_unit_inputs")
+load("//build_defs/foundation:bun.bzl", "bun_script_test")
+load(":contrib_carriers.bzl", "native_contrib_carrier_legal", "native_contrib_carrier_unit_inputs")
+load(":owner_carriers.bzl", "native_extension_final_collection", "native_extension_final_contract_test", "native_extension_final_import", "native_extension_final_receipt_fixture", "native_owner_carrier_helpers", "native_owner_carrier_legal")
+load(":construction.bzl", "desktop_members_construction_test")
+load(":wasix_carriers.bzl", "wasix_sql_carrier_helpers", "wasix_sql_carrier_unit_inputs")
+load(":declared_final_inputs.bzl", "native_declared_apple_base")
+load(":family_carriers.bzl", "native_extension_final_families")
+load(":forced_header_inputs_test.bzl", "native_forced_header_input_tests")
+load(":windows_module_test.bzl", "native_windows_module_tests")
+load(":mobile_host_profile_test.bzl", "mobile_host_profile_tests")
+load(":mobile_carriers.bzl", "mobile_carrier_helpers")
+
+package(default_visibility = ["//visibility:public"])
+
+native_forced_header_input_tests()
+native_windows_module_tests()
+mobile_host_profile_tests()
+
+exports_files(["contrib.bzl", "extensions.bzl", "repositories.bzl", "uuid_config.h", "pgtap_upstream_parity_test.mts", "validate_member_payload.mts"])
+exports_files(["native_carriers.bzl", "native_carriers.mts", "native_carriers_installed.test.mts"])
+exports_files(["contrib_carriers.bzl", "contrib_carriers.mts", "contrib_carriers_installed.test.mts"])
+exports_files(["native_carrier_install_helpers.mts"])
+exports_files(["final_leaf.bzl", "owner_carriers.bzl", "owner_carriers.mts", "final_receipt_fixture.mts", "final_contract.test.mts"])
+exports_files(["wasix_carriers.bzl", "wasix_carriers.mts", "wasix_carriers.test.mts"])
+exports_files(["mobile.bzl", "mobile_carriers.bzl", "mobile_carriers.mts", "mobile_registration.mts", "mobile_members.bzl", "mobile_consumer.c", "mobile_maven.mts"])
+exports_files(["declared_final_inputs.bzl", "declared_final_inputs.mts", "family_carriers.bzl", "family_contract.test.mts"])
+exports_files(["imported_members.bzl", "imported_member.mts"])
+
+native_declared_apple_base(name = "declared_native_apple_base")
+native_extension_final_families(base_carrier_manifest = ":declared_native_apple_base")
+
+bun_test(
+    name = "imported_member_test",
+    entry_point = "imported_member.test.mts",
+    data = {label: True for label in ["imported_member.mts", "member_payload.mts", "owner_carriers.mts",
+            "//build_defs/native:rust-runtime-test.mts", "//build_defs/native:host-runtime-test-helpers.mts",
+            "//:tools/packaging/testdata/release-fixture-utils.mts",
+            "//src/extensions/catalog:extensions.source.json", "//src/extensions/contrib:postgres18.toml"] +
+           native_owner_carrier_helpers() + native_owner_carrier_legal("oliphaunt-extension-vector") +
+           native_owner_carrier_legal("oliphaunt-extension-contrib-pg18")}.keys(),
+    size = "small",
+)
+
+bun_test(
+    name = "declared_final_inputs_test",
+    entry_point = "declared_final_inputs.test.mts",
+    data = ["owner_carriers.mts", "//tools/release:native-extension-final-inputs.mts", "//build_defs/release:testdata/swift-0.8.2-carrier.json"] + native_owner_carrier_helpers(),
+    size = "small",
+)
+
+bun_test(
+    name = "declared_apple_archives_test",
+    entry_point = "declared_apple_archives.test.mts",
+    data = native_owner_carrier_helpers(),
+    size = "small",
+)
+
+bun_test(name = "mobile_registration_test", entry_point = "mobile_registration.test.mts", data = ["mobile_registration.mts", "//:src/extensions/artifacts/native/tools/ios-extension-registration.mts"] + native_extension_carrier_helpers(), size = "small")
+bun_test(name = "mobile_carriers_test", entry_point = "mobile_carriers.test.mts", data = ["mobile_carriers.mts", "mobile_registration.mts", "//src/native/sdks/swift:tools/swift-xcframework-contract.mts"] + native_owner_carrier_helpers(), size = "small")
+bun_test(name = "mobile_maven_test", entry_point = "mobile_maven.test.mts", data = ["@pgvector_compiler_rt//:LICENSE.TXT", "//:tools/packaging/build-maven-artifact-manifest.mts", "//:tools/packaging/maven-artifact-manifest.mts", "//:tools/packaging/maven-artifact-staging.mts", "//:tools/packaging/maven-central-contract.mts", "//:tools/packaging/atomic-directory.mts", "//tools/release:compatibility-version-policy.mts", "//tools/release:product-version.mts"] + native_owner_carrier_helpers() + native_owner_carrier_legal("oliphaunt-extension-vector"), size = "small")
+
+wasix_sql_carrier_unit_inputs(name = "wasix_sql_carrier_unit_inputs")
+bun_script_test(
+    name = "wasix_sql_carriers_test",
+    entry_point = "wasix_carriers.test.mts",
+    args = ["$(location :wasix_sql_carrier_unit_inputs)"],
+    data = [":wasix_sql_carrier_unit_inputs", "wasix_carriers.mts"] + wasix_sql_carrier_helpers() + native_extension_carrier_legal("pgtap"),
+    target_compatible_with = ["@platforms//os:linux"],
+    size = "small",
+)
+
+native_extension_final_contract_test(
+    name = "native_final_contract_test",
+    target_compatible_with = NATIVE_EXTENSION_COMPATIBLE,
+    size = "medium",
+)
+native_extension_final_contract_test(
+    name = "desktop_final_contract_test",
+    desktop = True,
+    target_compatible_with = NATIVE_EXTENSION_DESKTOP_COMPATIBLE,
+    size = "medium",
+)
+native_extension_final_contract_test(
+    name = "desktop_all_final_contract_test",
+    desktop = True,
+    include_postgis = True,
+    target_compatible_with = NATIVE_EXTENSION_DESKTOP_COMPATIBLE,
+    size = "medium",
+)
+exports_files(["construction.mts"])
+exports_files(["desktop_sql.test.mts"])
+
+native_extension_final_receipt_fixture(name = "native_pgtap_receipt_fixture", leaf = "//src/extensions/external/pgtap:native_carriers", testonly = True, target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
+native_extension_final_import(
+    name = "native_pgtap_import_fixture", product = "oliphaunt-extension-pgtap", target = "linux-x64-gnu", testonly = True,
+    github = ["//src/extensions/external/pgtap:native_github_shipping_files"], npm = ["//src/extensions/external/pgtap:native_npm_shipping_files"], cargo = ["//src/extensions/external/pgtap:native_cargo_shipping_files"],
+    manifest = "//src/extensions/external/pgtap:native_manifest_shipping_files", frozen = "//src/extensions/external/pgtap:native_frozen_shipping_files", receipt = ":native_pgtap_receipt_fixture",
+    source_commit = "1" * 40, source_tree = "2" * 40, run_id = "123", run_attempt = 1, job = "test-only-receipt-fixture", target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+filegroup(name = "native_pgtap_import_fixture_validation", srcs = [":native_pgtap_import_fixture"], output_group = "validation", testonly = True)
+native_extension_final_collection(name = "native_pgtap_import_collection_fixture", product = "oliphaunt-extension-pgtap", leaves = [":native_pgtap_import_fixture"], testonly = True, target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
+
+native_extension_final_collection(
+    name = "native_pgtap_final_collection",
+    product = "oliphaunt-extension-pgtap",
+    leaves = ["//src/extensions/external/pgtap:native_carriers"],
+    target_compatible_with = NATIVE_EXTENSION_DESKTOP_COMPATIBLE,
+)
+native_extension_final_collection(
+    name = "native_contrib_final_collection",
+    product = "oliphaunt-extension-contrib-pg18",
+    leaves = ["//src/extensions/contrib:native_carriers"],
+    target_compatible_with = NATIVE_EXTENSION_DESKTOP_COMPATIBLE,
+)
+native_extension_final_collection(
+    name = "native_postgis_final_collection",
+    product = "oliphaunt-extension-postgis",
+    leaves = ["//src/extensions/external/postgis:native_carriers"],
+    target_compatible_with = NATIVE_EXTENSION_COMPATIBLE,
+)
+filegroup(name = "native_pgtap_final_collection_spec", srcs = [":native_pgtap_final_collection"], output_group = "spec")
+filegroup(name = "native_contrib_final_collection_spec", srcs = [":native_contrib_final_collection"], output_group = "spec")
+filegroup(name = "native_postgis_final_collection_spec", srcs = [":native_postgis_final_collection"], output_group = "spec")
+bun_script_test(
+    name = "native_final_composition_test",
+    entry_point = "owner_carriers.test.mts",
+    args = ["$(location :native_pgtap_final_collection_spec)", "$(location :native_contrib_final_collection_spec)", "$(location :native_pgtap_final_collection)", "$(location :native_contrib_final_collection)", "$(location :native_pgtap_import_fixture_validation)", "$(location :native_postgis_final_collection_spec)", "$(location :native_postgis_final_collection)", "$(location :native_pgtap_import_collection_fixture)"],
+    data = {label: True for label in [":native_pgtap_final_collection_spec", ":native_contrib_final_collection_spec", ":native_postgis_final_collection_spec", ":native_pgtap_final_collection", ":native_contrib_final_collection", ":native_postgis_final_collection", ":native_pgtap_import_fixture_validation", ":native_pgtap_import_collection_fixture", "//src/extensions/external/pgtap:native_carriers", "//src/extensions/external/postgis:native_carriers", "//src/extensions/contrib:native_carriers", "owner_carriers.mts", "//src/extensions/catalog:native-components.toml"] + native_owner_carrier_helpers() + native_owner_carrier_legal("oliphaunt-extension-contrib-pg18") + native_owner_carrier_legal("oliphaunt-extension-pgtap") + native_owner_carrier_legal("oliphaunt-extension-postgis")}.keys(),
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "medium",
+)
+
+ARCHIVE_HELPERS = ["//:tools/packaging/archive-directory.mts", "//:tools/packaging/portable-archive.mts"]
+BINARY_HELPERS = ["//:tools/packaging/platform-binary-contract.mts", "//:tools/packaging/windows-vc-runtime-closure.mts", "//:tools/packaging/windows-vc-runtime-policy.json", "//tools/release:platform-compatibility-policy.mts", "//:src/extensions/artifacts/native/tools/stage-windows-binary-contract.mts"]
+
+desktop_members_construction_test(name = "desktop_members_construction_test", size = "medium")
+desktop_members_construction_test(name = "desktop_all_members_construction_test", include_postgis = True, size = "medium")
+desktop_members_sql_test(name = "desktop_members_sql_test")
+FROZEN_DESKTOP_HOST_COMPATIBLE = select({
+    "//build_defs/native:linux_x86_64": [],
+    "//build_defs/native:macos_arm64": [],
+    "//build_defs/native:windows_x64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+filegroup(
+    name = "desktop_frozen_runtime_archive",
+    srcs = select({
+        "//build_defs/native:macos_arm64": ["@extension_frozen_native_macos//:archive_macos_arm64"],
+        "//build_defs/native:windows_x64": ["@extension_frozen_native_windows//:archive_windows_x64_msvc"],
+        "//conditions:default": ["@extension_frozen_native//:archive_linux_x64_gnu"],
+    }),
+    testonly = True,
+    target_compatible_with = FROZEN_DESKTOP_HOST_COMPATIBLE,
+)
+desktop_members_sql_test(
+    name = "desktop_members_frozen_sql_test",
+    runtime = ":desktop_frozen_runtime_archive",
+    consumer = ":native_frozen_extension_smoke",
+    host_version = EXTENSION_COMPATIBILITY["vector"]["native_runtime_version"],
+    host_product = EXTENSION_COMPATIBILITY["vector"]["native_runtime_product"],
+    runtime_prefix = "runtime",
+    published_runtime = True,
+    target_compatible_with = FROZEN_DESKTOP_HOST_COMPATIBLE,
+)
+desktop_members_sql_test(
+    name = "desktop_all_members_frozen_sql_test",
+    include_postgis = True,
+    runtime = ":desktop_frozen_runtime_archive",
+    consumer = ":native_frozen_extension_smoke",
+    host_version = EXTENSION_COMPATIBILITY["postgis"]["native_runtime_version"],
+    host_product = EXTENSION_COMPATIBILITY["postgis"]["native_runtime_product"],
+    runtime_prefix = "runtime",
+    published_runtime = True,
+    target_compatible_with = FROZEN_DESKTOP_HOST_COMPATIBLE,
+)
+filegroup(name = "desktop_members_construction_inventory", srcs = [":desktop_members_construction_test"], output_group = "inventory", testonly = True)
+filegroup(name = "desktop_all_members_construction_inventory", srcs = [":desktop_all_members_construction_test"], output_group = "inventory", testonly = True)
+bun_test(
+    name = "desktop_construction_test",
+    entry_point = "construction.test.mts",
+    data = ["construction.mts", "validate_member_payload.mts"] + ARCHIVE_HELPERS + BINARY_HELPERS,
+    size = "small",
+)
+
+native_extension_carrier_unit_inputs(name = "native_carrier_unit_inputs")
+cc_library(
+    name = "mobile_carrier_fixture",
+    srcs = ["mobile-carrier-fixture.c"],
+    linkstatic = True,
+    testonly = True,
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+filegroup(name = "mobile_carrier_fixture_archive", srcs = [":mobile_carrier_fixture"], output_group = "archive", testonly = True)
+_MOBILE_CARRIER_FIXTURE_INPUTS = [":mobile_carrier_fixture_archive", "@wasmer_llvm_linux_x64//:bin/llvm-nm", "//src/extensions/catalog:native-components.toml"]
+native_contrib_carrier_unit_inputs(name = "contrib_carrier_unit_inputs")
+bun_script_test(
+    name = "contrib_carriers_test",
+    entry_point = "contrib_carriers.test.mts",
+    args = ["$(location :contrib_carrier_unit_inputs)"],
+    data = [":contrib_carrier_unit_inputs", "contrib_carriers.mts", "native_carriers.mts", "//:src/extensions/artifacts/packages/tools/bundle-carrier-assets.mts"] + native_extension_carrier_helpers() + native_contrib_carrier_legal(),
+    size = "small",
+)
+test_suite(
+    name = "native_final_carriers_tests",
+    tests = ["//src/extensions/external/" + name + ":native_carriers_test" for name in sorted(EXTENSION_COMPATIBILITY.keys())],
+)
+
+bun_script_test(
+    name = "native_carriers_test",
+    entry_point = "native_carriers.test.mts",
+    args = ["$(location :native_carrier_unit_inputs)"] + select({"//build_defs/native:windows_x64": [], "//conditions:default": ["$(location //src/native/runtime/packaging:resources)"]}) + select({"//build_defs/native:linux_x86_64": ["$(location %s)" % label for label in _MOBILE_CARRIER_FIXTURE_INPUTS], "//conditions:default": []}),
+    data = {label: True for label in [":native_carrier_unit_inputs", "member_payload.mts", "//:tools/packaging/npm-package.test.mts", "//:tools/packaging/testdata/release-fixture-utils.mts"] + mobile_carrier_helpers() + native_extension_carrier_legal("pgtap") + native_extension_carrier_legal("postgis")}.keys() + select({"//build_defs/native:windows_x64": [], "//conditions:default": ["//src/native/runtime/packaging:resources"]}) + select({"//build_defs/native:linux_x86_64": _MOBILE_CARRIER_FIXTURE_INPUTS + ["mobile_carriers.mts"], "//conditions:default": []}),
+    size = "small",
+)
+
+bun_binary(name = "pgtap_sql", entry_point = "pgtap_sql.mts")
+bun_binary(name = "windows_source_inputs", entry_point = "windows_source_inputs.mts", data = ["windows_source_portability.mts"])
+bun_test(name = "windows_source_portability_test", entry_point = "windows_source_portability.test.mts", data = ["windows_source_portability.mts"], size = "small")
+bun_test(name = "windows_source_inputs_test", entry_point = "windows_source_inputs.test.mts", data = ["windows_source_inputs.mts", "windows_source_portability.mts"], size = "small")
+extension_perl_runtime(name = "perl_runtime")
+filegroup(name = "perl", srcs = [":perl_runtime"], output_group = "interpreter")
+filegroup(name = "perl_options", srcs = [":perl_runtime"], output_group = "options")
+bun_binary(name = "smoke_plan", entry_point = "smoke_plan.mts")
+bun_binary(name = "member_payload", entry_point = "member_payload.mts", data = ARCHIVE_HELPERS)
+bun_binary(name = "validate_member_payload", entry_point = "validate_member_payload.mts", data = ["//:tools/packaging/portable-archive.mts"] + BINARY_HELPERS)
+bun_binary(
+    name = "sdk_projections",
+    entry_point = "sdk_projections.mts",
+    data = [
+        "//src/extensions/tools:extension-projections.mts",
+        "//src/extensions/tools:native-component-contract.mts",
+        "//src/extensions/contracts:extension-target-profiles.mts",
+    ],
+)
+
+bun_test(
+    name = "pgtap_sql_test",
+    entry_point = "pgtap_sql.test.mts",
+    data = ["pgtap_sql.mts"],
+    size = "small",
+)
+
+desktop_members_sql_test(
+    name = "native_built_extension_sql_test",
+    include_postgis = True,
+    library_prefix = "lib",
+    target_compatible_with = NATIVE_EXTENSION_COMPATIBLE,
+)
+
+desktop_members_sql_test(
+    name = "native_frozen_extension_sql_test",
+    include_postgis = True,
+    runtime = "@extension_frozen_native//:archive_linux_x64_gnu",
+    consumer = ":native_frozen_extension_smoke",
+    host_version = EXTENSION_COMPATIBILITY["postgis"]["native_runtime_version"],
+    host_product = EXTENSION_COMPATIBILITY["postgis"]["native_runtime_product"],
+    runtime_prefix = "runtime",
+    library_prefix = "lib",
+    published_runtime = True,
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+cc_binary(
+    name = "native_extension_smoke",
+    srcs = ["native_extension_smoke.c"],
+    deps = ["//src/native/runtime:liboliphaunt"],
+    copts = select({"//build_defs/native:windows_x64": ["/std:c11"], "//conditions:default": ["-std=c11", "-Wall", "-Wextra", "-Werror"]}),
+    target_compatible_with = NATIVE_EXTENSION_DESKTOP_COMPATIBLE,
+)
+
+cc_binary(
+    name = "native_frozen_extension_smoke",
+    srcs = ["native_extension_smoke.c"],
+    deps = select({
+        "//build_defs/native:macos_arm64": ["@extension_frozen_native_macos//:cc_macos_arm64"],
+        "//build_defs/native:windows_x64": ["@extension_frozen_native_windows//:cc_windows_x64_msvc"],
+        "//conditions:default": ["@extension_frozen_native//:cc_linux_x64_gnu"],
+    }),
+    copts = select({"//build_defs/native:windows_x64": ["/std:c11"], "//conditions:default": ["-std=c11", "-Wall", "-Wextra", "-Werror"]}),
+    target_compatible_with = FROZEN_DESKTOP_HOST_COMPATIBLE,
+)
+
+filegroup(name = "pgtap_archive", srcs = ["//src/extensions/external/pgtap:native_payload"], output_group = "archive")
+filegroup(name = "pg_trgm_archive", srcs = ["//src/extensions/contrib:pg_trgm_native_payload"], output_group = "archive")
+filegroup(name = "vector_archive", srcs = ["//src/extensions/external/vector:native_payload"], output_group = "archive")
+
+sh_test(
+    name = "native_extension_sql_test",
+    srcs = ["native_extension_sql_test.sh"],
+    args = ["$(location //src/native/runtime:runtime_payload)", "$(location :native_extension_smoke)",
+            extension_default_version("pg_trgm"), extension_default_version("vector"), extension_default_version("pgtap"),
+            "$(location :pgtap_archive)", "$(location :pg_trgm_archive)", "$(location :vector_archive)"],
+    data = ["//src/native/runtime:runtime_payload", ":native_extension_smoke", ":pgtap_archive", ":pg_trgm_archive", ":vector_archive"],
+    target_compatible_with = NATIVE_EXTENSION_COMPATIBLE,
+    size = "medium",
+)
+
+bun_test(
+    name = "member_payload_test",
+    entry_point = "member_payload.test.mts",
+    data = ["member_payload.mts", "validate_member_payload.mts", "//:tools/packaging/testdata/release-fixture-utils.mts"] + ARCHIVE_HELPERS + BINARY_HELPERS,
+    size = "small",
+)
+
+source_quality_files()

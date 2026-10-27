@@ -49,6 +49,6 @@ Run these commands from this directory with the repository-pinned Rust toolchain
 | `moon run liboliphaunt-native-bindings:test` | Run source tests; Cargo compiles the required test targets. |
 | `moon run liboliphaunt-native-bindings:package` | Stage distributable source crates under target/sdk-artifacts/liboliphaunt-native-bindings; repeated runs replace this owner’s candidates. |
 
-Native Cargo entry points remain available: `cargo build -p liboliphaunt-native-bindings --locked`, `cargo test -p liboliphaunt-native-bindings --locked`, `cargo clippy -p liboliphaunt-native-bindings --all-targets --locked -- -D warnings`, and `cargo fmt -p liboliphaunt-native-bindings --check`. Moon supplies the additional source-test feature matrix and artifact staging where defined. `package` assembles bytes; it does not run the project test suite.
+Native Cargo entry points from this directory remain available: `cargo build --locked`, `cargo test --locked`, `cargo clippy --all-targets --locked -- -D warnings`, and `cargo fmt --check`. Moon supplies the additional source-test feature matrix and artifact staging where defined. `package` assembles bytes; it does not run the project test suite.
 
 The native SDK’s `moon run oliphaunt-rust:test-consumer` installs the real packed query, bindings and broker crates together with the SDK. This tests their public dependency closure without duplicate per-crate consumer harnesses.

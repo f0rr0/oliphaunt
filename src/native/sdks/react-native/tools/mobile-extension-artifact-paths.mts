@@ -101,10 +101,14 @@ const BUNDLE_CARRIER_ASSET_KEYS = new Set([
   'memberCount',
 ]);
 
+function declaresReleaseOwnership(manifest) {
+  return Object.hasOwn(manifest, 'releaseProduct') || Object.hasOwn(manifest, 'family');
+}
+
 function manifestEnvelopeKeys(baseKeys, manifest, repositoryContract) {
   const owner = repositoryContract.products.get(manifest.product);
   const keys =
-    owner?.releaseProduct === owner?.artifactProduct
+    owner?.releaseProduct === owner?.artifactProduct && !declaresReleaseOwnership(manifest)
       ? baseKeys
       : new Set([...baseKeys, 'releaseProduct', 'family']);
   if (Object.hasOwn(manifest, 'qualificationOnly')) {
@@ -681,13 +685,16 @@ function validateManifestEnvelope(manifest, manifestPath, repositoryContract, me
     fail(`${manifestPath} version must be stable SemVer`);
   }
   const owner = validateCompatibility(manifest, manifestPath, repositoryContract);
-  if (owner.releaseProduct !== owner.artifactProduct) {
+  if (owner.releaseProduct !== owner.artifactProduct || declaresReleaseOwnership(manifest)) {
     if (manifest.releaseProduct !== owner.releaseProduct || manifest.family !== 'native') {
       fail(`${manifestPath} must be owned by ${owner.releaseProduct}/native`);
     }
-    if (manifest.version !== repositoryContract.nativeRuntimeVersion) {
-      fail(`${manifestPath} version must match its native release owner`);
-    }
+  }
+  if (
+    owner.releaseProduct !== owner.artifactProduct &&
+    manifest.version !== repositoryContract.nativeRuntimeVersion
+  ) {
+    fail(`${manifestPath} version must match its native release owner`);
   }
   const actualSqlNames = members.map((member) => member?.sqlName);
   if (new Set(actualSqlNames).size !== actualSqlNames.length) {

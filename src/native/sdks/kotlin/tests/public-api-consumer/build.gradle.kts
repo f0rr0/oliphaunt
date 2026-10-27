@@ -3,8 +3,9 @@ plugins {
     alias(libs.plugins.kotlin.android)
 }
 
-val consumerAar = providers.gradleProperty("oliphauntConsumerAar").orNull
-    ?: error("oliphauntConsumerAar must point to the packaged Oliphaunt Android AAR")
+val consumerAar =
+    providers.gradleProperty("oliphauntConsumerAar").orNull
+        ?: error("oliphauntConsumerAar must point to the packaged Oliphaunt Android AAR")
 
 layout.buildDirectory.set(
     file(

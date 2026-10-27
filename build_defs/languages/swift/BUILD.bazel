@@ -1,0 +1,60 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/foundation:bun.bzl", "bun_test")
+load("//build_defs/native/carriers:defs.bzl", "native_payload_helpers")
+load(":extension-fixture.bzl", "selected_swift_extension_fixture")
+load(":xcframework.bzl", "BINDINGS_ENVELOPE_HELPERS")
+
+package(default_visibility = ["//visibility:public"])
+exports_files(glob(["*.bzl", "*.mts"]))
+selected_swift_extension_fixture()
+bun_test(name = "generate_test", entry_point = "generate.test.mts", data = ["generate.mts", "//build_defs/languages:uniffi.mts"], size = "small")
+bun_test(
+    name = "xcframework_envelope_test",
+    entry_point = "xcframework-envelope.test.mts",
+    data = [
+        "xcframework-envelope.mts",
+        "//src/native/mobile-bindings:license_inputs",
+        "//:Cargo.lock",
+        "//:LICENSE",
+        "//:THIRD_PARTY_NOTICES.md",
+    ] + BINDINGS_ENVELOPE_HELPERS,
+    source_files = ["xcframework-envelope.mts"] + BINDINGS_ENVELOPE_HELPERS,
+    size = "small",
+)
+bun_test(
+    name = "source_package_test",
+    entry_point = "source-package.test.mts",
+    data = [
+        "source-package.fixture.mts",
+        "consumer-test.mts",
+        "//src/native/sdks/swift:Tests/OliphauntTests/AsyncStringSignal.swift",
+        "//src/native/sdks/swift:tools/prepare-swift-release-consumer.mts",
+        "//build_defs/native/apple:swift-candidate-contract.mts",
+        "source-package.mts",
+        "source-delivery-contract.mts",
+        "//build_defs/native/carriers:payload.mts",
+        "//tools/release:native-file-identity.mts",
+        "//build_defs/release:testdata/swift-0.8.2-carrier.json",
+        "//src/native/sdks/swift:tools/swift-native-carrier-contract.mts",
+        "//src/native/sdks/swift:tools/swift-release-manifest.mts",
+        "//src/native/sdks/swift:tools/swift-source-fixture-contract.mts",
+        "//src/native/sdks/swift:tools/swift-xcframework-contract.mts",
+        "//src/native/sdks/swift:generator_sources",
+        "//src/extensions/generated/sdk:metadata",
+        "//src/native/runtime:include/oliphaunt.h",
+        "//:LICENSE",
+        "//:THIRD_PARTY_NOTICES.md",
+        "//:tools/packaging/archive-directory.mts",
+        "//:tools/packaging/sdk-runtime-payload.mts",
+        "//:tools/packaging/testdata/zip-fixture.mts",
+        "//:tools/packaging/emit-javascript.mts",
+    ] + native_payload_helpers(),
+    size = "small",
+)
+
+source_quality_files()
+
+# Source-only inputs for the existing SDK package policy tests.
+exports_files([
+    "source-delivery-contract.mts",
+], visibility = ["//visibility:public"])

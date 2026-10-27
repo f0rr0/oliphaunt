@@ -737,7 +737,8 @@ export function assertClusterSeedProfileContract(
   }
 }
 
-function verifyClusterSeedIdentity(
+/** @internal Bind the consuming module while retaining the seed's original creator. */
+export function verifyClusterSeedIdentity(
   options: SerializedOpenOptions,
   outer: WasixAssetManifest,
   seed: ClusterSeedManifest,
@@ -754,11 +755,8 @@ function verifyClusterSeedIdentity(
     seed.source.producer !== 'wasix-initdb'
   )
     throw new Error('WASIX seed has an incompatible runtime identity');
-  if (
-    seed.runtime.consumerSha256 !== seed.runtime.producerSha256 ||
-    seed.runtime.consumerSha256 !== outer.runtime['module-sha256']
-  ) {
-    throw new Error('WASIX seed was produced by a different runtime module');
+  if (seed.runtime.consumerSha256 !== outer.runtime['module-sha256']) {
+    throw new Error('WASIX seed is admitted for a different consuming runtime module');
   }
   if (seed.catalogProfile === 'icu' && seed.icu?.dataTreeSha256 !== icuTree) {
     throw new Error('WASIX ICU seed does not match the selected ICU data');

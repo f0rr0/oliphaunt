@@ -32,6 +32,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  Settings,
   StyleSheet,
   Text,
   View,
@@ -235,6 +236,7 @@ export default function HomeScreen() {
           extensionCatalogSha256: GENERATED_MOBILE_EXTENSION_METADATA_SHA256,
           catalogProfile: profileProof.catalogProfile,
           icuRuntimeProof: profileProof.catalogProfile === 'icu',
+          lifecycleResume: lifecycle !== undefined,
         });
         setReport(nextReport);
         (globalThis as Record<string, unknown>).__OLIPHAUNT_EXPO_SMOKE_REPORT__ = nextReport;
@@ -614,7 +616,7 @@ function waitForBackgroundAndForeground(
     const subscription = AppState.addEventListener('change', (nextState) => {
       states.push(nextState);
       stage('lifecycle:state', { state: nextState });
-      if (nextState === 'background' || nextState === 'inactive') {
+      if (nextState === 'background') {
         sawBackground = true;
         return;
       }
@@ -1051,12 +1053,19 @@ async function resolveBenchmarkPreset(): Promise<BenchmarkPreset> {
 }
 
 function resolveInitialLaunchUrl(): Promise<string | null> {
-  initialLaunchUrlPromise ??= Promise.race([
-    Linking.getInitialURL().catch(() => null),
-    new Promise<null>((resolve) => {
-      setTimeout(() => resolve(null), initialUrlTimeoutMs);
-    }),
-  ]);
+  if (!initialLaunchUrlPromise) {
+    // Direct simulator launches pass configuration through iOS's argument domain.
+    const launchUrl = Platform.OS === 'ios' ? Settings.get('liboliphauntLaunchURL') : undefined;
+    initialLaunchUrlPromise =
+      typeof launchUrl === 'string' && launchUrl.length > 0
+        ? Promise.resolve(launchUrl)
+        : Promise.race([
+            Linking.getInitialURL().catch(() => null),
+            new Promise<null>((resolve) => {
+              setTimeout(() => resolve(null), initialUrlTimeoutMs);
+            }),
+          ]);
+  }
   return initialLaunchUrlPromise;
 }
 

@@ -166,7 +166,6 @@ impl ProtocolTransportMode {
 
 struct OliphauntLifecycleExports {
     wasi_start: TypedFunction<(), ()>,
-    set_force_host_error_recovery: Option<TypedFunction<i32, i32>>,
     set_active: TypedFunction<i32, i32>,
     start_oliphaunt: TypedFunction<(), ()>,
     #[cfg_attr(not(feature = "extensions"), allow(dead_code))]
@@ -316,7 +315,6 @@ impl PostgresMod {
         if self.backend_started {
             return Ok(());
         }
-        self.configure_host_error_recovery()?;
         {
             self.lifecycle
                 .set_active
@@ -336,23 +334,6 @@ impl PostgresMod {
             return self.startup_failure(err, "oliphaunt_wasix_start");
         }
         self.backend_started = true;
-        Ok(())
-    }
-
-    fn configure_host_error_recovery(&mut self) -> Result<()> {
-        let force = host_requires_process_exit_error_recovery();
-        let Some(set_force) = &self.lifecycle.set_force_host_error_recovery else {
-            if force {
-                anyhow::bail!(
-                    "WASIX runtime does not export oliphaunt_wasix_set_force_host_error_recovery required by this host"
-                );
-            }
-            return Ok(());
-        };
-
-        set_force
-            .call(&mut self.store, i32::from(force))
-            .context("oliphaunt_wasix_set_force_host_error_recovery")?;
         Ok(())
     }
 
@@ -415,37 +396,56 @@ impl PostgresMod {
 
     #[cfg(feature = "extensions")]
     pub fn preload_extension_module(&self, extension: Extension) -> Result<()> {
-        for module in extension.native_support_modules() {
-            seed_extension_side_module(
-                &self.tokio_runtime,
-                &self.engine,
-                &self.wasix_module_cache,
-                &self.runtime_storage,
-                module.runtime_path(),
-                module.aot_name(),
+        for (runtime_path, aot_name) in extension.required_native_modules()? {
+            self.seed_extension_side_module(
+                &runtime_path,
+                aot_name.as_deref(),
                 extension.package(),
                 &format!(
                     "extension '{}' support module '{}'",
                     extension.sql_name(),
-                    module.runtime_path()
+                    runtime_path
                 ),
             )?;
         }
 
-        let Some(module_file) = extension.native_module_file() else {
+        Ok(())
+    }
+
+    #[cfg(feature = "extensions")]
+    fn seed_extension_side_module(
+        &self,
+        runtime_path: &str,
+        aot_name: Option<&str>,
+        package: Option<&super::extensions::ExtensionPackage>,
+        label: &str,
+    ) -> Result<()> {
+        let Some(aot_name) = aot_name else {
             return Ok(());
         };
-        seed_extension_side_module(
-            &self.tokio_runtime,
-            &self.engine,
-            &self.wasix_module_cache,
-            &self.runtime_storage,
-            &format!("lib/postgresql/{module_file}"),
-            extension.aot_name(),
-            extension.package(),
-            &format!("extension '{}'", extension.sql_name()),
-        )?;
-        Ok(())
+        let path = Path::new("/").join(runtime_path);
+        let wasm = self
+            .runtime_storage
+            .read(&path)
+            .with_context(|| format!("{label} is not installed at {}", path.display()))?;
+        if let Some(package) = package {
+            let module = aot::load_package_module(&self.engine, package, aot_name, &wasm)?;
+            block_on_tokio_runtime(
+                &self.tokio_runtime,
+                self.wasix_module_cache
+                    .save(ModuleHash::new(&wasm), &self.engine, &module),
+            )
+            .with_context(|| format!("seed Wasmer module cache for {label}"))
+        } else {
+            seed_wasix_module_cache_bytes(
+                &self.tokio_runtime,
+                &self.engine,
+                &self.wasix_module_cache,
+                &wasm,
+                aot_name,
+                label,
+            )
+        }
     }
 
     pub(crate) fn run_split_initdb(
@@ -1004,6 +1004,10 @@ fn build_wasix_runtime(
     let mut wasix_runtime = PluggableRuntime::new(task_manager);
     wasix_runtime.set_engine(engine.clone());
     wasix_runtime.set_module_cache(module_cache);
+    #[cfg(windows)]
+    {
+        wasix_runtime.module_cache_only = true;
+    }
     Arc::new(wasix_runtime)
 }
 
@@ -1341,6 +1345,7 @@ fn split_initdb_binary_package(
     Ok(BinaryPackage {
         id: package_id.clone(),
         package_ids: vec![package_id.clone()],
+        webc_version: webc::Version::V3,
         when_cached: None,
         entrypoint_cmd: Some("initdb".to_owned()),
         hash: Default::default(),
@@ -1398,36 +1403,6 @@ fn preload_runtime_side_modules(
         )?;
     }
     Ok(())
-}
-
-#[cfg(feature = "extensions")]
-fn seed_extension_side_module(
-    runtime: &TokioRuntime,
-    engine: &Engine,
-    module_cache: &Arc<SharedCache>,
-    runtime_root: &StorageRoot,
-    runtime_path: &str,
-    aot_name: Option<&'static str>,
-    package: Option<&super::extensions::ExtensionPackage>,
-    label: &str,
-) -> Result<()> {
-    let Some(aot_name) = aot_name else {
-        return Ok(());
-    };
-    let path = Path::new("/").join(runtime_path);
-    let wasm = runtime_root
-        .read(&path)
-        .with_context(|| format!("{label} is not installed at {}", path.display()))?;
-    if let Some(package) = package {
-        let module = aot::load_package_module(engine, package, aot_name, &wasm)?;
-        block_on_tokio_runtime(
-            runtime,
-            module_cache.save(ModuleHash::new(&wasm), engine, &module),
-        )
-        .with_context(|| format!("seed Wasmer module cache for {label}"))
-    } else {
-        seed_wasix_module_cache_bytes(runtime, engine, module_cache, &wasm, aot_name, label)
-    }
 }
 
 fn seed_wasix_module_cache(
@@ -1493,11 +1468,6 @@ where
 impl OliphauntLifecycleExports {
     fn load(store: &mut Store, instance: &Instance) -> Result<Self> {
         let wasi_start = typed_export(store, instance, "_start")?;
-        let set_force_host_error_recovery = optional_typed_export(
-            store,
-            instance,
-            "oliphaunt_wasix_set_force_host_error_recovery",
-        )?;
         let set_active = typed_export(store, instance, "oliphaunt_wasix_set_active")?;
         let start_oliphaunt = typed_export(store, instance, "oliphaunt_wasix_start")?;
         let run_atexit_funcs =
@@ -1505,7 +1475,6 @@ impl OliphauntLifecycleExports {
 
         Ok(Self {
             wasi_start,
-            set_force_host_error_recovery,
             set_active,
             start_oliphaunt,
             run_atexit_funcs,
@@ -1745,13 +1714,6 @@ fn is_wasm_uncaught_exception(err: &wasmer::RuntimeError) -> bool {
     // unwinds across the exported loop boundary. The C recovery export then
     // performs the normal Postgres error cleanup and emits ErrorResponse.
     err.message().contains("uncaught exception")
-}
-
-fn host_requires_process_exit_error_recovery() -> bool {
-    // Wasmer 7.2.1 disables its WebAssembly exception-handling tests on
-    // Windows. Keep PostgreSQL's proven top-level process-exit recovery there;
-    // other hosts retain nested PG_TRY/PG_CATCH unwinding.
-    cfg!(target_env = "msvc")
 }
 
 fn wasix_icu_data_is_available(runtime_layout: &RuntimeLayout) -> bool {
@@ -2037,6 +1999,35 @@ mod tests {
     use super::*;
     use std::io;
     use std::pin::Pin;
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_runtime_rejects_missing_precompiled_modules() -> Result<()> {
+        use wasmer_wasix::SpawnError;
+        use wasmer_wasix::runtime::ModuleInput;
+        use wasmer_wasix::runtime::module_cache::CacheError;
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let engine = aot::headless_engine()?;
+        for policy in [GuestWasmTasks::Deny, GuestWasmTasks::Allow] {
+            let wasix_runtime =
+                build_wasix_runtime(&runtime, &engine, Arc::new(SharedCache::new()), policy);
+            let error = runtime
+                .block_on(wasix_runtime.resolve_module(
+                    ModuleInput::Bytes(b"not a WebAssembly module".as_slice().into()),
+                    Some(&engine),
+                    None,
+                ))
+                .expect_err("an unseeded module must fail before invoking the compiler");
+            assert!(
+                matches!(&error, SpawnError::CacheError(CacheError::NotFound)),
+                "{error:?}"
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn postgres_argv_delimits_an_option_like_database_name() -> Result<()> {

@@ -536,7 +536,7 @@ async function extensionRow(root, config) {
         ? []
         : [
             `sqlMembers=${config.sqlMembers.join(',')}`,
-            `nativeModuleStems=${config.nativeModuleStem ?? ''}`,
+            `nativeModuleStems=${config.nativeModuleStems.join(',')}`,
           ]),
       'files=files',
       '',
@@ -697,7 +697,7 @@ async function extensionRow(root, config) {
         ? {}
         : {
             sqlMembers: config.sqlMembers,
-            nativeModuleStems: config.nativeModuleStem === null ? [] : [config.nativeModuleStem],
+            nativeModuleStems: config.nativeModuleStems,
           }),
       dataFiles,
       dependencies: config.dependencies,
@@ -827,6 +827,7 @@ async function createFixture(root) {
       ...fixture,
       createsExtension: generated['creates-extension'],
       sqlMembers: generated['sql-members'],
+      nativeModuleStems: generated['native-module-stems'],
       dataFiles: generated['runtime-share-data-files'],
       dependencies: generated['selected-extension-dependencies'],
       extensionSqlFileNames: generated['extension-sql-file-names'],
@@ -1416,6 +1417,94 @@ async function main() {
       'old independently versioned pgtap data\n',
     );
 
+    // Older PostGIS carriers may explicitly declare the primary-only closure or
+    // predate both closure fields. Neither form requires today's companions.
+    for (const closureShape of ['declared', 'legacy']) {
+      const frozenOldPostgis = structuredClone(carrier);
+      frozenOldPostgis.extensions = frozenOldPostgis.extensions.filter(
+        ({ sqlName }) => sqlName === 'postgis',
+      );
+      const extension = frozenOldPostgis.extensions[0];
+      const removedMembers = extension.sqlMembers.filter((member) => member !== 'postgis');
+      extension.version = '0.9.0';
+      extension.tag = 'oliphaunt-extension-postgis-v0.9.0';
+      extension.sqlMembers = ['postgis'];
+      extension.nativeModuleStems = ['postgis-3'];
+      extension.dependencies = [];
+      if (closureShape === 'legacy') {
+        delete extension.sqlMembers;
+        delete extension.nativeModuleStems;
+      }
+      replaceExtensionRuntimeAsset(
+        frozenOldPostgis,
+        'postgis',
+        await mutatedExtensionRuntime(
+          root,
+          'postgis',
+          `postgis-frozen-old-${closureShape}.tar.gz`,
+          async (stage) => {
+            const manifestFile = path.join(stage, 'manifest.properties');
+            const manifest = await fs.readFile(manifestFile, 'utf8');
+            await fs.writeFile(
+              manifestFile,
+              manifest
+                .split('\n')
+                .flatMap((line) => {
+                  if (line.startsWith('dependencies=')) return ['dependencies='];
+                  if (line.startsWith('sqlMembers='))
+                    return closureShape === 'legacy' ? [] : ['sqlMembers=postgis'];
+                  if (line.startsWith('nativeModuleStems='))
+                    return closureShape === 'legacy' ? [] : ['nativeModuleStems=postgis-3'];
+                  return [line];
+                })
+                .join('\n'),
+            );
+            for (const member of removedMembers) {
+              for (const name of [`${member}.control`, `${member}--1.0.sql`]) {
+                await fs.rm(path.join(stage, 'files', 'share', 'postgresql', 'extension', name));
+              }
+            }
+          },
+        ),
+      );
+      const frozenFile = path.join(root, `postgis-frozen-old-${closureShape}.json`);
+      await write(frozenFile, `${JSON.stringify(frozenOldPostgis, null, 2)}\n`);
+      const projectRoot = path.join(root, `postgis-frozen-old-${closureShape}-consumer`);
+      const iosRoot = path.join(projectRoot, 'ios');
+      const frozenOutput = path.join(iosRoot, 'oliphaunt');
+      const frozenResult = await stageIosAppPayload(
+        projectRoot,
+        iosRoot,
+        { extensions: ['postgis'] },
+        {
+          env: {
+            OLIPHAUNT_REACT_NATIVE_IOS_BASE_CARRIER: frozenFile,
+            OLIPHAUNT_REACT_NATIVE_IOS_ALLOW_FILE_URLS: 'true',
+            OLIPHAUNT_REACT_NATIVE_IOS_CACHE_DIR: path.join(
+              root,
+              `postgis-frozen-old-${closureShape}-cache`,
+            ),
+          },
+        },
+      );
+      assert.deepEqual(frozenResult.selected, ['postgis']);
+      const sqlDirectory = path.join(
+        frozenOutput,
+        'resources',
+        'OliphauntReactNativeResources.bundle',
+        'oliphaunt',
+        'runtime',
+        'files',
+        'share',
+        'postgresql',
+        'extension',
+      );
+      await fs.access(path.join(sqlDirectory, 'postgis.control'));
+      for (const member of [...removedMembers, 'fuzzystrmatch']) {
+        await assert.rejects(fs.access(path.join(sqlDirectory, `${member}.control`)));
+      }
+    }
+
     const tamperedBundle = await bundledCarrierDocument(
       root,
       carrier,
@@ -1594,6 +1683,7 @@ async function main() {
     }
     for (const [field, value] of [
       ['sqlMembers', ['postgis']],
+      ['nativeModuleStems', ['postgis-3']],
       ['dependencies', []],
     ]) {
       const incomplete = structuredClone(carrier);
@@ -1602,21 +1692,19 @@ async function main() {
         `incomplete-postgis-${field}`,
         incomplete,
         ['postgis'],
-        /must match generated canonical metadata/u,
+        new RegExp(`manifest\\.properties must declare ${field}=`, 'u'),
       );
     }
 
-    const unmergedPostgis = structuredClone(carrier);
-    unmergedPostgis.extensions.find(({ sqlName }) => sqlName === 'postgis').nativeModuleStems = [
-      'postgis-3',
-      'postgis_raster-3',
-      'postgis_topology-3',
-    ];
+    const missingPrimaryPostgis = structuredClone(carrier);
+    missingPrimaryPostgis.extensions.find(
+      ({ sqlName }) => sqlName === 'postgis',
+    ).nativeModuleStems = ['postgis_raster-3', 'postgis_topology-3'];
     await expectCarrierFailure(
-      'unmerged-postgis-modules',
-      unmergedPostgis,
+      'postgis-modules-missing-primary',
+      missingPrimaryPostgis,
       ['postgis'],
-      /nativeModuleStems must contain only the merged primary mobile module/u,
+      /nativeModuleStems must contain the primary module exactly when nativeModuleStem is set/u,
     );
 
     const missingFrozenContentField = structuredClone(carrier);

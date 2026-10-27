@@ -224,4 +224,13 @@ export FAKE_UNAME_OS=FreeBSD
 reject 69 install_tool cargo-binstall
 test ! -e "$FAKE_CURL_LOG"
 no_debris
+
+fixture zizmor-pin
+cat >> "$OLIPHAUNT_MAINTAINER_TOOLS_MANIFEST" <<'TOML'
+[zizmor]
+version = "1.25.2"
+TOML
+test "$(install_tool zizmor --print-version)" = 1.25.2
+reject 2 install_tool zizmor
+ZIZMOR_VERSION=9.9.9 reject any install_tool zizmor --print-version
 echo 'Maintainer tool integrity, cache repair, rollback and pinned fallback checks passed'

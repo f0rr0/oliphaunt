@@ -22,7 +22,7 @@ if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
   printf '%s\n' "${FAKE_IMAGE_DIGEST:-${!#}}"
 elif [ "${1:-}" = run ]; then
   case "$*" in
-    *'cargo build -p oliphaunt-broker'*)
+    *'cargo build --manifest-path src/native/broker/Cargo.toml'*)
       mkdir -p "$FAKE_TARGET_DIR/release"
       printf '#!/bin/sh\nexit 0\n' > "$FAKE_TARGET_DIR/release/oliphaunt-broker"
       chmod 755 "$FAKE_TARGET_DIR/release/oliphaunt-broker" ;;

@@ -4,15 +4,6 @@ import path from 'node:path';
 
 import { generateDocs } from './generate-content.mts';
 
-const result = await generateDocs();
-const { routeRecords, paths } = result;
-const { repoRoot } = paths;
-
-function fail(message) {
-  console.error(message);
-  process.exit(1);
-}
-
 function stripMarkdownCodeBlocks(markdown) {
   return markdown.replace(/```[\s\S]*?```/gu, '');
 }
@@ -65,7 +56,8 @@ function collectSourceTextFiles(dirPath, output = []) {
   return output;
 }
 
-function assertDocsInternalLinksResolve() {
+export function checkDocsProduct({ routeRecords, paths }) {
+  const { repoRoot, generatedRoot } = paths;
   const validDocsPaths = new Set(['/docs']);
   for (const record of routeRecords) {
     validDocsPaths.add(`/docs${record.route}`);
@@ -73,7 +65,7 @@ function assertDocsInternalLinksResolve() {
 
   const failures = [];
   const files = [
-    ...routeRecords.map((record) => record.file),
+    ...routeRecords.map((record) => path.join(generatedRoot, record.file)),
     ...collectSourceTextFiles(path.join(repoRoot, 'src/docs/src')),
   ];
   for (const file of files) {
@@ -87,9 +79,15 @@ function assertDocsInternalLinksResolve() {
     }
   }
   if (failures.length > 0) {
-    fail(`public docs contain unresolved internal links:\n${failures.join('\n')}`);
+    throw new Error(`public docs contain unresolved internal links:\n${failures.join('\n')}`);
   }
 }
 
-assertDocsInternalLinksResolve();
-console.log(`docs links passed (${routeRecords.length} routes)`);
+if (import.meta.main) {
+  const specification = process.argv[2];
+  const result = await generateDocs(
+    specification ? JSON.parse(fs.readFileSync(specification, 'utf8')) : {},
+  );
+  checkDocsProduct(result);
+  console.log(`docs links passed (${result.routeRecords.length} routes)`);
+}

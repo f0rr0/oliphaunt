@@ -1,0 +1,15 @@
+{
+  "private": true,
+  "peerDependencies": {
+    "@oliphaunt/react-native": ">=0.3.3",
+    "@oliphaunt/ts": ">=0.3.2"
+  },
+  "peerDependenciesMeta": {
+    "@oliphaunt/react-native": {
+      "optional": true
+    },
+    "@oliphaunt/ts": {
+      "optional": true
+    }
+  }
+}

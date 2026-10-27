@@ -1,0 +1,14 @@
+[package]
+name = "oliphaunt-wasix-v8-serializer"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.96"
+license.workspace = true
+publish = false
+
+[dependencies]
+anyhow = "1"
+zstd = { version = "0.13", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+wasmer = { workspace = true, features = ["v8", "headless"] }

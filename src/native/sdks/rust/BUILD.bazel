@@ -1,0 +1,104 @@
+load("//build_defs/quality:sources.bzl", "rust_quality_files", "source_quality_files")
+load("//build_defs/languages:rust.bzl", "cargo_doc_test", "cargo_generator", "cargo_generator_test", "cargo_integration_test", "cargo_library", "cargo_library_test", "cargo_package_env")
+load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
+load("//build_defs/languages:source.bzl", "cargo_source_package")
+load("//build_defs/native:rust-runtime-test.bzl", "native_rust_runtime_test")
+load("//build_defs/extensions:imported_members.bzl", "desktop_runtime_member_payloads")
+
+package(default_visibility = ["//visibility:public"])
+exports_files(["Cargo.toml", "release.toml"])
+
+PATH_DEPS = {
+    "liboliphaunt-native-bindings": "//src/native/rust-bindings:lib",
+    "oliphaunt-broker": "//src/native/broker:lib",
+}
+
+cargo_package_env()
+BUILD_SCRIPT_DEPS = PATH_DEPS
+cargo_generator(path_dependencies = BUILD_SCRIPT_DEPS)
+cargo_generator(name = "mobile_build_script", path_dependencies = BUILD_SCRIPT_DEPS, features = ["mobile-bindings"], default_features = False)
+cargo_generator(name = "minimal_build_script", path_dependencies = BUILD_SCRIPT_DEPS, default_features = False)
+cargo_library(path_dependencies = PATH_DEPS, build_script = ":build_script")
+cargo_library(name = "mobile_lib", path_dependencies = PATH_DEPS, build_script = ":mobile_build_script", features = ["mobile-bindings"], default_features = False)
+cargo_library(name = "minimal_lib", path_dependencies = PATH_DEPS, build_script = ":minimal_build_script", default_features = False)
+cargo_library_test(data = ["//src/test-fixtures:rust_fixtures"])
+cargo_generator_test()
+cargo_library_test(name = "mobile_unit_test", crate = ":mobile_lib", features = ["mobile-bindings"], default_features = False, data = ["//src/test-fixtures:rust_fixtures"])
+_INTEGRATION_ROOTS = glob(["tests/*.rs"])
+filegroup(name = "integration_sources", srcs = _INTEGRATION_ROOTS + glob(["tests/support/**/*.rs"]) + ["src/test_fixtures.rs"])
+[
+    cargo_integration_test(
+        name = source.removeprefix("tests/").removesuffix(".rs") + "_test",
+        source = source,
+        path_dependencies = PATH_DEPS,
+        srcs = glob(["tests/support/**/*.rs"]) + ["src/test_fixtures.rs"],
+        data = ["//src/test-fixtures:rust_fixtures"],
+        tags = ["manual"],
+    )
+    for source in _INTEGRATION_ROOTS
+]
+cargo_doc_test(size = "small")
+rust_clippy_test(
+    name = "clippy_test",
+    targets = [":lib", ":unit_test", ":build_script_"] + [":" + source.removeprefix("tests/").removesuffix(".rs") + "_test" for source in _INTEGRATION_ROOTS],
+    transitive = False,
+    size = "small",
+)
+[native_rust_runtime_test(
+    name = name + "_runtime_test",
+    binary = ":" + name + "_test",
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "large",
+    timeout = "long",
+) for name in ["native_smoke", "native_sql_regression"]]
+
+cargo_integration_test(
+    name = "mobile_broker_feature_test",
+    source = "tests/mobile_broker.rs",
+    path_dependencies = PATH_DEPS,
+    crate = ":mobile_lib",
+    features = ["mobile-bindings"],
+    default_features = False,
+    data = ["//src/test-fixtures:rust_fixtures"],
+    tags = ["manual"],
+)
+native_rust_runtime_test(
+    name = "mobile_broker_runtime_test",
+    binary = ":mobile_broker_feature_test",
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "large",
+    timeout = "long",
+)
+
+native_rust_runtime_test(
+    name = "native_extensions_runtime_test",
+    binary = ":native_extensions_test",
+    extensions = desktop_runtime_member_payloads(name = "native_extensions_runtime_members", include_postgis = True),
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "large",
+    timeout = "long",
+)
+
+cargo_source_package(
+    product = "oliphaunt-rust",
+    fixtures = "testdata/",
+    native_sdk = True,
+    qualification = [
+        ":unit_test",
+        ":mobile_unit_test",
+        ":generator_test",
+        ":public_api_test",
+        ":build_resources_test",
+        "//src/native/sdks/rust/crates/oliphaunt-build:unit_test",
+        "//build_defs/native:rust_runtime_runner_test",
+        ":native_smoke_runtime_test",
+        ":native_sql_regression_runtime_test",
+        ":mobile_broker_runtime_test",
+        ":native_extensions_runtime_test",
+        "//build_defs/languages/installed:consumer_test",
+    ],
+)
+
+source_quality_files()
+
+rust_quality_files()

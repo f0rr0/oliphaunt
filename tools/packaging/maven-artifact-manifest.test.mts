@@ -1,21 +1,22 @@
 import { afterEach, expect, test } from 'bun:test';
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-
-import { buildMavenArtifactManifest } from './build-maven-artifact-manifest.mts';
-import { archiveDirectory } from './archive-directory.mts';
-import { createDeterministicTar } from './cargo-source-package.mts';
 import { stageExtensionUpstreamLicenses } from '../../src/extensions/tools/extension-upstream-licenses.mts';
-import { canonicalGzipSync } from './portable-archive.mts';
-import { parseMavenArtifactManifest } from './maven-artifact-manifest.mts';
-import { renderMavenArtifactPom } from './maven-artifact-staging.mts';
 import {
   currentProductVersionSync,
+  extensionArtifactTargets,
   extensionMetadata,
   extensionReleaseVersion,
+  extensionSqlNames,
+  registryPackageRows,
 } from '../release/release-artifact-targets.mts';
-import { ROOT } from '../release/release-graph.mts';
+import { archiveDirectory } from './archive-directory.mts';
+import { buildMavenArtifactManifest } from './build-maven-artifact-manifest.mts';
+import { createDeterministicTar } from './cargo-source-package.mts';
+import { parseMavenArtifactManifest } from './maven-artifact-manifest.mts';
+import { renderMavenArtifactPom } from './maven-artifact-staging.mts';
+import { canonicalGzipSync } from './portable-archive.mts';
 import { stageReleaseNotices } from './release-notices.mts';
 
 const temporaryRoots = [];
@@ -49,6 +50,16 @@ function contribAndroidBundle(root, target, { archiveRoot } = {}) {
   stageReleaseNotices(stage, { profile: 'contrib-native-openssl' });
   writeFileSync(path.join(stage, 'bundle-manifest.json'), '{}\n');
   writeFileSync(
+    path.join(path.dirname(output), `${product}-${version}-manifest.json`),
+    JSON.stringify({
+      schema: 'oliphaunt-extension-ci-artifacts-v2',
+      extensions: extensionSqlNames(product).map((sqlName) => ({
+        sqlName,
+        dependencies: sqlName === 'earthdistance' ? ['cube'] : [],
+      })),
+    }),
+  );
+  writeFileSync(
     output,
     canonicalGzipSync(
       createDeterministicTar(stage, archiveRoot ?? canonicalRoot, {
@@ -76,6 +87,14 @@ async function singletonAndroidRuntime(
   mkdirSync(stage, { recursive: true });
   chmodSync(stage, 0o755);
   mkdirSync(path.dirname(output), { recursive: true });
+  writeFileSync(
+    path.join(path.dirname(output), `${product}-${version}-manifest.json`),
+    JSON.stringify({
+      schema: 'oliphaunt-extension-ci-artifacts-v1',
+      sqlName: 'pg_hashids',
+      dependencies: [],
+    }),
+  );
   stageReleaseNotices(stage, { profile: 'external-native' });
   if (upstreamRoot !== null) {
     const staged = stageExtensionUpstreamLicenses('pg_hashids', path.join(stage, upstreamRoot));
@@ -129,6 +148,7 @@ test('the real Maven manifest builder feeds the canonical ten-field schema into 
   expect(rows.every((row) => row.split('\t').length === 10)).toBe(true);
 
   const records = parseMavenArtifactManifest(manifest);
+  expect(records.every((record) => record.dependencies.length === 0)).toBe(true);
   expect(records.map(({ groupId, artifactId }) => groupId + ':' + artifactId).sort()).toEqual([
     'dev.oliphaunt.runtime:oliphaunt-icu',
   ]);
@@ -148,7 +168,7 @@ test('the real Maven manifest builder feeds the canonical ten-field schema into 
   );
   expect(parseMavenArtifactManifest(manifest)).toHaveLength(1);
   const mutations = [
-    ['legacy field count', first.slice(0, 8), /ten tab-separated fields/u],
+    ['legacy field count', first.slice(0, 8), /ten or eleven tab-separated fields/u],
     ['missing display name', first.with(4, ''), /name/u],
     [
       'half runtime binding',
@@ -282,4 +302,71 @@ test('the Maven manifest builder validates singleton upstream licenses in the ru
       label,
     ).rejects.toThrow(pattern);
   }
+});
+
+test('declared extension Maven inputs preserve canonical writer bytes and reject incomplete targets', async () => {
+  const root = temporaryDirectory();
+  const product = 'oliphaunt-extension-pg-hashids';
+  for (const target of ['android-arm64-v8a', 'android-x86_64'])
+    await singletonAndroidRuntime(root, target);
+  const baseline = path.join(root, 'baseline.tsv');
+  const output = path.join(root, 'declared.tsv');
+  const options = { extensions: true, extensionProducts: [product], extensionArtifactRoot: root };
+  await buildMavenArtifactManifest(baseline, options);
+  const row = {
+    productRoot: path.join(root, product),
+    releaseProduct: product,
+    version: currentProductVersionSync(product),
+    sqlNames: ['pg_hashids'],
+    compatibility: extensionMetadata(product).compatibility,
+    runtimeSourceVersion: currentProductVersionSync('liboliphaunt-native'),
+    targets: extensionArtifactTargets({ product, family: 'native' }).filter(
+      (target) => target.kind === 'native-static-registry' && target.target.startsWith('android-'),
+    ),
+    registryPackages: registryPackageRows({ product, packageKind: 'maven' }).map(
+      (carrier) => carrier.packageName,
+    ),
+  };
+  const context = { extensions: { [product]: row } };
+  await buildMavenArtifactManifest(output, { ...options, context });
+  expect(readFileSync(output)).toEqual(readFileSync(baseline));
+  const memberContracts = Object.fromEntries(
+    row.targets.map(({ target }) => [
+      target,
+      [{ sqlName: 'pg_hashids', dependencies: ['fuzzystrmatch'] }],
+    ]),
+  );
+  await buildMavenArtifactManifest(output, {
+    ...options,
+    context: { extensions: { [product]: { ...row, memberContracts } } },
+  });
+  for (const record of parseMavenArtifactManifest(output)) {
+    const target = record.artifactId.slice(`${product}-`.length);
+    expect(record.dependencies).toEqual([
+      {
+        groupId: 'dev.oliphaunt.extensions',
+        artifactId: `oliphaunt-extension-contrib-pg18-${target}`,
+        version: row.compatibility.nativeRuntimeVersion,
+        type: 'tar.gz',
+        scope: 'runtime',
+      },
+    ]);
+  }
+  await expect(
+    buildMavenArtifactManifest(output, {
+      ...options,
+      context: { extensions: { [product]: { ...row, targets: row.targets.slice(1) } } },
+    }),
+  ).rejects.toThrow('both canonical Android targets');
+  await expect(
+    buildMavenArtifactManifest(output, {
+      ...options,
+      context: {
+        extensions: { [product]: { ...row, registryPackages: row.registryPackages.slice(1) } },
+      },
+    }),
+  ).rejects.toThrow('missing Maven carrier');
+  await expect(
+    buildMavenArtifactManifest(output, { ...options, context: { extensions: {} } }),
+  ).rejects.toThrow('absent from declared');
 });

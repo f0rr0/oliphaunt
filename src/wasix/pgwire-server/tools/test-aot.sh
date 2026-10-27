@@ -15,5 +15,6 @@ OLIPHAUNT_WASIX_EXTENSION_AOT_ARTIFACT_ROOT="$PWD/target/extensions/wasix/aot-ar
     oliphaunt-extension-contrib-pg18
 OLIPHAUNT_WASM_AOT_VERIFY=full \
 OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT="$proof_root/extension-artifacts" \
-  cargo test -p oliphaunt-pgwire-server --locked --features extension-uuid-ossp \
+  CARGO_TARGET_DIR="$PWD/target" \
+  cargo test --manifest-path src/wasix/pgwire-server/Cargo.toml --locked --features extension-uuid-ossp \
     --test extensions uuid_ossp_aot_server_smoke -- --ignored --exact --nocapture

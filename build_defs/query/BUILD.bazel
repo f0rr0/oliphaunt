@@ -1,0 +1,95 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("@aspect_rules_ts//ts:defs.bzl", "ts_project")
+load("//build_defs/foundation:bun.bzl", "bun_test")
+load(":defs.bzl", "npm_consumer_test", "query_envelope")
+
+package(default_visibility = ["//visibility:public"])
+
+_MODULE_OUT_DIR = "dist"
+
+exports_files([
+    "defs.bzl",
+    "package.mts",
+    "consumer-test.mts",
+    "cargo-consumer-test.mts",
+    "consumer/Cargo.toml",
+    "consumer/main.rs",
+])
+
+bun_test(
+    name = "cargo_link_environment_test",
+    size = "small",
+    entry_point = "cargo-consumer-test.test.mts",
+    data = ["cargo-consumer-test.mts", "package.mts", "//build_defs/languages:cargo-environment.mts", "//:tools/packaging/archive-directory.mts", "//:tools/packaging/package-archive.mts", "//:tools/packaging/portable-archive.mts"],
+)
+
+bun_test(
+    name = "package_test",
+    size = "small",
+    entry_point = "package.test.mts",
+    data = [
+        "package.mts",
+        "//:tools/packaging/archive-directory.mts",
+        "//:tools/packaging/portable-archive.mts",
+    ],
+)
+
+# Exercise the archive boundary with real nested JavaScript and declarations.
+# Both public formats must remain usable after installation outside the checkout.
+NESTED_SRCS = glob(["test-fixtures/src/**/*.ts"])
+
+ts_project(
+    name = "nested_module",
+    srcs = NESTED_SRCS,
+    tsconfig = {"compilerOptions": {
+        "module": "ESNext",
+        "moduleResolution": "Bundler",
+        "strict": True,
+        "target": "ES2022",
+        "types": [],
+    }},
+    declaration = True,
+    out_dir = _MODULE_OUT_DIR + "/module",
+    root_dir = "test-fixtures/src",
+    transpiler = "tsc",
+    supports_workers = 0,
+)
+
+ts_project(
+    name = "nested_commonjs",
+    srcs = NESTED_SRCS,
+    tsconfig = {"compilerOptions": {
+        "module": "Node16",
+        "moduleResolution": "Node16",
+        "strict": True,
+        "target": "ES2022",
+        "types": [],
+    }},
+    declaration = True,
+    out_dir = _MODULE_OUT_DIR + "/commonjs",
+    root_dir = "test-fixtures/src",
+    transpiler = "tsc",
+    supports_workers = 0,
+)
+
+query_envelope(
+    name = "nested_npm",
+    format = "npm",
+    manifest = "test-fixtures/npm-package.json",
+    entries = {
+        ":nested_module": "dist/module/",
+        ":nested_commonjs": "dist/commonjs/",
+        "test-fixtures/npm-package.json": "package.json",
+        "test-fixtures/module.package.json": "dist/module/package.json",
+    },
+    out = "nested-query.tgz",
+)
+
+npm_consumer_test(
+    name = "nested_envelope_test",
+    size = "small",
+    archive = ":nested_npm",
+    consumer = "test-fixtures/consumer.mts",
+)
+
+source_quality_files(exclude = [_MODULE_OUT_DIR + "/**"])

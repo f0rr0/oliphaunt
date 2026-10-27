@@ -1,0 +1,90 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/foundation:bun.bzl", "bun_test")
+load(":defs.bzl", "installed_cargo_tests")
+load(":source-compile.bzl", "source_compile_selection_test", "source_compile_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["context.mts", "consumer.mts", "capture.mts", "repositories.bzl", "fixture/Cargo.toml", "fixture/Cargo.lock", "fixture/registry-index.json", "fixture/main.rs", "fixture/build.rs"])
+
+bun_test(
+    name = "context_test",
+    entry_point = "context.test.mts",
+    data = ["context.mts", "fixture/Cargo.lock", "fixture/registry-index.json", "//:rust-toolchain.toml"] + glob(["wasix/**/Cargo.lock", "wasix/**/registry-index.json"]),
+)
+
+bun_test(
+    name = "candidate_context_test",
+    entry_point = "consumer.test.mts",
+    data = ["consumer.mts", "fixture/Cargo.toml", "//src/native/sdks/rust:Cargo.toml", "//build_defs/query:package.mts", "//build_defs/languages:cargo-environment.mts", "//build_defs/languages:cargo-metadata.mts", "//:tools/packaging/cargo-manifest.mts", "//:tools/packaging/archive-directory.mts", "//:tools/packaging/frozen-cargo.mts", "//:tools/packaging/portable-archive.mts"],
+)
+
+installed_cargo_tests(
+    name = "consumer",
+    size = "large", timeout = "long", tags = ["manual", "installed-consumer"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    archives = ["//src/native/sdks/rust:crate", "//src/native/sdks/rust/crates/oliphaunt-build:crate", "//src/native/rust-bindings:crate", "//src/native/broker:crate", "//src/query/rust:crate"],
+    cargo_home = "@installed_cargo_inputs//:cargo_home",
+    manifest = "fixture/Cargo.toml", lock = "fixture/Cargo.lock", source = "fixture/main.rs",
+    core_source = "fixture/core.rs", build_script = "fixture/build.rs",
+    core_build_script = "fixture/core-build.rs",
+)
+
+source_quality_files()
+
+exports_files([
+    "source-compile.bzl", "source-compile.mts", "source-compile.test.mts",
+    "wasix/sdk/Cargo.lock", "wasix/sdk/registry-index.json",
+    "wasix/server/Cargo.lock", "wasix/server/registry-index.json",
+    "wasix/query/Cargo.lock", "wasix/query/registry-index.json",
+])
+
+source_compile_selection_test(
+    name = "source_compile_selection_test",
+    entry_point = "source-compile.test.mts",
+    data = [
+        "source-compile.mts", "consumer.mts", "context.mts",
+        "//:tools/packaging/wasix-runtime-cargo-family.mts",
+        "//src/wasix/runtime:tools/wasix-cargo-artifact-contract.mts",
+        "//tools/release:release-graph.mts",
+        "//tools/release:release-history.mts",
+        "//tools/release:compatibility-version-parser.mts",
+        "//:src/extensions/artifacts/packages/tools/contrib-carriers.mts",
+        "//build_defs/languages:cargo-environment.mts",
+        "//build_defs/languages:cargo-metadata.mts",
+        "//:tools/packaging/cargo-manifest.mts", "//:tools/packaging/frozen-cargo.mts",
+        "//:tools/packaging/portable-archive.mts", "//:tools/packaging/archive-directory.mts",
+    ],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+source_compile_test(
+    name = "wasix_sdk_source_compile_test",
+    archive = "//src/wasix/sdks/rust:crate",
+    dependencies = ["//src/query/rust:crate"],
+    cargo_home = "@installed_wasix_sdk_cargo_inputs//:cargo_home",
+    lock = "wasix/sdk/Cargo.lock",
+    index = "wasix/sdk/registry-index.json",
+    cargo_args = ["--no-default-features", "--features", "extensions,tools,icu"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "large", timeout = "long", tags = ["manual", "installed-consumer"],
+)
+source_compile_test(
+    name = "pgwire_source_compile_test",
+    archive = "//src/wasix/pgwire-server:crate",
+    dependencies = ["//src/wasix/sdks/rust:crate", "//src/query/rust:crate"],
+    cargo_home = "@installed_pgwire_cargo_inputs//:cargo_home",
+    lock = "wasix/server/Cargo.lock",
+    index = "wasix/server/registry-index.json",
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "large", timeout = "long", tags = ["manual", "installed-consumer"],
+)
+source_compile_test(
+    name = "query_source_compile_test",
+    archive = "//src/query/rust:crate",
+    cargo_home = "@installed_query_cargo_inputs//:cargo_home",
+    lock = "wasix/query/Cargo.lock",
+    index = "wasix/query/registry-index.json",
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "small", tags = ["manual", "installed-consumer"],
+)

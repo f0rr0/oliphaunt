@@ -1,4 +1,5 @@
 import { lstat, open, readdir, readlink, type FileHandle } from 'node:fs/promises';
+import { platform } from 'node:os';
 import { join } from 'node:path';
 
 const UNSUPPORTED_DIRECTORY_SYNC_ERRORS = new Set(['EISDIR', 'EINVAL', 'EPERM', 'ENOTSUP']);
@@ -43,7 +44,8 @@ async function syncTree(root: string, allowSymlinks: boolean): Promise<void> {
     } else if (entryMetadata.isDirectory()) {
       await syncTree(file, allowSymlinks);
     } else if (entryMetadata.isFile()) {
-      const handle = await open(file, 'r');
+      // Windows requires write access when flushing regular files.
+      const handle = await open(file, platform() === 'win32' ? 'r+' : 'r');
       try {
         await handle.sync();
       } finally {

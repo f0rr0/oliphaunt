@@ -1,0 +1,237 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("@aspect_rules_js//js:defs.bzl", "js_library")
+load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
+load("@bazel_lib//lib:copy_file.bzl", "copy_file")
+load("@javascript_packages//:defs.bzl", "PACKAGES", "javascript_type_links")
+load("@javascript_compiler_packages//:defs.bzl", "compiler_input_links")
+load("@javascript_compiler_packages//:roots.bzl", "COMPILER_CLOSURES", "COMPILER_INPUTS", "COMPILER_PACKAGES")
+load("@oliphaunt_javascript_metadata//:metadata.bzl", "JAVASCRIPT")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("//build_defs/extensions:sdk_projections.bzl", "sdk_extension_metadata", "sdk_extension_projections")
+load("//build_defs/foundation:bun.bzl", "bun_script_test")
+load("//build_defs/languages/ts:defs.bzl", "workspace_dependency_package", "workspace_dependency_link")
+load("//build_defs/languages/jvm:robolectric.bzl", "robolectric_sdk")
+load("@rules_java//java:java_import.bzl", "java_import")
+load("@rules_kotlin//kotlin:jvm.bzl", "kt_jvm_test")
+load("//build_defs/query:defs.bzl", "query_envelope")
+load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+load(":native-package.bzl", "react_native_bundle", "react_native_consumer_test", "react_native_manifest", "react_native_npm", "react_native_package_test", "react_native_templates")
+
+package(default_visibility = ["//visibility:public"])
+
+_LIB_OUT_DIR = "lib"
+_TOOLS_OUT_DIR = "native-tools"
+_DELIVERED_HELPERS = {
+    "app_plugin": "app.plugin.js",
+    "react_native_config": "react-native.config.js",
+    "codegen_check": "tools/codegen-check.cjs",
+    "resource_closure": "tools/native-resource-closure.mjs",
+    "ios_verifier": "tools/verify-ios-package.mjs",
+    "ios_stager": "tools/stage-ios-app.mjs",
+}
+
+exports_files(["package.json", "native-package.bzl", "ios/OliphauntAdapter.swift", "ios/OliphauntAdapter.h"])
+
+SDK = JAVASCRIPT["@oliphaunt/react-native"]
+QUERY = JAVASCRIPT["@oliphaunt/ts-query"]
+SDK_SRCS = glob(["src/**/*.ts"], exclude = ["src/__tests__/**", "src/extensions.ts", "src/generated/extensions.ts"])
+SOURCE_FILES = glob(["android/**", "ios/**", "cpp/**", "README.md", "CHANGELOG.md", "OliphauntReactNative.podspec"], exclude = ["android/.gradle/**", "android/.cxx/**", "android/build/**", "android/src/main/assets/**", "android/src/main/jniLibs/**", "android/src/test/**", "ios/vendor/**", "ios/extension-frameworks/**", "ios/frameworks/**", "ios/generated/**", "ios/resources/**", "ios/templates/**", "cpp/*.test.cpp"])
+
+javascript_type_links(SDK["types"])
+compiler_input_links(COMPILER_INPUTS[SDK["name"]])
+workspace_dependency_package(name = "query_package", workspace = SDK, dependency = QUERY["name"], current = "//src/query/ts:shipping_package")
+workspace_dependency_link(name = "node_modules/@oliphaunt/ts-query", package = ":query_package", workspace = SDK, dependency = QUERY["name"])
+js_library(name = "package_metadata", srcs = ["package.json"])
+
+sdk_extension_projections(name = "extension_projections", sdk = "react-native")
+sdk_extension_metadata(name = "extension_metadata", out = "src/generated/extensions.json")
+
+COMPILER_DEPS = [":package_metadata", ":node_modules/@oliphaunt/ts-query"] + [":node_modules/" + name for name in SDK["types"]] + [":node_modules/" + name for name in COMPILER_INPUTS[SDK["name"]]]
+
+ts_config(name = "base_tsconfig", src = "tsconfig.json", deps = [":node_modules/@react-native/typescript-config"])
+js_library(
+    name = "source_inputs",
+    types = SDK_SRCS + [":extension_projections"],
+    deps = [":package_metadata", ":base_tsconfig", ":node_modules/react-native"] + [":node_modules/" + name for name in SDK["types"]],
+)
+ts_project(name = "module", srcs = SDK_SRCS + [":extension_projections"], tsconfig = "tsconfig.build.module.json", extends = ":base_tsconfig", allow_js = True, resolve_json_module = True, out_dir = _LIB_OUT_DIR + "/module", root_dir = "src", transpiler = "tsc", supports_workers = 0, deps = COMPILER_DEPS)
+ts_project(name = "commonjs", srcs = SDK_SRCS + [":extension_projections"], tsconfig = "tsconfig.build.commonjs.json", extends = ":base_tsconfig", allow_js = True, resolve_json_module = True, out_dir = _LIB_OUT_DIR + "/commonjs", root_dir = "src", transpiler = "tsc", supports_workers = 0, deps = COMPILER_DEPS)
+ts_project(name = "types", srcs = SDK_SRCS + [":extension_projections"], tsconfig = "tsconfig.build.types.json", extends = ":base_tsconfig", allow_js = True, resolve_json_module = True, declaration = True, declaration_map = True, emit_declaration_only = True, out_dir = _LIB_OUT_DIR + "/typescript", root_dir = "src", transpiler = "tsc", supports_workers = 0, deps = COMPILER_DEPS)
+
+ts_project(
+    name = "source_checks",
+    srcs = SDK_SRCS + glob(["src/__tests__/**/*.ts"]) + [":extension_projections"],
+    tsconfig = ":base_tsconfig",
+    allow_js = True,
+    resolve_json_module = True,
+    no_emit = True,
+    declaration = True,
+    declaration_map = True,
+    out_dir = _LIB_OUT_DIR + "/typescript",
+    root_dir = "src",
+    supports_workers = 0,
+    deps = COMPILER_DEPS,
+)
+
+ts_project(
+    name = "helpers",
+    srcs = ["app.plugin.cts", "react-native.config.cts", "tools/codegen-check.cts", "tools/native-resource-closure.mts", "tools/verify-ios-package.mts"],
+    tsconfig = {"compilerOptions": {"target": "ES2022", "module": "NodeNext", "rewriteRelativeImportExtensions": True, "noCheck": True}},
+    root_dir = ".", out_dir = _TOOLS_OUT_DIR, transpiler = "tsc", supports_workers = 0,
+    deps = [":package_metadata"] + [":node_modules/" + name for name in SDK["types"]],
+)
+copy_file(name = "app_plugin", src = _TOOLS_OUT_DIR + "/app.plugin.cjs", out = _DELIVERED_HELPERS["app_plugin"])
+copy_file(name = "react_native_config", src = _TOOLS_OUT_DIR + "/react-native.config.cjs", out = _DELIVERED_HELPERS["react_native_config"])
+copy_file(name = "codegen_check", src = _TOOLS_OUT_DIR + "/tools/codegen-check.cjs", out = _DELIVERED_HELPERS["codegen_check"])
+copy_file(name = "resource_closure", src = _TOOLS_OUT_DIR + "/tools/native-resource-closure.mjs", out = _DELIVERED_HELPERS["resource_closure"])
+copy_file(name = "ios_verifier", src = _TOOLS_OUT_DIR + "/tools/verify-ios-package.mjs", out = _DELIVERED_HELPERS["ios_verifier"])
+react_native_bundle(
+    name = "ios_stager", out = _DELIVERED_HELPERS["ios_stager"],
+    sources = {
+        "tools/stage-ios-app.mts": "src/native/sdks/react-native/tools/stage-ios-app.mts",
+        "tools/native-resource-closure.mts": "src/native/sdks/react-native/tools/native-resource-closure.mts",
+        "//:tools/packaging/portable-archive.mts": "tools/packaging/portable-archive.mts",
+    },
+)
+react_native_templates(name = "broker_templates", sources = "//src/native/sdks/swift:broker_templates")
+
+bun_script_test(
+    name = "ios_stager_test",
+    entry_point = "tools/stage-ios-app.bazel.mts",
+    args = [
+        "$(rootpath :app_plugin)",
+        "$(rootpath :ios_stager)",
+        "$(rootpath :resource_closure)",
+        "$(rootpath :ios_verifier)",
+        "$(rootpath :extension_metadata)",
+        "$(rootpath //src/extensions/generated/sdk:ios-static-dependencies.json)",
+    ],
+    data = [
+        ":app_plugin", ":ios_stager", ":resource_closure", ":ios_verifier", ":extension_metadata",
+        "//src/extensions/generated/sdk:ios-static-dependencies.json",
+        "package.json", "tools/stage-ios-app.test.mts", "tools/stage-ios-app.mts",
+        "tools/native-resource-closure.mts", "tools/verify-ios-package.mts",
+        "//:tools/packaging/archive-directory.mts", "//:tools/packaging/portable-archive.mts",
+        "//:tools/packaging/testdata/tar-fixture.mts", "//:tools/packaging/testdata/zip-fixture.mts",
+    ],
+    size = "small",
+)
+
+react_native_manifest(name = "publish_files", manifest = "package.json")
+filegroup(name = "publish_manifest", srcs = [":publish_files"], output_group = "manifest")
+filegroup(name = "license", srcs = [":publish_files"], output_group = "license")
+filegroup(name = "notices", srcs = [":publish_files"], output_group = "notices")
+
+# This source envelope remains an independent compiler/consumer input.
+query_envelope(
+    name = "source_npm", format = "npm", manifest = ":publish_manifest", out = "oliphaunt-react-native-source.tgz",
+    entries = {file: file for file in SOURCE_FILES + SDK_SRCS} | {
+        ":module": "lib/module/", ":commonjs": "lib/commonjs/", ":types": "lib/typescript/",
+        ":extension_projections": "src/", ":extension_metadata": "src/generated/extensions.json",
+        ":broker_templates": "ios/templates/",
+        ":publish_manifest": "package.json", ":license": "LICENSE", ":notices": "THIRD_PARTY_NOTICES.md",
+        ":app_plugin": "app.plugin.js", ":react_native_config": "react-native.config.js",
+        ":codegen_check": "tools/codegen-check.cjs", ":resource_closure": "tools/native-resource-closure.mjs",
+        ":ios_verifier": "tools/verify-ios-package.mjs", ":ios_stager": "tools/stage-ios-app.mjs",
+    },
+)
+
+shipping_package(name = "construction", owner = "@oliphaunt_metadata//:product_oliphaunt-react-native", artifacts = [":source_npm"], ecosystem = "internal", package_name = SDK["name"], configuration = "portable", role = "construction", suppliers = "//build_defs/release:no_suppliers")
+
+# The final package follows its conventional Swift pin and genuine native Files.
+react_native_npm(name = "npm", out = "oliphaunt-react-native-" + SDK["version"] + ".tgz", source_archive = ":source_npm", manifest = "package.json")
+filegroup(name = "ios_carrier_input", srcs = [":npm"], output_group = "carrier")
+react_native_package_test(name = "package_test", archive = ":npm", carrier_output = ":ios_carrier_input", source_archive = ":source_npm", manifest = "package.json", size = "small")
+shipping_package(name = "ios_carrier_shipping", owner = "@oliphaunt_metadata//:product_oliphaunt-react-native", artifacts = [":ios_carrier_input"], ecosystem = "github", package_name = "oliphaunt-react-native-ios-carriers.json", configuration = "portable", role = "release-input", suppliers = "@react_native_swift_package//:package_suppliers")
+shipping_package(name = "package", owner = "@oliphaunt_metadata//:product_oliphaunt-react-native", artifacts = [":npm"], ecosystem = "npm", package_name = SDK["name"], configuration = "portable", role = "source-sdk", suppliers = "@react_native_swift_package//:package_suppliers")
+shipping_export(name = "apple_shipping_export", packages = [":construction", ":package", ":ios_carrier_shipping"], qualification = [":package_test", ":installed_consumer_test", "//src/examples/native/react-native-expo:autolinking_consumer_test", "//src/examples/native/react-native-expo:ios_installed_test"], testonly = True, target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64"])
+
+CONSUMER_COMPILER_IDS = [key for root in COMPILER_INPUTS[SDK["name"]].values() for key in COMPILER_CLOSURES[root]]
+CONSUMER_COMPILER_PACKAGES = {key: row for key, row in COMPILER_PACKAGES.items() if key in CONSUMER_COMPILER_IDS}
+
+CONSUMER_PACKAGES = {key: json.encode({"dependencies": row["dependencies"]}) for key, row in PACKAGES.items()} | {key: json.encode({"dependencies": row["dependencies"]}) for key, row in CONSUMER_COMPILER_PACKAGES.items()}
+CONSUMER_ARCHIVES = {"@javascript_packages//:" + key: key for key in PACKAGES} | {"@javascript_compiler_packages//:" + key: key for key in CONSUMER_COMPILER_PACKAGES if key not in PACKAGES}
+CONSUMER_ROOTS = SDK["types"] | COMPILER_INPUTS[SDK["name"]]
+
+react_native_consumer_test(
+    name = "source_consumer_test", archive = ":source_npm", query = ":query_package", manifest = "package.json",
+    package_name = SDK["name"], version = SDK["version"],
+    packages = CONSUMER_PACKAGES, inputs = CONSUMER_ARCHIVES, roots = CONSUMER_ROOTS, size = "medium",
+)
+react_native_consumer_test(
+    name = "installed_consumer_test", archive = ":npm", final_package = True,
+    runtime_resources = "@react_native_swift_package//:runtime_resources_archive", size = "medium",
+    query = ":query_package", manifest = "package.json", source_archive = ":source_npm",
+    package_name = SDK["name"], version = SDK["version"],
+    packages = CONSUMER_PACKAGES, inputs = CONSUMER_ARCHIVES, roots = CONSUMER_ROOTS,
+    native_base = "@react_native_swift_package//:native_requirement",
+    carrier = "@react_native_swift_package//:carrier", carrier_source = "@react_native_swift_package//:construction.json",
+    ios_static_dependencies = "//src/extensions/generated/sdk:ios-static-dependencies.json",
+)
+
+cc_test(
+    name = "lifecycle_test",
+    srcs = ["cpp/Lifecycle.test.cpp", "cpp/Lifecycle.h"],
+    copts = select({
+        "@bazel_tools//src/conditions:windows": ["/std:c++17", "/W4", "/WX", "/UNDEBUG"],
+        "//conditions:default": ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-UNDEBUG"],
+    }),
+    linkopts = select({
+        "@bazel_tools//src/conditions:windows": [],
+        "//conditions:default": ["-pthread"],
+    }),
+    size = "small",
+)
+
+java_import(
+    name = "android_test_api",
+    testonly = True,
+    jars = ["@rules_android//tools/android:android_jar"],
+)
+robolectric_sdk(name = "android_test_sdk", jar = "@robolectric_android_35//file", testonly = True)
+kt_jvm_test(
+    name = "android_temporary_root_test",
+    srcs = ["android/src/test/java/dev/oliphaunt/reactnative/AndroidTemporaryRootTest.kt"],
+    test_class = "dev.oliphaunt.reactnative.AndroidTemporaryRootTest",
+    deps = [
+        ":android_test_api", "//src/native/sdks/kotlin:android_classes",
+        "@rules_android_maven//:org_robolectric_robolectric", "@rules_android_maven//:org_robolectric_annotations",
+        "@oliphaunt_kotlin_maven//:junit_junit", "@oliphaunt_kotlin_maven//:org_json_json",
+        "@oliphaunt_kotlin_maven//:org_jetbrains_kotlinx_kotlinx_coroutines_core",
+    ],
+    data = [":android_test_sdk", "//src/test-fixtures:storage/database-root.json"],
+    jvm_flags = [
+        "-Drobolectric.offline=true",
+        "-Drobolectric-deps.properties=$(rootpath :android_test_sdk)",
+        "-Doliphaunt.storage.fixture=$(rootpath //src/test-fixtures:storage/database-root.json)",
+    ],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "medium",
+)
+
+source_quality_files(exclude = [_LIB_OUT_DIR + "/**", _TOOLS_OUT_DIR + "/**"] + _DELIVERED_HELPERS.values())
+
+exports_files(["android/build.gradle", "android/src/main/AndroidManifest.xml"])
+filegroup(name = "android_kotlin_sources", srcs = glob(["android/src/main/java/**/*.kt"]) + glob(["android/src/main/java/**/*.java"], allow_empty = True))
+filegroup(name = "android_jsi_source", srcs = ["android/src/main/cpp/OliphauntJsiBindings.cpp"])
+filegroup(name = "cpp_headers", srcs = glob(["cpp/*.h"]))
+
+# Original source helpers used by the E2E_ONLY installed path. No build wrappers
+# execute: the actual stock application archive is the test's declared input.
+exports_files(["tools/stage-ios-app.mts", "tools/native-resource-closure.mts", "tools/icu-autolinking-fixture.mts"])
+filegroup(name = "mobile_ios_e2e_sources", srcs = [
+    "package.json", "tools/mobile-e2e.sh", "tools/expo-ios-runner.sh",
+    "tools/expo-runner-common.sh", "tools/expo-runner-common.mts",
+    "tools/expo-runner-metro.sh", "tools/expo-runner-workspace.sh",
+    "tools/expo-runner-reporting.sh", "tools/expo-runner-reporting.mts",
+    "tools/mobile-extension-runtime.sh", "tools/mobile-extension-runtime.mts",
+    "tools/expo-runner-runtime-resources.sh", "tools/expo-runner-ios-device.sh",
+    "tools/expo-runner-ios-device.mts", "tools/expo-runner-ios-installed-app.sh",
+])
+
+filegroup(name = "mobile_android_e2e_sources", srcs = [
+    "package.json", "tools/mobile-e2e.sh", "tools/expo-android-runner.sh", "tools/expo-android-gradle-limits.sh",
+    "tools/expo-runner-common.sh", "tools/expo-runner-common.mts", "tools/expo-runner-metro.sh", "tools/expo-runner-workspace.sh",
+    "tools/expo-runner-reporting.sh", "tools/expo-runner-reporting.mts", "tools/mobile-extension-runtime.sh", "tools/mobile-extension-runtime.mts",
+    "tools/expo-runner-runtime-resources.sh", "tools/expo-runner-android-device.sh",
+])

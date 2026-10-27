@@ -1,0 +1,176 @@
+{
+  "purpose": "Stock format/schema and resolved graph parity only; no native execution or release qualification claim.",
+  "sourceCommit": "5922eaede59aa50b8bd5349d2d037eb9200cef07",
+  "sourceState": "Root-owned local diagnostic with separately frozen scalar-AOT working changes.",
+  "bazelVersion": "8.8.1",
+  "scope": "deps(set(//src/query/ts:shipping_package //src/query/ts:unit_test))",
+  "files": [
+    {
+      "name": "aquery.pb",
+      "sha256": "ef2b3048b90e11a17276bdb290fcb5fd91c83de1f969b7286eb8df81119e294d",
+      "size": 76151
+    },
+    {
+      "name": "aquery.json",
+      "sha256": "5d56248de7d5dd6acf9f9d583fbbeaea5c36075c7c837a17500e25ccd998926e",
+      "size": 130571
+    },
+    {
+      "name": "shipping_package.shipping.json",
+      "sha256": "a5d0fa5e824881995f0c699b7b9dbbd1465f35eb2816d68606d0daaa84f3d659",
+      "size": 314
+    }
+  ],
+  "queries": {
+    "proto": {
+      "format": "proto",
+      "bazelVersion": "8.8.1",
+      "command": [
+        "aquery"
+      ],
+      "residual": [
+        "deps(set(//src/query/ts:shipping_package //src/query/ts:unit_test))"
+      ],
+      "options": [
+        {
+          "name": "output",
+          "value": "proto"
+        },
+        {
+          "name": "output_file",
+          "value": "/tmp/oliphaunt-5922-stock-proto-parity/aquery.pb"
+        },
+        {
+          "name": "include_artifacts",
+          "value": "true"
+        },
+        {
+          "name": "include_pruned_inputs",
+          "value": "true"
+        },
+        {
+          "name": "include_aspects",
+          "value": "true"
+        },
+        {
+          "name": "implicit_deps",
+          "value": "true"
+        },
+        {
+          "name": "tool_deps",
+          "value": "true"
+        },
+        {
+          "name": "nodep_deps",
+          "value": "true"
+        },
+        {
+          "name": "include_commandline",
+          "value": "false"
+        },
+        {
+          "name": "include_param_files",
+          "value": "false"
+        },
+        {
+          "name": "include_file_write_contents",
+          "value": "false"
+        },
+        {
+          "name": "skyframe_state",
+          "value": "false"
+        }
+      ]
+    },
+    "jsonproto": {
+      "format": "jsonproto",
+      "bazelVersion": "8.8.1",
+      "command": [
+        "aquery"
+      ],
+      "residual": [
+        "deps(set(//src/query/ts:shipping_package //src/query/ts:unit_test))"
+      ],
+      "options": [
+        {
+          "name": "output",
+          "value": "jsonproto"
+        },
+        {
+          "name": "output_file",
+          "value": "/tmp/oliphaunt-5922-stock-proto-parity/aquery.json"
+        },
+        {
+          "name": "include_artifacts",
+          "value": "true"
+        },
+        {
+          "name": "include_pruned_inputs",
+          "value": "true"
+        },
+        {
+          "name": "include_aspects",
+          "value": "true"
+        },
+        {
+          "name": "implicit_deps",
+          "value": "true"
+        },
+        {
+          "name": "tool_deps",
+          "value": "true"
+        },
+        {
+          "name": "nodep_deps",
+          "value": "true"
+        },
+        {
+          "name": "include_commandline",
+          "value": "false"
+        },
+        {
+          "name": "include_param_files",
+          "value": "false"
+        },
+        {
+          "name": "include_file_write_contents",
+          "value": "false"
+        },
+        {
+          "name": "skyframe_state",
+          "value": "false"
+        }
+      ]
+    }
+  },
+  "configurations": [
+    {
+      "id": 1,
+      "mnemonic": "k8-fastbuild",
+      "platformName": "k8",
+      "checksum": "f55cd0755219b272bb7b1eeb31dd83dd10bc8c00329f25764eb9ea725eeff190"
+    },
+    {
+      "id": 2,
+      "mnemonic": "k8-fastbuild",
+      "platformName": "k8",
+      "checksum": "0db2b318338ce09df9dbfeda423511d29dd37e81a4519b8ba56a33ac4076bea9"
+    },
+    {
+      "id": 3,
+      "mnemonic": "k8-opt-exec-ST-d57f47055a04",
+      "platformName": "k8",
+      "checksum": "ed5797a767b96f3a1479df6c05824854fc306bea605a92620af0492ebf871581",
+      "isTool": true
+    }
+  ],
+  "compilationMode": {
+    "query": "stock default; command option omitted; actual graph mnemonic k8-fastbuild",
+    "shipping": "explicit -c fastbuild --output_groups=+shipping_manifest"
+  },
+  "shipping": {
+    "producingTarget": "//src/query/ts:shipping_package",
+    "compilationMode": "fastbuild",
+    "path": "/tmp/oliphaunt-bazel-resources-output/execroot/_main/bazel-out/k8-fastbuild/bin/src/query/ts/shipping_package.shipping.json"
+  }
+}

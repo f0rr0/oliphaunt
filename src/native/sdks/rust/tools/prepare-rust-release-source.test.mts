@@ -8,11 +8,11 @@ import {
   assertReleaseNoticesInDirectory,
 } from '../../../../../tools/packaging/release-notices.mts';
 import { rustNativeTargetCfg } from '../../../../../tools/packaging/rust-native-targets.mts';
+import { loadReleaseMetadata } from '../../../../../tools/release/bazel-release-metadata.mts';
 import {
   allArtifactTargets,
   currentProductVersionSync,
 } from '../../../../../tools/release/release-artifact-targets.mts';
-import { productCompatibilityVersion } from '../../../../../tools/release/release-graph.mts';
 
 const scratch = process.env.OLIPHAUNT_RUST_RELEASE_SOURCE_TEST_ROOT;
 if (!scratch)
@@ -29,16 +29,11 @@ test('freezes the generated target-wired Rust SDK source instead of the workspac
   const manifestPath = path.join(root, 'source/Cargo.toml');
   const manifest = readFileSync(manifestPath, 'utf8');
   const source = readFileSync(path.join(root, 'source/src/lib.rs'), 'utf8');
-  const nativeVersion = productCompatibilityVersion(
-    'oliphaunt-rust',
-    'liboliphaunt-native',
-    'prepare-rust-release-source.test.mts',
-  );
-  const brokerVersion = productCompatibilityVersion(
-    'oliphaunt-rust',
-    'oliphaunt-broker',
-    'prepare-rust-release-source.test.mts',
-  );
+  const checkout = path.resolve(import.meta.dir, '../../../../..');
+  const compatibility =
+    loadReleaseMetadata(checkout).products['oliphaunt-rust'].compatibility_versions;
+  const nativeVersion = compatibility['liboliphaunt-native'];
+  const brokerVersion = compatibility['oliphaunt-broker'];
   const sdkVersion = currentProductVersionSync(
     'oliphaunt-rust',
     'prepare-rust-release-source.test.mts',
@@ -55,6 +50,14 @@ test('freezes the generated target-wired Rust SDK source instead of the workspac
   assertReleaseNoticesInDirectory(path.join(root, 'source'), { profile: 'source-sdk' });
 
   const parsed = Bun.TOML.parse(manifest);
+  const authored = Bun.TOML.parse(
+    readFileSync(path.join(checkout, 'src/native/sdks/rust/Cargo.toml'), 'utf8'),
+  );
+  assert.equal(
+    parsed.dependencies['oliphaunt-broker'].version,
+    authored.dependencies['oliphaunt-broker'].version,
+  );
+  assert.equal(parsed.dependencies['oliphaunt-broker'].path, undefined);
   for (const target of targets) {
     const cfg = rustNativeTargetCfg(target);
     const dependencies = parsed.target['cfg(' + cfg + ')'].dependencies;

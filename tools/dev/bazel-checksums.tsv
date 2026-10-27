@@ -1,0 +1,8 @@
+# Official full binaries (bundled JDK): https://github.com/bazelbuild/bazel/releases/tag/8.8.1
+# Verified against https://releases.bazel.build/8.8.1/release/ASSET.sha256
+# version	asset	sha256
+8.8.1	bazel-8.8.1-linux-x86_64	5b5bab2095065817d3416ca9a0678bd39c10c9ede432dbe8187bfe74de285160
+8.8.1	bazel-8.8.1-linux-arm64	41ad5f9e833fcaee7398111343570cb155ca14985abb084b1f0ad2d29eaaec6d
+8.8.1	bazel-8.8.1-darwin-x86_64	bb2026bbdec1b857ae5f56ae28bbdba4584b58fe929fb402c76872db0d14ccac
+8.8.1	bazel-8.8.1-darwin-arm64	3b5864201e7be5e14fd14a2af2fc25ad9592a8269755793f6f3bfe0cb6136490
+8.8.1	bazel-8.8.1-windows-x86_64.exe	9380555f80ad7e301ab4f9dd360283d434a92f34c30e88b8dae1fe3f59dfc209

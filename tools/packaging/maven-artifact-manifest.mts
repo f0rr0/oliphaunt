@@ -79,6 +79,38 @@ function requireArtifact(file, label) {
   }
 }
 
+export function validateMavenArtifactDependencies(value, label = 'Maven artifact dependencies') {
+  if (!Array.isArray(value)) throw error(`${label} must be a JSON array`);
+  const coordinates = new Set();
+  return value
+    .map((dependency, index) => {
+      const entry = `${label} entry ${index + 1}`;
+      if (
+        dependency === null ||
+        typeof dependency !== 'object' ||
+        Array.isArray(dependency) ||
+        JSON.stringify(Object.keys(dependency).sort()) !==
+          JSON.stringify(['artifactId', 'groupId', 'scope', 'type', 'version'])
+      )
+        throw error(`${entry} must contain exactly groupId, artifactId, version, type, scope`);
+      mavenGroupId(dependency.groupId, `${entry} groupId`);
+      token(dependency.artifactId, `${entry} artifactId`);
+      token(dependency.version, `${entry} version`);
+      if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(dependency.version))
+        throw error(`${entry} version must be an exact stable SemVer X.Y.Z`);
+      if (dependency.type !== 'tar.gz' || dependency.scope !== 'runtime')
+        throw error(`${entry} must declare type=tar.gz and scope=runtime`);
+      const coordinate = `${dependency.groupId}:${dependency.artifactId}`;
+      if (coordinates.has(coordinate))
+        throw error(`${entry} repeats Maven dependency ${coordinate}`);
+      coordinates.add(coordinate);
+      return Object.freeze({ ...dependency });
+    })
+    .sort((left, right) =>
+      `${left.groupId}:${left.artifactId}`.localeCompare(`${right.groupId}:${right.artifactId}`),
+    );
+}
+
 export function parseMavenArtifactManifest(file) {
   requireArtifact(file, `${relative(file)} Maven artifact manifest`);
   const rows = readFileSync(file, 'utf8')
@@ -89,7 +121,8 @@ export function parseMavenArtifactManifest(file) {
   return rows.map((line, index) => {
     const label = `${relative(file)} line ${index + 1}`;
     const fields = line.split('\t');
-    if (fields.length !== 10) throw error(`${label} must contain exactly ten tab-separated fields`);
+    if (fields.length !== 10 && fields.length !== 11)
+      throw error(`${label} must contain ten or eleven tab-separated fields`);
     const [
       groupId,
       artifactId,
@@ -101,6 +134,7 @@ export function parseMavenArtifactManifest(file) {
       runtimeVersion,
       licenseSpdx,
       licensesJson,
+      dependenciesJson,
     ] = fields;
     mavenGroupId(groupId, `${label} groupId`);
     token(artifactId, `${label} artifactId`);
@@ -133,10 +167,22 @@ export function parseMavenArtifactManifest(file) {
     }
     requiredText(licenseSpdx, `${label} SPDX expression`);
     const licenses = parseLicenses(licensesJson, `${label} licenses`);
+    let dependencies = [];
+    if (dependenciesJson !== undefined) {
+      try {
+        dependencies = JSON.parse(dependenciesJson);
+      } catch (cause) {
+        throw error(`${label} dependencies must be valid JSON: ${cause.message}`);
+      }
+    }
+    dependencies = validateMavenArtifactDependencies(dependencies, `${label} dependencies`);
+    if (dependencies.some((row) => row.groupId === groupId && row.artifactId === artifactId))
+      throw error(`${label} must not depend on its own Maven module`);
     return Object.freeze({
       artifact,
       artifactId,
       description,
+      dependencies,
       groupId,
       licenses,
       licenseSpdx,

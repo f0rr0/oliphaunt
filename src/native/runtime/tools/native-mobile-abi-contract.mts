@@ -47,8 +47,13 @@ function defineValue(text, name, label) {
   return match[1].replace(/^\((.*)\)$/u, '$1');
 }
 
-function integerDefine(text, name, label) {
-  const raw = defineValue(text, name, label).replace(/[uUlL]+$/u, '');
+function integerDefine(text, name, label, aliases = []) {
+  if (aliases.includes(name))
+    fail(`${label} has cyclic integer aliases ${[...aliases, name].join(' -> ')}`);
+  const token = defineValue(text, name, label);
+  if (/^[A-Za-z_][A-Za-z0-9_]*$/u.test(token))
+    return integerDefine(text, token, label, [...aliases, name]);
+  const raw = token.replace(/[uUlL]+$/u, '');
   if (!/^(?:0[xX][0-9a-fA-F]+|[0-9]+)$/u.test(raw)) {
     fail(`${label} has invalid ${name}=${raw}`);
   }

@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -9,6 +10,31 @@ const PREFIX = 'ios-extension-registration.mts';
 const SCHEMA = 'oliphaunt-ios-extension-registration-v1';
 const PORTABLE_RE = /^[A-Za-z0-9._-]{1,128}$/u;
 const C_IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/u;
+
+export function staticSymbolPrefix(stem: string) {
+  assert(PORTABLE_RE.test(stem), 'static module stem must be portable');
+  return `oliphaunt_static_${stem.replaceAll(/[^A-Za-z0-9_]/gu, '_')}`;
+}
+
+/** The existing PostGIS collision has the same namespace in every static slice. */
+export function staticMemberAliases(sqlName: string, stem: string | null) {
+  assert(PORTABLE_RE.test(sqlName), 'SQL member name must be portable');
+  if (sqlName !== 'postgis') return [];
+  assert(stem !== null, 'PostGIS aliases require its canonical static module');
+  const address = `${staticSymbolPrefix(stem)}_difference`;
+  return [
+    { name: 'difference', address },
+    { name: 'pg_finfo_difference', address: `pg_finfo_${address}` },
+  ];
+}
+
+export function assertStaticMemberAliases(sqlName: string, stem: string | null, aliases) {
+  assert.deepEqual(
+    [...aliases].sort((left, right) => compareText(left.name, right.name)),
+    staticMemberAliases(sqlName, stem),
+    'static member aliases differ from its canonical namespace',
+  );
+}
 
 function fail(message) {
   console.error(`${PREFIX}: ${message}`);
@@ -74,7 +100,7 @@ function definedSymbols(file) {
 }
 
 function registration(out, sqlName, stem, inventory) {
-  const prefix = `oliphaunt_static_${stem.replaceAll(/[^A-Za-z0-9_]/gu, '_')}`;
+  const prefix = staticSymbolPrefix(stem);
   const names = definedSymbols(inventory);
   const magicSymbol = `${prefix}_Pg_magic_func`;
   if (!names.has(magicSymbol)) {

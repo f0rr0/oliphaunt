@@ -184,18 +184,32 @@ fn native_extension_matrix_when_enabled() {
         eprintln!("skipping native extension matrix: set OLIPHAUNT_EXTENSION_MATRIX=1");
         return;
     }
-    if native_runtime_env_is_unavailable() {
-        eprintln!("skipping native extension matrix: no native library env var is set");
-        return;
-    }
-    let Some(broker) = option_env!("CARGO_BIN_EXE_oliphaunt-broker") else {
-        eprintln!("skipping native extension matrix: cargo did not provide broker binary path");
-        return;
-    };
+    assert!(
+        !native_runtime_env_is_unavailable(),
+        "enabled native extension matrix requires LIBOLIPHAUNT_PATH"
+    );
+    let broker = std::env::var("OLIPHAUNT_BROKER")
+        .ok()
+        .or_else(|| option_env!("CARGO_BIN_EXE_oliphaunt-broker").map(str::to_owned))
+        .expect("enabled native extension matrix requires an explicit or Cargo-provided broker");
+    assert!(
+        Path::new(&broker).is_file(),
+        "native extension matrix broker does not exist"
+    );
+    let names = std::env::var("OLIPHAUNT_NATIVE_EXTENSION_PROOF_SQL_NAMES")
+        .expect("enabled native extension matrix requires its configured SQL-name set");
+    assert_eq!(
+        names.split(',').collect::<Vec<_>>(),
+        Extension::ALL
+            .iter()
+            .map(|extension| extension.sql_name())
+            .collect::<Vec<_>>(),
+        "configured extension Files must cover the complete SDK catalog"
+    );
 
     for extension in Extension::ALL {
         run_direct_extension_smoke(*extension);
-        run_extension_smoke(TestMode::Broker, Some(broker), *extension).unwrap();
+        run_extension_smoke(TestMode::Broker, Some(&broker), *extension).unwrap();
         run_extension_smoke(TestMode::Server, None, *extension).unwrap();
     }
 }

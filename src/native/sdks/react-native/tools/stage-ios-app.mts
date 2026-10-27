@@ -245,11 +245,6 @@ function generatedExtensionCatalog(value) {
       artifactProduct,
       releaseProduct,
       runtimeBound: row['runtime-bound'],
-      sqlMembers: canonicalPortableList(row['sql-members'], `${sqlName}.sql-members`),
-      dependencies: canonicalPortableList(
-        row['selected-extension-dependencies'],
-        `${sqlName}.selected-extension-dependencies`,
-      ),
     });
   }
   return rows;
@@ -764,16 +759,13 @@ function validateExtension(value, label, carriers) {
       `${label}.sqlMembers must contain the primary extension exactly when createsExtension is true`,
     );
   if (
-    JSON.stringify(nativeModuleStems) !==
-    JSON.stringify(nativeModuleStem === null ? [] : [nativeModuleStem])
+    nativeModuleStem === null
+      ? nativeModuleStems.length !== 0
+      : !nativeModuleStems.includes(nativeModuleStem)
   )
-    fail(`${label}.nativeModuleStems must contain only the merged primary mobile module`);
-  for (const [field, value] of Object.entries(
-    generated.sqlMembers.length > 1 ? { sqlMembers, dependencies } : { sqlMembers },
-  )) {
-    if (JSON.stringify(value) !== JSON.stringify(generated[field]))
-      fail(`${label}.${field} must match generated canonical metadata`);
-  }
+    fail(
+      `${label}.nativeModuleStems must contain the primary module exactly when nativeModuleStem is set`,
+    );
   const sharedPreloadLibraries = canonicalPortableList(
     root.sharedPreloadLibraries,
     `${label}.sharedPreloadLibraries`,

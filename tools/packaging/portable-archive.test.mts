@@ -24,7 +24,9 @@ import {
   RELEASE_ZSTD_COMPRESSION_LEVEL,
   readAndroidApkEntries,
   readFileOnlyTarGzipEntries,
+  readJavaArchiveEntries,
   readPortableArchiveEntries,
+  readSourceArchiveEntries,
   readPortableTarStream,
   readPortableTarZstdBufferEntries,
   releaseZstdCompressSync,
@@ -145,6 +147,152 @@ test('accepts an unambiguous FAT-origin ZIP member', async (t) => {
     zipArchive([{ name: 'file.txt', versionMadeBy: 0x0014, externalAttributes: 0 }]),
   );
   assert.equal(readPortableArchiveEntries(file).get('file.txt').isFile, true);
+});
+
+test('accepts the empty JAR magic field only for explicit Java build inputs', (t) => {
+  const magic = Buffer.from('feca0000', 'hex');
+  const { file } = fixtureFile(
+    t,
+    'java-marker.zip',
+    zipArchive([
+      {
+        name: 'META-INF/',
+        data: '',
+        versionMadeBy: 0x0014,
+        externalAttributes: 0,
+        localExtra: magic,
+        centralExtra: magic,
+      },
+      { name: 'META-INF/MANIFEST.MF', data: 'Manifest-Version: 1.0\r\n\r\n' },
+    ]),
+  );
+  const entries = readJavaArchiveEntries(file);
+  assert.equal(entries.get('META-INF').isDirectory, true);
+  assert.equal(
+    entries.get('META-INF/MANIFEST.MF').data().toString(),
+    'Manifest-Version: 1.0\r\n\r\n',
+  );
+  for (const read of [readPortableArchiveEntries, readSourceArchiveEntries, readAndroidApkEntries])
+    assert.throws(() => read(file), /unsupported ZIP central.*0xcafe/u);
+  assert.throws(
+    () => readPortableArchiveEntries(file, { javaArchive: true }),
+    /unsupported ZIP central/u,
+  );
+  const directory = fixtureFile(
+    t,
+    'java-directory.zip',
+    zipArchive([{ name: 'dev/example/', data: '', versionMadeBy: 0x0014, externalAttributes: 0 }]),
+  ).file;
+  assert.equal(readJavaArchiveEntries(directory).get('dev/example').isDirectory, true);
+  for (const read of [readPortableArchiveEntries, readSourceArchiveEntries, readAndroidApkEntries])
+    assert.throws(() => read(directory), /inconsistent FAT directory metadata/u);
+});
+
+test('rejects malformed or repeated JAR magic fields in either ZIP header', (t) => {
+  const magic = Buffer.from('feca0000', 'hex');
+  for (const location of ['localExtra', 'centralExtra'])
+    for (const [label, extra, pattern] of [
+      ['nonempty', Buffer.from('feca010000', 'hex'), /non-empty Java archive magic/u],
+      ['duplicate', Buffer.concat([magic, magic]), /repeats ZIP.*extra field 0xcafe/u],
+      ['truncated', Buffer.from('feca0100', 'hex'), /truncated ZIP.*extra field/u],
+    ]) {
+      const { file } = fixtureFile(
+        t,
+        `${location}-${label}.jar`,
+        zipArchive([{ name: 'Example.class', [location]: extra }]),
+      );
+      assert.throws(() => readJavaArchiveEntries(file), pattern);
+    }
+});
+
+test('accepts Java-input compressed directories only with verified empty data and descriptors', (t) => {
+  const directory = {
+    name: 'res/',
+    data: '',
+    method: 8,
+    flags: 0x0800,
+    versionMadeBy: 0x0014,
+    externalAttributes: 0,
+  };
+  for (const descriptor of ['signed', 'unsigned']) {
+    const { file } = fixtureFile(
+      t,
+      `java-directory-${descriptor}.zip`,
+      zipArchive([{ ...directory, descriptor }]),
+    );
+    const entry = readJavaArchiveEntries(file).get('res');
+    assert.equal(entry.isDirectory, true);
+    assert.equal(entry.size, 0);
+    assert.deepEqual(entry.data(), Buffer.alloc(0));
+    for (const read of [
+      readPortableArchiveEntries,
+      readSourceArchiveEntries,
+      readAndroidApkEntries,
+    ])
+      assert.throws(() => read(file), /inconsistent FAT directory metadata/u);
+  }
+  const badDescriptor = fixtureFile(
+    t,
+    'java-directory-descriptor.jar',
+    zipArchive([{ ...directory, descriptor: 'signed', descriptorCrc: 1 }]),
+  ).file;
+  assert.throws(() => readJavaArchiveEntries(badDescriptor), /descriptor that disagrees/u);
+
+  const nonempty = zipArchive([
+    { ...directory, data: 'x', descriptor: 'signed', declaredSize: 0, crc: 0 },
+  ]);
+  nonempty.writeUInt32LE(0, 22);
+  const central = nonempty.readUInt32LE(nonempty.length - 22 + 16);
+  nonempty.writeUInt32LE(0, central - 4);
+  const disguised = fixtureFile(t, 'java-directory-nonempty.jar', nonempty).file;
+  assert.throws(() => readJavaArchiveEntries(disguised), /expanded ZIP size/u);
+
+  const invalid = zipArchive([{ ...directory, descriptor: 'signed' }]);
+  invalid.fill(0xff, 30 + directory.name.length, 30 + directory.name.length + 2);
+  const corrupt = fixtureFile(t, 'java-directory-deflate.jar', invalid).file;
+  assert.throws(() => readJavaArchiveEntries(corrupt), /invalid or oversized deflate data/u);
+});
+
+test('retains ZIP safety and limits in the Java input profile', (t) => {
+  const magic = Buffer.from('feca0000', 'hex');
+  for (const [label, row, pattern] of [
+    ['path', { name: '../Example.class' }, /unsafe archive member/u],
+    ['link', { name: 'Example.class', externalAttributes: 0o120777 << 16 }, /link or special/u],
+    ['flags', { name: 'Example.class', flags: 0x2000 }, /unsupported or encrypted ZIP flags/u],
+    ['crc', { name: 'Example.class', crc: 0x12345678 }, /CRC-32 mismatch/u],
+    [
+      'unknown',
+      { name: 'Example.class', centralExtra: Buffer.from('efbe0000', 'hex') },
+      /unsupported ZIP central/u,
+    ],
+    [
+      'directory-attributes',
+      { name: 'dev/', data: '', versionMadeBy: 0x0014, externalAttributes: 0x20 },
+      /inconsistent FAT directory metadata/u,
+    ],
+    [
+      'directory-payload',
+      { name: 'dev/', data: 'x', versionMadeBy: 0x0014, externalAttributes: 0 },
+      /non-empty ZIP directory/u,
+    ],
+  ]) {
+    const { file } = fixtureFile(
+      t,
+      `${label}.jar`,
+      zipArchive([{ localExtra: magic, centralExtra: magic, ...row }]),
+    );
+    assert.throws(() => readJavaArchiveEntries(file), pattern);
+  }
+  const { file } = fixtureFile(
+    t,
+    'bounded.jar',
+    zipArchive([{ name: 'Example.class', localExtra: magic, centralExtra: magic }]),
+  );
+  assert.throws(
+    () => readJavaArchiveEntries(file, { maxArchiveBytes: 10 }),
+    /no larger than 10 bytes/u,
+  );
+  assert.throws(() => readJavaArchiveEntries(file, { maxEntryBytes: 1 }), /entry-size limit/u);
 });
 
 test('accepts Android legacy and 0xd935 alignment only in the APK profile', async (t) => {

@@ -70,4 +70,5 @@ pinned_bun="$(
   OLIPHAUNT_PINNED_TOOL_ROOT="${OLIPHAUNT_PINNED_TOOL_ROOT:-$root}" \
     bash tools/dev/install-pinned-js-runtime.sh bun --expected-version "$version"
 )"
+export PATH="${pinned_bun%/*}:$PATH"
 exec "$pinned_bun" "${args[@]}"

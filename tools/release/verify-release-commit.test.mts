@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { loadProducts } from './release-graph.mts';
 import { RELEASE_PLEASE_BOOTSTRAP_SHA } from './release-please-bootstrap.mts';
 import {
   deriveReleaseProducts,
@@ -258,10 +259,22 @@ function prepareCompatibility(base) {
   };
   const producers = { [nativePath]: simple(native), 'src/native/broker': simple(broker) };
   json('release-please-config.json', { packages: { ...producers, ...consumers } });
-  const producerVersion = base || scenario === 'consumer-only' ? '0.3.1' : '0.3.2';
-  const consumerVersion = base || scenario === 'unselected-consumer' ? '0.1.0' : '0.2.0';
-  const pin = base ? '0.3.0' : producerVersion;
+  const heldProducers = ['consumer-only', 'supplier-map-isolation', 'authored'].includes(scenario);
+  const producerVersion = base || heldProducers ? '0.3.1' : '0.3.2';
+  const consumerVersion =
+    base || ['unselected-consumer', 'authored'].includes(scenario) ? '0.1.0' : '0.2.0';
+  const pin = base
+    ? '0.3.0'
+    : ['authored', 'authored-adoption'].includes(scenario)
+      ? '0.3.1'
+      : ['supplier-map-isolation', 'selected-held-supplier', 'registry-update'].includes(scenario)
+        ? '0.3.0'
+        : producerVersion;
   const consumerPin = scenario === 'consumer-only' ? '0.3.0' : pin;
+  const compiledBrokerPin =
+    !base && ['supplier-map-isolation', 'selected-held-supplier'].includes(scenario)
+      ? producerVersion
+      : consumerPin;
   json('.release-please-manifest.json', {
     ...Object.fromEntries(Object.keys(producers).map((folder) => [folder, producerVersion])),
     ...Object.fromEntries(Object.keys(consumers).map((folder) => [folder, consumerVersion])),
@@ -287,11 +300,12 @@ function prepareCompatibility(base) {
   write(
     'src/native/sdks/rust/Cargo.toml',
     cargo('oliphaunt', consumerVersion) +
-      `\n[package.metadata.oliphaunt]\nnative-version = "${consumerPin}"\nbroker-version = "${consumerPin}"\n`,
+      `\n[package.metadata.oliphaunt]\nnative-version = "${consumerPin}"\nbroker-version = "${compiledBrokerPin}"\n` +
+      `\n[dependencies]\noliphaunt-broker = { version = "${scenario === 'registry-update' ? producerVersion : consumerPin}", optional = true }\n`,
   );
   write(
     'src/native/sdks/rust/src/broker.rs',
-    `const BROKER_RELEASE_VERSION: &str = "${scenario === 'wrong-rust-const' ? '0.4.0' : consumerPin}";\n`,
+    `const BROKER_RELEASE_VERSION: &str = "${scenario === 'wrong-rust-const' ? '0.4.0' : compiledBrokerPin}";\n`,
   );
   write('src/native/sdks/swift/VERSION', `${consumerVersion}\n`);
   write(
@@ -314,6 +328,149 @@ function preparePublicSupport(base) {
     `[extension.compatibility]\nnative_runtime_version = "${base ? '0.3.2' : '0.3.3'}"\nwasix_runtime_version = "0.3.2"\n`,
   );
 }
+
+function prepareLocalCargo(base) {
+  const core = 'liboliphaunt-native-bindings',
+    corePath = 'src/native/rust-bindings',
+    sdkPath = 'src/native/sdks/rust',
+    addonPath = 'src/native/node-addon';
+  const compatible = scenario.includes('compatible');
+  const adopted = !base && !['unselected-public-path', 'held-compatible-path'].includes(scenario);
+  const version = base ? '0.2.5' : compatible ? '0.2.6' : '0.3.0';
+  json('release-please-config.json', {
+    packages: {
+      [corePath]: { 'release-type': 'rust', component: core },
+      [sdkPath]: { 'release-type': 'rust', component: 'oliphaunt-rust' },
+      [addonPath]: { 'release-type': 'node', component: 'oliphaunt-node-direct' },
+    },
+  });
+  json('.release-please-manifest.json', {
+    [corePath]: version,
+    [sdkPath]: adopted ? '0.3.3' : '0.3.2',
+    [addonPath]: '0.2.2',
+  });
+  write(corePath + '/Cargo.toml', cargo(core, version));
+  changelog(corePath, version);
+  json(addonPath + '/package.json', { name: 'private-native-addon', version: '0.2.2' });
+  const requirement =
+    base || compatible ? '0.2.0' : scenario === 'wrong-private-path' ? '0.4.0' : '0.3.0';
+  const publicRequirement = base
+    ? '0.2.0'
+    : scenario === 'wrong-compatible-path'
+      ? '0.2.4'
+      : version;
+  const location = 'path="../rust-bindings",';
+  write(
+    addonPath + '/Cargo.toml',
+    cargo('private-native-addon', '0.2.2') +
+      '\n[dependencies]\n' +
+      core +
+      '={' +
+      location +
+      'version="' +
+      requirement +
+      '",features=' +
+      (!base && scenario === 'private-path-features' ? '["hidden"]' : '[]') +
+      '}\n',
+  );
+
+  write(
+    'Cargo.toml',
+    '[workspace]\nmembers=["' +
+      corePath +
+      '","' +
+      sdkPath +
+      '"]\n[workspace.dependencies]\n' +
+      core +
+      '={path="' +
+      corePath +
+      '",version="' +
+      publicRequirement +
+      '"}\n',
+  );
+  write(
+    sdkPath + '/Cargo.toml',
+    cargo('oliphaunt', adopted ? '0.3.3' : '0.3.2') +
+      '[dependencies]\n' +
+      core +
+      '.workspace=true\n',
+  );
+  if (adopted) changelog(sdkPath, '0.3.3');
+}
+
+function prepareEngineSdk(base) {
+  const sdk = 'src/wasix/sdks/rust';
+  const server = 'src/wasix/pgwire-server';
+  const authored = scenario.endsWith('-authored');
+  const version = base || authored ? '0.3.2' : '0.3.3';
+  const names = [
+    'oliphaunt-wasmer',
+    'oliphaunt-wasmer-wasix',
+    'oliphaunt-wasmer-wasix-types',
+    'oliphaunt-wasmer-journal',
+    'oliphaunt-wasmer-v8-windows-x64-msvc',
+    'oliphaunt-wasmer-v8-windows-x64-msvc-part-001',
+    'oliphaunt-wasmer-v8-windows-x64-msvc-part-002',
+  ];
+  json('release-please-config.json', {
+    packages: {
+      [sdk]: { 'release-type': 'rust', component: 'oliphaunt-wasix-rust' },
+      [server]: { 'release-type': 'rust', component: 'oliphaunt-pgwire-server' },
+    },
+  });
+  json('.release-please-manifest.json', { [sdk]: version, [server]: '0.2.1' });
+  write(
+    'Cargo.toml',
+    `[workspace]\nmembers=["${sdk}","${server}"]\n[workspace.dependencies]\nwasmer={package="oliphaunt-wasmer",version="=${version}",default-features=false}\n`,
+  );
+  const held = scenario === 'engine-held-authored' ? '0.3.1' : version;
+  write(
+    `${sdk}/Cargo.toml`,
+    cargo('oliphaunt-wasix', version) +
+      `[dependencies]\nserde="${!base && scenario === 'engine-registry' ? '1.0.1' : '1.0.0'}"\n` +
+      `[target.'cfg(windows)'.dependencies]\nwasmer={workspace=true,features=["v8","headless"]}\n` +
+      names
+        .slice(1, 4)
+        .map((name) => `${name}={version="=${held}",default-features=false}\n`)
+        .join('') +
+      `[build-dependencies]\nprivate={package="oliphaunt-wasmer",version="=${!base && scenario === 'engine-private-registry' ? version : '0.3.2'}",registry="private"}\n`,
+  );
+  write(
+    `${server}/Cargo.toml`,
+    cargo('oliphaunt-pgwire-server', '0.2.1') +
+      '[dependencies]\n' +
+      (scenario.startsWith('engine-shared-workspace')
+        ? 'wasmer.workspace=true\n'
+        : `engine={package="oliphaunt-wasmer",version="=${!base && scenario === 'engine-cross-owner' ? version : '0.3.2'}"}\n`),
+  );
+  if (base) {
+    write(`${sdk}/CHANGELOG.md`, '# Changelog\n');
+    write(`${server}/CHANGELOG.md`, '# Changelog\n');
+  } else changelog(sdk, version);
+  const localReference = !base && scenario === 'engine-wrong-local-ref' ? '0.3.4' : version;
+  const registryReference = !base && scenario === 'engine-registry-ref' ? version : '0.3.2';
+  const unrelatedReference = !base && scenario === 'engine-unrelated-local-ref' ? '2.0.0' : '1.0.0';
+  write('src/wasix/runtime/tools/v8-serializer/Cargo.toml', cargo('unchanged-local', '1.0.0'));
+  write('src/native/node-addon/Cargo.toml', cargo('unchanged-local', '2.0.0'));
+  write(
+    'Cargo.lock',
+    'version=4\n' +
+      ['oliphaunt-wasix', ...names]
+        .map(
+          (name) =>
+            `\n[[package]]\nname="${name}"\nversion="${version}"\n` +
+            (name === 'oliphaunt-wasix'
+              ? `dependencies=["oliphaunt-wasmer ${localReference}","oliphaunt-wasmer ${registryReference} (registry+https://github.com/rust-lang/crates.io-index)","unchanged-local ${unrelatedReference}"]\n`
+              : ''),
+        )
+        .join('') +
+      '\n[[package]]\nname="oliphaunt-wasmer"\nversion="0.3.2"\nsource="registry+https://github.com/rust-lang/crates.io-index"\nchecksum="held-registry-bytes"\n' +
+      ['1.0.0', '2.0.0']
+        .map((version) => `\n[[package]]\nname="unchanged-local"\nversion="${version}"\n`)
+        .join(''),
+  );
+}
+
 if (phase === 'write') {
   if (scenario === 'later-fix') write('fix.txt', 'post-release fix\n');
   else {
@@ -321,6 +478,8 @@ if (phase === 'write') {
       bootstrap: prepareBasic,
       basic: prepareBasic,
       cargo: prepareCargo,
+      'cargo-path': prepareLocalCargo,
+      'engine-sdk': prepareEngineSdk,
       wildcard: prepareWildcard,
       wasix: prepareWasix,
       example: prepareExample,
@@ -331,31 +490,55 @@ if (phase === 'write') {
     prepare(scenario === 'base');
   }
 } else if (phase === 'assert') {
-  const products =
-    family === 'public-support'
-      ? ['oliphaunt-extension-vector']
-      : family === 'compatibility'
-        ? [
-            ...(scenario === 'consumer-only' ? [] : [native, broker]),
-            ...(scenario === 'unselected-consumer'
-              ? []
-              : [
-                  'oliphaunt-extension-pg-hashids',
-                  'oliphaunt-js',
-                  'oliphaunt-rust',
-                  'oliphaunt-swift',
-                ]),
-          ].sort()
-        : family === 'cargo'
-          ? [broker, 'oliphaunt-rust'].sort()
-          : family === 'wasix'
-            ? ['liboliphaunt-wasix', 'oliphaunt-wasix-ts']
-            : family === 'example' && scenario !== 'missing-native-transition'
-              ? [native, 'oliphaunt-rust']
-              : scenario === 'hidden-version-config'
-                ? ['beta']
-                : [broker];
-  const verify = () => verifyReleaseCommit({ repo, headRef, products });
+  let products =
+    family === 'cargo-path'
+      ? [
+          'liboliphaunt-native-bindings',
+          ...(!['unselected-public-path', 'held-compatible-path'].includes(scenario)
+            ? ['oliphaunt-rust']
+            : []),
+        ].sort()
+      : family === 'public-support'
+        ? ['oliphaunt-extension-vector']
+        : family === 'compatibility'
+          ? [
+              ...(['consumer-only', 'supplier-map-isolation'].includes(scenario)
+                ? []
+                : [native, broker]),
+              ...(scenario === 'unselected-consumer'
+                ? []
+                : [
+                    'oliphaunt-extension-pg-hashids',
+                    'oliphaunt-js',
+                    'oliphaunt-rust',
+                    'oliphaunt-swift',
+                  ]),
+            ].sort()
+          : family === 'cargo'
+            ? [broker, 'oliphaunt-rust'].sort()
+            : family === 'wasix'
+              ? ['liboliphaunt-wasix', 'oliphaunt-wasix-ts']
+              : family === 'example' && scenario !== 'missing-native-transition'
+                ? [native, 'oliphaunt-rust']
+                : scenario === 'hidden-version-config'
+                  ? ['beta']
+                  : [broker];
+  if (family === 'engine-sdk') products = ['oliphaunt-wasix-rust'];
+  const supplierMap = () =>
+    new Map(Object.keys(loadProducts()).map((id) => [id, new Set<string>()]));
+  const compiled = supplierMap();
+  compiled.get('oliphaunt-rust').add(broker);
+  const verify = () =>
+    verifyReleaseCommit({
+      repo,
+      headRef,
+      products,
+      ...(['supplier-map-isolation', 'selected-held-supplier'].includes(scenario)
+        ? { buildBound: compiled }
+        : ['registry-update', 'authored-adoption'].includes(scenario)
+          ? { buildBound: supplierMap() }
+          : {}),
+    });
   if (scenario === 'base') assert.equal(latestVerifiedReleaseCommit({ repo, headRef }), null);
   else if (scenario === 'later-fix') {
     assert.equal(latestVerifiedReleaseCommit({ repo, headRef }).commit, releaseRef);
@@ -363,6 +546,19 @@ if (phase === 'write') {
   } else {
     const rejected =
       {
+        'engine-held': /non-version semantic change/u,
+        'engine-cross-owner': /non-version semantic change/u,
+        'engine-registry': /non-version semantic change/u,
+        'engine-private-registry': /non-version semantic change/u,
+        'engine-shared-workspace': /shares an independently versioned consumer/u,
+        'engine-wrong-local-ref': /non-version semantic change/u,
+        'engine-registry-ref': /non-version semantic change/u,
+        'engine-unrelated-local-ref': /non-version semantic change/u,
+        'unselected-public-path': /non-version semantic change/u,
+        'held-compatible-path': /non-version semantic change/u,
+        'wrong-compatible-path': /non-version semantic change/u,
+        'wrong-private-path': /non-version semantic change/u,
+        'private-path-features': /non-version semantic change/u,
         mutated: /release-please-config[.]json contains a non-version semantic change/u,
         'authored-patch': /must satisfy.*breaking-version policy/u,
         downgrade: /must advance to a semver version/u,
@@ -401,6 +597,13 @@ if (phase === 'write') {
     else {
       const result = verify();
       assert.deepEqual(result.products, products);
+      if (['supplier-map-isolation', 'selected-held-supplier'].includes(scenario)) {
+        assert.throws(
+          () => verifyReleaseCommit({ repo, headRef, products, buildBound: supplierMap() }),
+          /non-version semantic change/u,
+        );
+        assert.deepEqual(verify().products, products);
+      }
       if (family === 'basic' && scenario === 'clean') {
         assert.deepEqual(deriveReleaseProducts({ repo, headRef }).products, [broker]);
         assert.equal(result.versions[broker], '0.1.0');

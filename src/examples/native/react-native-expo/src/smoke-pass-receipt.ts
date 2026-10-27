@@ -13,6 +13,7 @@ export type ExpoSmokePassReceiptInput = {
   readonly extensionCatalogSha256: string;
   readonly catalogProfile: ExpoSmokePassCatalogProfile;
   readonly icuRuntimeProof: boolean;
+  readonly lifecycleResume: boolean;
 };
 
 function utf8ByteLength(value: string): number {
@@ -33,6 +34,9 @@ export function serializeExpoSmokePassReceipt(input: ExpoSmokePassReceiptInput):
   }
   if (typeof input.icuRuntimeProof !== 'boolean') {
     throw new Error('installed-app receipt requires an ICU runtime proof boolean');
+  }
+  if (typeof input.lifecycleResume !== 'boolean') {
+    throw new Error('installed-app receipt requires a lifecycle resume proof boolean');
   }
   if (input.catalogProfile !== 'standard' && input.catalogProfile !== 'icu') {
     throw new Error(
@@ -75,7 +79,7 @@ export function serializeExpoSmokePassReceipt(input: ExpoSmokePassReceiptInput):
   }
 
   const serialized = JSON.stringify({
-    schema: 'oliphaunt-expo-smoke-pass-v4',
+    schema: 'oliphaunt-expo-smoke-pass-v5',
     runner: 'smoke',
     platform: input.platform,
     extensionCount: extensions.length,
@@ -85,6 +89,7 @@ export function serializeExpoSmokePassReceipt(input: ExpoSmokePassReceiptInput):
     extensionCatalogSha256: input.extensionCatalogSha256,
     catalogProfile: input.catalogProfile,
     icuRuntimeProof: input.icuRuntimeProof,
+    lifecycleResume: input.lifecycleResume,
   });
   const eventBytes = utf8ByteLength(`${EXPO_SMOKE_PASS_TAG} ${serialized}`);
   if (eventBytes > EXPO_SMOKE_PASS_EVENT_MAX_BYTES) {

@@ -1,0 +1,111 @@
+load("//build_defs/quality:sources.bzl", "rust_quality_files", "source_quality_files")
+load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
+load("//build_defs/languages:rust.bzl", "cargo_generator", "cargo_library", "cargo_library_test", "cargo_package_env")
+load("@aspect_rules_js//js:defs.bzl", "js_library")
+load("@postgres_wasix//:patches.bzl", "POSTGRES_PATCHES")
+load("//build_defs/wasix:package.bzl", "postgres_patch_inputs")
+load("//build_defs/wasix:platform.bzl", "wasix_artifact")
+load("//build_defs/wasix:tools.bzl", "wasix_tools_payload")
+load("//build_defs/wasix:aot.bzl", "wasix_tools_aot_targets")
+load("//build_defs/wasix:tools-carriers.bzl", "wasix_tools_carriers")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["tools/*.mts", "npm/native.mts"]))
+exports_files(["npm/package.json", "npm/index.d.ts", "CHANGELOG.md"])
+exports_files(["crates/tools/Cargo.toml"])
+
+js_library(name = "npm_types", srcs = ["npm/index.d.ts", "npm/package.json"])
+
+wasix_tools_payload(
+    name = "portable_payload_files",
+    pg_dump = "//src/wasix/runtime:pg_dump",
+    psql = "//src/wasix/runtime:psql",
+    patches = postgres_patch_inputs(POSTGRES_PATCHES),
+    target_compatible_with = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
+)
+
+wasix_artifact(name = "portable_payload", artifact = ":portable_payload_files")
+
+alias(name = "pg_dump", actual = "//src/wasix/runtime:pg_dump")
+alias(name = "psql", actual = "//src/wasix/runtime:psql")
+
+wasix_tools_aot_targets()
+
+wasix_tools_carriers(
+    patches = postgres_patch_inputs(POSTGRES_PATCHES),
+    qualification = select({
+        "//build_defs/native:linux_x86_64": [
+            "//src/wasix/sdks/ts:browser_sql_consumer",
+            "//src/wasix/sdks/rust:postgres_regression_test",
+            "//src/database-resources:wasix_resource_test",
+            "//src/wasix/postgres-tools/ts:installed_consumer_test",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+filegroup(name = "carrier_source_patches", srcs = postgres_patch_inputs(POSTGRES_PATCHES))
+
+_CARGO_PACKAGES = {
+    "portable": "crates/tools",
+    "aot_linux_x64_gnu": "crates/aot/x86_64-unknown-linux-gnu",
+    "aot_linux_arm64_gnu": "crates/aot/aarch64-unknown-linux-gnu",
+    "aot_macos_arm64": "crates/aot/aarch64-apple-darwin",
+    "aot_windows_x64_msvc": "crates/aot/x86_64-pc-windows-msvc",
+}
+
+[cargo_package_env(
+    name = cohort + "_cargo_env",
+    package_name = "src/wasix/postgres-tools/" + source,
+) for cohort, source in _CARGO_PACKAGES.items()]
+
+[cargo_generator(
+    name = cohort + "_cargo_build_script",
+    package_name = "src/wasix/postgres-tools/" + source,
+    cargo_env = ":" + cohort + "_cargo_env",
+    srcs = [source + "/build-support.rs"],
+) for cohort, source in _CARGO_PACKAGES.items()]
+
+[cargo_library(
+    name = cohort + "_cargo_lib",
+    package_name = "src/wasix/postgres-tools/" + source,
+    cargo_env = ":" + cohort + "_cargo_env",
+    build_script = ":" + cohort + "_cargo_build_script",
+) for cohort, source in _CARGO_PACKAGES.items()]
+
+[cargo_library_test(
+    name = cohort + "_cargo_unit_test",
+    package_name = "src/wasix/postgres-tools/" + source,
+    cargo_env = ":" + cohort + "_cargo_env",
+    crate = ":" + cohort + "_cargo_lib",
+    tags = ["manual"],
+) for cohort, source in _CARGO_PACKAGES.items()]
+
+rust_clippy_test(
+    name = "clippy_test",
+    targets = [
+        ":portable_cargo_lib",
+        ":portable_cargo_unit_test",
+        ":portable_cargo_build_script_",
+        ":aot_linux_x64_gnu_cargo_lib",
+        ":aot_linux_x64_gnu_cargo_unit_test",
+        ":aot_linux_x64_gnu_cargo_build_script_",
+        ":aot_linux_arm64_gnu_cargo_lib",
+        ":aot_linux_arm64_gnu_cargo_unit_test",
+        ":aot_linux_arm64_gnu_cargo_build_script_",
+        ":aot_macos_arm64_cargo_lib",
+        ":aot_macos_arm64_cargo_unit_test",
+        ":aot_macos_arm64_cargo_build_script_",
+        ":aot_windows_x64_msvc_cargo_lib",
+        ":aot_windows_x64_msvc_cargo_unit_test",
+        ":aot_windows_x64_msvc_cargo_build_script_",
+    ],
+    transitive = False,
+    size = "small",
+    tags = ["quality", "static"],
+)
+
+source_quality_files()
+
+rust_quality_files()
