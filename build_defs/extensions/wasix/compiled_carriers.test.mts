@@ -430,15 +430,6 @@ try {
   );
   const selectedInputs = current ? currentAddonInputs : addonInputs;
   let completedContrib: ReturnType<typeof readPortableArchiveEntries> | undefined;
-  if (selectedInputs === '-' && frozen.wasixInstall.dependencies.length > 0) {
-    assert.notEqual(contribPortableInput, '-', 'held dependency requires its original carrier');
-    const original = napi.contribPortable;
-    assert.equal(original.publication.version, addonManifest.oliphaunt.runtimeVersion);
-    const bytes = readFileSync(contribPortableInput);
-    assert.equal(digest(bytes), original.file.sha256);
-    assert.equal(bytes.length, original.file.size);
-    completedContrib = readPortableArchiveEntries(realpathSync(contribPortableInput));
-  }
   const prepared = prepareWasixConsumerInput({
     frozen,
     sqlName: spec.sqlName,
@@ -454,7 +445,20 @@ try {
       let bytes;
       if (selectedInputs !== '-') bytes = readFileSync(path.join(selectedInputs, declared.path));
       else {
-        const member = completedContrib?.get(
+        if (!completedContrib) {
+          assert.notEqual(
+            contribPortableInput,
+            '-',
+            'held dependency requires its original carrier',
+          );
+          const original = napi.contribPortable;
+          assert.equal(original.publication.version, addonManifest.oliphaunt.runtimeVersion);
+          const bytes = readFileSync(contribPortableInput);
+          assert.equal(digest(bytes), original.file.sha256);
+          assert.equal(bytes.length, original.file.size);
+          completedContrib = readPortableArchiveEntries(realpathSync(contribPortableInput));
+        }
+        const member = completedContrib.get(
           'oliphaunt-extension-contrib-pg18-wasix-' +
             addonManifest.oliphaunt.runtimeVersion +
             '/payload/files/extensions/' +
