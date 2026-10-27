@@ -424,6 +424,7 @@ test('measured cohorts retain their observed cache population within a bounded a
   for (const cohort of [
     { RUNNER_OS: 'macOS', RUNNER_ARCH: 'ARM64', COHORT: 'portable' },
     { RUNNER_OS: 'Linux', RUNNER_ARCH: 'X64', COHORT: 'portable' },
+    { RUNNER_OS: 'Linux', RUNNER_ARCH: 'X64', COHORT: 'wasix' },
     { RUNNER_OS: 'Linux', RUNNER_ARCH: 'X64', COHORT: 'linux' },
   ]) {
     const linuxX64 = cohort.RUNNER_OS === 'Linux' && cohort.COHORT === 'linux';
@@ -432,7 +433,7 @@ test('measured cohorts retain their observed cache population within a bounded a
     for (const scenario of [
       {
         name: 'working set with allocation headroom',
-        disk: linuxX64 ? '8912896' : '3774874',
+        disk: linuxX64 ? '8912896' : '4194304',
         gc: false,
         saved: true,
       },
