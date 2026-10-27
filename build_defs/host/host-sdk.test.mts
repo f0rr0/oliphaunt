@@ -28,11 +28,13 @@ describe('declared native host SDK policy', () => {
   test('existing supported toolset family accepts exact selected versions', () => {
     const parsed = parsePolicy(policy);
     verifyWindowsVersions(environment, parsed.windows);
+    verifyWindowsVersions({ ...environment, VSCMD_VER: '18.1.9' }, parsed.windows);
     verifyWindowsVersions({ ...environment, VCToolsVersion: '14.59.1' }, parsed.windows);
   });
   test('unsupported families, architecture and missing identities fail', () => {
     for (const mutation of [
       { VSCMD_VER: '17.0.1' },
+      { VSCMD_VER: undefined },
       { VCToolsVersion: '14.49.1' },
       { VCToolsVersion: '14.60.1' },
       { WindowsSDKVersion: '11.0.1' },

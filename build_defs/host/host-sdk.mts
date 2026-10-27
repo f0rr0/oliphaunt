@@ -207,7 +207,6 @@ function captureWindows(policy: HostPolicy, env: NodeJS.ProcessEnv): HostSdk {
     runtimeDlls: runtimeDlls.map((name) => `crt/${name}`),
     temporaryDirectory: scalar(env.TEMP ?? env.TMP, 'MSVC temporary directory'),
     observations: {
-      VSCMD_VER: scalar(env.VSCMD_VER, 'VSCMD_VER'),
       VCToolsVersion: scalar(env.VCToolsVersion, 'VCToolsVersion'),
       WindowsSDKVersion: sdkVersion,
       compiler: run(path.join(binary, 'cl.exe'), ['/Bv'], env, [0, 2]),
@@ -216,8 +215,6 @@ function captureWindows(policy: HostPolicy, env: NodeJS.ProcessEnv): HostSdk {
       dumpbin_sha256: digest(path.join(binary, 'dumpbin.exe')),
       resource_compiler_sha256: digest(resourceCompiler),
       os_build: release(),
-      ImageOS: env.ImageOS ?? '',
-      ImageVersion: env.ImageVersion ?? '',
     },
   };
 }
@@ -246,8 +243,6 @@ function captureApple(policy: HostPolicy, env: NodeJS.ProcessEnv): HostSdk {
   const observations: Record<string, string> = {
     xcode,
     os_build: run('/usr/bin/sw_vers', ['-buildVersion']),
-    ImageOS: env.ImageOS ?? '',
-    ImageVersion: env.ImageVersion ?? '',
   };
   for (const [sdk, platform] of [
     ['macosx', 'MacOSX'],

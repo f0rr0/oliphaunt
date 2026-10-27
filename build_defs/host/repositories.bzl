@@ -134,7 +134,7 @@ _host_sdk_repository = repository_rule(
         "_libtool": attr.label(default = Label("@apple_support//crosstool:libtool.cc"), allow_single_file = True),
         "_driver_patch": attr.label(default = Label("//build_defs/host:declared-apple-drivers.patch"), allow_single_file = True),
     },
-    environ = ["DEVELOPER_DIR", "TOOLCHAINS", "VSCMD_VER", "VSCMD_ARG_HOST_ARCH", "VSCMD_ARG_TGT_ARCH", "VCToolsInstallDir", "VCToolsVersion", "VCToolsRedistDir", "WindowsSdkDir", "WindowsSDKVersion", "TEMP", "TMP", "ImageOS", "ImageVersion"],
+    environ = ["DEVELOPER_DIR", "TOOLCHAINS", "VSCMD_VER", "VSCMD_ARG_HOST_ARCH", "VSCMD_ARG_TGT_ARCH", "VCToolsInstallDir", "VCToolsVersion", "VCToolsRedistDir", "WindowsSdkDir", "WindowsSDKVersion", "TEMP", "TMP"],
 )
 
 def _host_toolchains_impl(ctx):
