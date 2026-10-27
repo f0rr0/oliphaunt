@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { checkRuntimePinPolicy } from './runtime-pin-policy.mts';
@@ -40,6 +40,51 @@ function mutate(root: string, file: string, change: (text: string) => string) {
 
 afterEach(() => {
   for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+test.skipIf(process.platform !== 'linux')('pinned launcher preserves Bun in child commands', () => {
+  const root = fixture();
+  const dev = path.join(root, 'tools/dev');
+  const pinned = path.join(root, 'pinned');
+  const ambient = path.join(root, 'ambient');
+  mkdirSync(pinned);
+  mkdirSync(ambient);
+  writeFileSync(path.join(root, 'package.json'), '{}');
+  writeFileSync(path.join(root, '.prototools'), `bun = "${Bun.version}"\n`);
+  writeFileSync(path.join(dev, 'bun.sh'), readFileSync(path.join(sourceRoot, 'tools/dev/bun.sh')));
+  symlinkSync(process.execPath, path.join(pinned, 'bun'));
+  writeFileSync(path.join(ambient, 'bun'), '#!/bin/sh\nprintf "0.0.0-ambient\\n"\n', {
+    mode: 0o755,
+  });
+  writeFileSync(
+    path.join(dev, 'install-pinned-js-runtime.sh'),
+    `#!/bin/sh
+set -eu
+[ "$#" -eq 3 ]
+[ "$1" = bun ] && [ "$2" = --expected-version ] && [ "$3" = "$EXPECTED_BUN_VERSION" ]
+printf '%s\\n' "$PINNED_BUN"
+`,
+  );
+  const probe = path.join(root, 'probe.mts');
+  writeFileSync(
+    probe,
+    `const child = Bun.spawnSync(['bash', '-c', 'bun --version']);
+if (child.exitCode !== 0) throw new Error('child Bun failed');
+console.log(JSON.stringify({parent: Bun.version, child: new TextDecoder().decode(child.stdout).trim()}));
+`,
+  );
+  const result = spawnSync('bash', [path.join(dev, 'bun.sh'), probe], {
+    cwd: root,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PATH: `${ambient}:${process.env.PATH}`,
+      EXPECTED_BUN_VERSION: Bun.version,
+      PINNED_BUN: path.join(pinned, 'bun'),
+    },
+  });
+  expect(result.status).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({ parent: Bun.version, child: Bun.version });
 });
 
 test('accepts all actual source pins from an explicit root', () => {

@@ -1,0 +1,5 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "bash ../../tools/dev/bun.sh install --frozen-lockfile --filter @oliphaunt/docs",
+  "buildCommand": "bash ../../tools/dev/bun.sh run --cwd src/docs build"
+}
