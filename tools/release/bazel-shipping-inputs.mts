@@ -418,6 +418,8 @@ export function buildShippingInputView(
   const producers = new Map<string, Row>();
   const products: ShippingInputView['products'] = {};
   const identities = new Set<string>();
+  const leavesByProduct = new Map<string, Set<string>>();
+  const descriptionsByProduct = new Map<string, Set<string>>();
   const visitedByProduct = new Map<string, Set<string>>();
   const visitedActionsByProduct = new Map<string, Set<Row>>();
   const visitedDepSetsByProduct = new Map<string, Set<string>>();
@@ -607,8 +609,10 @@ export function buildShippingInputView(
       throw new Error(`inconsistent version for ${product}`);
     const view = products[product] ?? { version, packages: [], inputs: [], actions: [] };
     products[product] = view;
-    const leaves = new Set(view.inputs);
-    const descriptions = new Set(view.actions);
+    const leaves = leavesByProduct.get(product) ?? new Set<string>();
+    leavesByProduct.set(product, leaves);
+    const descriptions = descriptionsByProduct.get(product) ?? new Set<string>();
+    descriptionsByProduct.set(product, descriptions);
     const visited = visitedByProduct.get(product) ?? new Set<string>();
     visitedByProduct.set(product, visited);
     const visitedActions = visitedActionsByProduct.get(product) ?? new Set<Row>();
@@ -656,8 +660,6 @@ export function buildShippingInputView(
       visit(key, new Set());
     }
     view.packages.push(pkg);
-    view.inputs = [...leaves].sort();
-    view.actions = [...descriptions].sort();
     if (pkg.supplierInputs !== undefined)
       for (const supplier of validateNativeShippingSuppliers(pkg.supplierInputs))
         for (const file of supplier.files) {
@@ -672,12 +674,15 @@ export function buildShippingInputView(
     if (definition.mnemonic !== 'FileWrite' || row(definition.inputs).count !== 0)
       throw new Error(context);
   });
-  for (const view of Object.values(products))
+  for (const [product, view] of Object.entries(products)) {
+    view.inputs = [...required(leavesByProduct, product)].sort();
+    view.actions = [...required(descriptionsByProduct, product)].sort();
     view.packages.sort((a, b) => {
       const left = canonical(a);
       const right = canonical(b);
       return left < right ? -1 : left > right ? 1 : 0;
     });
+  }
   return {
     schema: 'oliphaunt-bazel-construction-inputs-v2',
     products,

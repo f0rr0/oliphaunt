@@ -283,6 +283,31 @@ test('shipping source and packager inputs follow actual producer edges', () => {
   });
 });
 
+test('many sibling package roots preserve one exact product footprint in either order', () => {
+  const { exported, graph } = fixture();
+  const baseline = buildShippingInputView(exported, graph);
+  const original = exported.packages[0];
+  exported.packages = Array.from({ length: 32 }, (_, index) => ({
+    ...original,
+    name: `@example/alpha-${String(index).padStart(2, '0')}`,
+    outputs:
+      index % 2 === 0 ? [{ path: 'bazel-out/alpha.o', owner: '//:compile' }] : original.outputs,
+  }));
+  const expected = {
+    ...baseline,
+    products: {
+      alpha: { ...baseline.products.alpha, packages: [...exported.packages] },
+    },
+  };
+  for (const packages of [exported.packages, [...exported.packages].reverse()]) {
+    const actual = buildShippingInputView({ ...exported, packages }, graph);
+    expect(actual).toEqual(expected);
+    expect(createHash('sha256').update(JSON.stringify(actual)).digest('hex')).toBe(
+      createHash('sha256').update(JSON.stringify(expected)).digest('hex'),
+    );
+  }
+});
+
 test('supplier File checks retain each sibling closure without changing the shared product view', () => {
   const { exported, graph } = fixture();
   exported.packages.push({

@@ -472,6 +472,39 @@ test('reached seed constructor JSON binds its own captured File and same-action 
     const inputs = [f.capture(receiptPath), f.capture(frozen)];
     const action = { mnemonic: 'PostgresClusterSeed', outputs: [frozen, receiptPath] };
     expect(validateNativeSeedConstructions(rows, inputs, [JSON.stringify(action)])).toEqual(rows);
+    expect(
+      validateNativeSeedConstructions(
+        rows,
+        [...inputs, { ...inputs[1], members: [] }],
+        [JSON.stringify(action)],
+      ),
+    ).toEqual(rows);
+    const second = {
+      path: `${stem}-second.seed-construction.json`,
+      contents: rows[0].contents,
+    };
+    const secondFrozen = `${stem}-second.tar`;
+    const multipleRows = [...rows, second];
+    const multipleInputs = [
+      ...inputs,
+      { ...inputs[0], path: second.path },
+      { ...inputs[1], path: secondFrozen },
+    ];
+    const secondAction = {
+      mnemonic: 'PostgresClusterSeed',
+      outputs: [secondFrozen, second.path, second.path],
+    };
+    const definitions = [action, secondAction].map((action) => JSON.stringify(action));
+    expect(validateNativeSeedConstructions(multipleRows, multipleInputs, definitions)).toEqual(
+      multipleRows,
+    );
+    for (const duplicate of [secondAction, { ...secondAction, mnemonic: 'FileWrite' }])
+      expect(() =>
+        validateNativeSeedConstructions(multipleRows, multipleInputs, [
+          ...definitions,
+          JSON.stringify(duplicate),
+        ]),
+      ).toThrow('same actual constructor action');
     for (const failure of [
       'missing',
       'duplicate',
@@ -498,6 +531,17 @@ test('reached seed constructor JSON binds its own captured File and same-action 
   } finally {
     f.cleanup();
   }
+});
+
+test('seed constructor action parsing waits for a captured receipt', () => {
+  expect(validateNativeSeedConstructions(undefined, [], ['invalid JSON'])).toEqual([]);
+  expect(() =>
+    validateNativeSeedConstructions(
+      [{ path: 'bazel-out/seed.seed-construction.json', contents: '{}' }],
+      [],
+      ['invalid JSON'],
+    ),
+  ).toThrow('native seed constructor contents have no captured File');
 });
 
 function requiredTestEvents() {

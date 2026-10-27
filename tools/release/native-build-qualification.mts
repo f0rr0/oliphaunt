@@ -309,6 +309,10 @@ export function validateNativeSeedConstructions(
     .map((input) => input.path)
     .sort();
   const rows = raw === undefined ? [] : list(raw);
+  const inputsByPath = new Map<string, NativeBuildFileCapture>();
+  for (const input of inputs)
+    if (!inputsByPath.has(input.path)) inputsByPath.set(input.path, input);
+  let definitionsByOutput: Map<string, Row[]> | undefined;
   const result = rows.map((value) => {
     const row = object(value);
     exactFields(row, ['path', 'contents'], 'native seed constructor contents');
@@ -316,7 +320,7 @@ export function validateNativeSeedConstructions(
     if (!file.startsWith('bazel-out/') || typeof row.contents !== 'string')
       throw new Error('native seed constructor requires a generated UTF-8 File');
     const bytes = Buffer.from(row.contents, 'utf8');
-    const capture = inputs.find((input) => input.path === file);
+    const capture = inputsByPath.get(file);
     const member = capture?.members[0];
     if (capture?.members.length !== 1 || member?.type !== 'file')
       throw new Error('native seed constructor contents have no captured File');
@@ -327,9 +331,16 @@ export function validateNativeSeedConstructions(
     );
     const receipt = validateSeedConstructionReceipt(JSON.parse(row.contents));
     const frozen = file.slice(0, -SEED_CONSTRUCTION_RECEIPT_SUFFIX.length) + '.tar';
-    const definitions = actions
-      .map((action) => object(JSON.parse(action)))
-      .filter((action) => list(action.outputs).includes(file));
+    if (definitionsByOutput === undefined) {
+      definitionsByOutput = new Map();
+      for (const action of actions.map((action) => object(JSON.parse(action))))
+        for (const output of new Set(list(action.outputs))) {
+          const definitions = definitionsByOutput.get(output) ?? [];
+          definitions.push(action);
+          definitionsByOutput.set(output, definitions);
+        }
+    }
+    const definitions = definitionsByOutput.get(file) ?? [];
     if (
       definitions.length !== 1 ||
       !['PostgresClusterSeed', 'WasixClusterSeed', 'NativeSeedDomainAdmission'].includes(
@@ -350,7 +361,7 @@ export function validateNativeSeedConstructions(
       !['android-datum64', 'ios-datum64'].includes(receipt.intent.target)
     )
       throw new Error('native seed domain receipt needs its own mobile domain slot');
-    const frozenCapture = inputs.find((input) => input.path === frozen);
+    const frozenCapture = inputsByPath.get(frozen);
     const frozenMember = frozenCapture?.members[0];
     if (frozenCapture?.members.length !== 1 || frozenMember?.type !== 'file')
       throw new Error('native seed constructor needs its captured frozen TAR File');
