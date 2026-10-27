@@ -5,6 +5,9 @@ load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRY
 load("//build_defs/extensions:wasix_carriers.bzl", "wasix_sql_carrier_helpers")
 load(":npm.bzl", "RUNTIME_NPM_NOTICES")
 
+def _archive_leaf(file):
+    return file.short_path
+
 def _host_aot_smoke_impl(ctx):
     binary = ctx.attr.binary[DefaultInfo].files_to_run.executable
     rows = [row for row in PUBLICATION_CARRIERS if row["ecosystem"] == "cargo" and (
@@ -14,17 +17,27 @@ def _host_aot_smoke_impl(ctx):
     )]
     expected = [row["name"] + "-" + row["version"] + ".crate" for row in rows]
     crates = [file for file in ctx.files.carriers if file.basename in expected]
-    if len(expected) != 5 or sorted([file.basename for file in crates]) != sorted(expected) or any([file.is_directory for file in crates]):
+    families = [file for file in ctx.files.carriers if file.is_directory]
+    portable = [row["name"] + "-" + row["version"] + ".crate" for row in rows if row["name"] == "liboliphaunt-wasix-portable"]
+    scalar_names = [name for name in expected if not families or name not in portable]
+    if len(expected) != 5 or len(families) > 1 or sorted([file.basename for file in crates]) != sorted(scalar_names) or any([file.is_directory for file in crates]):
         fail("WASIX host smoke requires its exact portable core, contrib/tools and matching host AOT Files")
+    archives = ctx.actions.declare_file(ctx.label.name + ".archives")
+    leaves = ctx.actions.args()
+    leaves.add_all(crates + families, expand_directories = True, map_each = _archive_leaf)
+    leaves.set_param_file_format("multiline")
+    ctx.actions.write(archives, leaves)
     spec = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
     ctx.actions.write(spec, json.encode({
+        "workspace": ctx.workspace_name,
         "target": ctx.attr.target_triple,
         "runtimeVersion": PRODUCTS["liboliphaunt-wasix"]["version"],
         "toolsVersion": PRODUCTS["postgres-tools-wasix"]["version"],
     }))
-    files = crates + [spec, binary] + ctx.files._helpers
-    return bun_test_entrypoint(ctx, ctx.file._runner, [spec, binary] + crates, files,
+    files = crates + families + [spec, archives, binary] + ctx.files._helpers
+    return bun_test_entrypoint(ctx, ctx.file._runner, [spec, binary, archives], files,
         source_files = [ctx.file._runner] + ctx.files._helpers,
+        runfiles_argument = True,
         additional_runfiles = ctx.attr.binary[DefaultInfo].default_runfiles)
 
 _host_aot_smoke_test = rule(

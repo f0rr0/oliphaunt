@@ -219,6 +219,7 @@ filegroup(
         "//src/wasix/runtime:rustfmt_sources",
         "//src/wasix/runtime/tools/xtask:rustfmt_sources",
         "//src/wasix/runtime/tools/v8-serializer:rustfmt_sources",
+        "//build_defs/wasix:rustfmt_sources",
         "//build_defs/wasix/engine:rustfmt_sources",
         "//src/wasix/runtime/engine:rustfmt_sources",
         "//src/wasix/runtime/crates/assets:rustfmt_sources",

@@ -22,8 +22,8 @@ import {
 } from '../../src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import { stageCargoCarrierInputs } from '../../tools/packaging/frozen-cargo.mts';
 import { readPortableArchiveEntries } from '../../tools/packaging/portable-archive.mts';
-import { projectCargoWorkspace } from '../languages/cargo-metadata.mts';
-import { validatePackedRuntimeCargo } from './cargo.mts';
+import { projectCargoWorkspace, renderToml } from '../languages/cargo-metadata.mts';
+import { extractRuntimeCargoFamily, readRuntimeCargoFamily } from './cargo.mts';
 
 const SCHEMA = 'oliphaunt-wasix-cargo-construction-v1';
 const AOT_BY_NAME = new Map(Object.entries(AOT_PACKAGES).map(([target, name]) => [name, target]));
@@ -134,6 +134,7 @@ function readCargoManifest(archive: string, name: string, version?: string) {
 }
 
 function expectedTarget(name: string) {
+  name = wasixRuntimeCargoParent(name) ?? name;
   if (name === RUNTIME_PACKAGE) return 'portable';
   const target = AOT_BY_NAME.get(name);
   if (!target) throw new Error(`unknown WASIX Cargo carrier ${name}`);
@@ -141,25 +142,41 @@ function expectedTarget(name: string) {
 }
 
 function expectedRole(name: string) {
+  if (wasixRuntimeCargoParent(name) !== name) return 'payload-part';
   return name === RUNTIME_PACKAGE ? 'platform-leaf' : 'aot-leaf';
 }
 
 function expectedKind(name: string) {
+  name = wasixRuntimeCargoParent(name) ?? name;
   return name === RUNTIME_PACKAGE ? 'wasix-runtime' : 'wasix-aot';
 }
 
 function expectedLinks(name: string) {
+  const parent = wasixRuntimeCargoParent(name);
+  if (parent !== name) {
+    const triple = AOT_TARGET_TRIPLES[expectedTarget(name)];
+    return `oliphaunt_artifact_part_liboliphaunt_wasix_${triple.replaceAll('-', '_')}_${name.slice(-3)}`;
+  }
   if (name === RUNTIME_PACKAGE) return 'oliphaunt_artifact_liboliphaunt_wasix_runtime';
   return `oliphaunt_artifact_liboliphaunt_wasix_aot_${expectedTarget(name).replaceAll('-', '_')}`;
 }
 
+/** Parts belong to the declared AOT parent; they introduce no release owner. */
+export function wasixRuntimeCargoParent(name: string): string | undefined {
+  if (PACKAGE_PATHS.has(name)) return name;
+  const match = /^(.*)-part-([0-9]{3})$/u.exec(name);
+  return match && AOT_BY_NAME.has(match[1]) && Number(match[2]) > 0 ? match[1] : undefined;
+}
+
 function exactRows(rows: CargoInput[]) {
-  if (!Array.isArray(rows) || rows.length !== PACKAGE_NAMES.length)
-    throw new Error('WASIX construction receipt requires exactly five Cargo archives');
+  if (!Array.isArray(rows) || rows.length < PACKAGE_NAMES.length)
+    throw new Error('WASIX construction receipt requires exactly five Cargo parents');
   const byName = new Map<string, CargoInput>();
   for (const row of rows) {
     if (!row || typeof row.name !== 'string' || byName.has(row.name))
       throw new Error('WASIX construction receipt has duplicate or invalid package names');
+    if (!wasixRuntimeCargoParent(row.name))
+      throw new Error(`unknown WASIX Cargo carrier ${row.name}`);
     if (row.target !== expectedTarget(row.name))
       throw new Error(`WASIX Cargo target differs for ${row.name}`);
     if (!path.isAbsolute(row.file))
@@ -168,7 +185,31 @@ function exactRows(rows: CargoInput[]) {
   }
   if (PACKAGE_NAMES.some((name) => !byName.has(name)))
     throw new Error('WASIX construction receipt is missing a canonical Cargo archive');
-  return PACKAGE_NAMES.map((name) => byName.get(name)!);
+  return [...byName.values()].sort((left, right) =>
+    left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
+  );
+}
+
+function readRuntimeFamilies(rows: CargoInput[]) {
+  const manifests = new Map<string, any>();
+  for (const parent of PACKAGE_NAMES) {
+    const target = expectedTarget(parent);
+    const family = readRuntimeCargoFamily(
+      rows.filter((row) => wasixRuntimeCargoParent(row.name) === parent).map((row) => row.file),
+      target === 'portable' ? null : target,
+    );
+    manifests.set(parent, family.parent.manifest);
+    for (const { name, manifest } of family.parts) {
+      if (
+        ['dependencies', 'dev-dependencies', 'build-dependencies', 'target'].some(
+          (key) => Object.keys(manifest[key] ?? {}).length,
+        )
+      )
+        throw new Error(`WASIX Cargo payload part must contain only data: ${name}`);
+      manifests.set(name, manifest);
+    }
+  }
+  return manifests;
 }
 
 export type CargoInput = { file: string; name: string; target: string };
@@ -215,12 +256,14 @@ export function writeWasixCargoConstructionReceipt(
     .sort();
   if (JSON.stringify(releaseCrates) !== JSON.stringify(PACKAGE_NAMES))
     throw new Error('WASIX release manifest does not declare the canonical five Cargo carriers');
-  const rows = exactRows(inputs).map(({ file, name, target }) => {
+  const ordered = exactRows(inputs);
+  const manifests = readRuntimeFamilies(ordered);
+  const rows = ordered.map(({ file, name, target }) => {
     const stat = lstatSync(file);
     if (!stat.isFile() || stat.isSymbolicLink())
       throw new Error(`WASIX Cargo archive must be a regular file: ${name}`);
     const bytes = readFileSync(file);
-    const { manifest } = readCargoManifest(file, name);
+    const manifest = manifests.get(name);
     if (
       manifest.package.version !== version ||
       manifest.package.links !== expectedLinks(name) ||
@@ -347,7 +390,12 @@ export function extractWasixCargoConstructionInputs(
     const bytes = readFileSync(file);
     if (bytes.length !== row.size || sha256(bytes) !== row.sha256)
       throw new Error(`WASIX Cargo archive hash differs: ${row.name}`);
-    const { manifest } = readCargoManifest(file, row.name, row.version);
+  }
+  const packedManifests = readRuntimeFamilies(rows);
+  for (const row of value.crates) {
+    const manifest = packedManifests.get(row.name);
+    if (manifest.package.version !== value.version)
+      throw new Error(`WASIX Cargo version differs from receipt: ${row.name}`);
     if (manifest.package.links !== expectedLinks(row.name))
       throw new Error(`WASIX Cargo links identity differs: ${row.name}`);
   }
@@ -389,14 +437,29 @@ export function extractWasixCargoConstructionInputs(
     })),
     staged,
   );
-  const workspace = {
-    workspace: { members: PACKAGE_NAMES.map((name) => PACKAGE_PATHS.get(name)), resolver: '3' },
-  };
   const lock = Bun.TOML.parse(readFileSync(cargoLock, 'utf8'));
-  const manifests = new Map<string, any>();
+  const memberPaths = new Map(PACKAGE_PATHS);
+  for (const row of rows) {
+    const parent = wasixRuntimeCargoParent(row.name)!;
+    if (row.name !== parent)
+      memberPaths.set(row.name, `${PACKAGE_PATHS.get(parent)}/parts/${row.name}`);
+  }
+  const workspace = {
+    workspace: { members: [...memberPaths.values()], resolver: '3' },
+  };
   for (const name of PACKAGE_NAMES) {
+    const target = expectedTarget(name);
+    extractRuntimeCargoFamily(
+      rows.filter((row) => wasixRuntimeCargoParent(row.name) === name).map((row) => row.file),
+      path.join(staged, 'families', name),
+      target === 'portable' ? null : target,
+      sourceRoot,
+    );
+  }
+  const manifests = new Map<string, any>();
+  for (const { name } of rows) {
     const stagedPath = path.join(staged, 'crates', `${name}-${value.version}`);
-    const memberPath = PACKAGE_PATHS.get(name)!;
+    const memberPath = memberPaths.get(name)!;
     const destination = path.join(outputDirectory, memberPath);
     mkdirSync(path.dirname(destination), { recursive: true });
     cpSync(stagedPath, destination, { recursive: true, errorOnExist: true, force: false });
@@ -405,11 +468,29 @@ export function extractWasixCargoConstructionInputs(
       throw new Error(`${name} packed workspace metadata is not empty`);
     delete manifest.workspace;
     manifests.set(memberPath, manifest);
-    const target = expectedTarget(name);
-    validatePackedRuntimeCargo(
-      destination,
-      { packageName: name, target: target === 'portable' ? null : target },
-      sourceRoot,
+  }
+  const parts = rows.filter((row) => wasixRuntimeCargoParent(row.name) !== row.name);
+  for (const part of parts) {
+    if (lock.package.some((row: any) => row.name === part.name))
+      throw new Error(`Packed WASIX Cargo part collides with the source lock: ${part.name}`);
+    const parent = wasixRuntimeCargoParent(part.name)!;
+    const parentPath = memberPaths.get(parent)!;
+    const manifest = manifests.get(parentPath);
+    manifest['build-dependencies'][part.name].path = path.posix.relative(
+      parentPath,
+      memberPaths.get(part.name)!,
+    );
+    const local = lock.package.filter((row: any) => row.name === parent && !row.source);
+    if (local.length !== 1 || local[0].version !== value.version)
+      throw new Error(`Packed WASIX Cargo parent differs from the source lock: ${parent}`);
+    local[0].dependencies = [...(local[0].dependencies ?? []), part.name];
+    lock.package.push({ name: part.name, version: value.version });
+  }
+  for (const parent of new Set(parts.map((row) => wasixRuntimeCargoParent(row.name)!))) {
+    const member = memberPaths.get(parent)!;
+    writeFileSync(
+      path.join(outputDirectory, member, 'Cargo.toml'),
+      renderToml(manifests.get(member)),
     );
   }
   const projection = projectCargoWorkspace(
@@ -436,12 +517,13 @@ export function extractWasixCargoConstructionInputs(
     mkdirSync(path.dirname(file), { recursive: true });
     writeFileSync(file, contents);
   }
-  cpSync(cargoLock, path.join(outputDirectory, 'Cargo.lock'));
+  if (parts.length) writeFileSync(path.join(outputDirectory, 'Cargo.lock'), renderToml(lock));
+  else copyFileSync(cargoLock, path.join(outputDirectory, 'Cargo.lock'));
   writeFileSync(path.join(outputDirectory, 'cargo-facts.json'), JSON.stringify(projection.facts));
   const rootBuild = [
     'package(default_visibility = ["//visibility:public"])',
     'exports_files(["Cargo.toml", "Cargo.lock", "cargo.bzl", "cargo-facts.json"])',
-    'filegroup(name = "host_smoke", srcs = glob(["host-smoke/*.crate"]))',
+    'filegroup(name = "host_smoke", srcs = glob(["host-smoke/*.crate"], allow_empty = True))',
     '',
   ].join('\n');
   writeFileSync(path.join(outputDirectory, 'BUILD.bazel'), rootBuild);
@@ -449,29 +531,52 @@ export function extractWasixCargoConstructionInputs(
     path.join(outputDirectory, 'cargo.bzl'),
     `CARGO = ${starlark(projection.facts)}\n\ndef packed_cargo_manifest_dir():\n    return Label("//:Cargo.toml").workspace_root + "/" + native.package_name()\n`,
   );
-  for (const name of PACKAGE_NAMES) {
-    const memberPath = PACKAGE_PATHS.get(name)!;
+  for (const { name } of rows) {
+    const memberPath = memberPaths.get(name)!;
+    const parent = wasixRuntimeCargoParent(name)!;
+    const part = name !== parent;
+    const ownParts = parts.filter((row) => wasixRuntimeCargoParent(row.name) === name);
     const payload = name === RUNTIME_PACKAGE ? 'payload/**' : 'artifacts/**';
+    const pathDependencies = Object.fromEntries(
+      ownParts.map((row) => [row.name, `//${memberPaths.get(row.name)}:lib`]),
+    );
+    const payloadGroups = [
+      ':packed_payload',
+      ...ownParts.map((row) => `//${memberPaths.get(row.name)}:packed_payload`),
+    ];
+    const buildScriptEnv = {
+      OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD: '1',
+      OLIPHAUNT_ARTIFACT_CRATE_EMIT_CARGO_MANIFEST: '0',
+      // Preserve rules_rust's execroot placeholder through Bazel's Make expansion.
+      ...(ownParts.length ? { OLIPHAUNT_BAZEL_EXEC_ROOT: `$\${pwd}` } : {}),
+    };
     const build = [
       `load(${JSON.stringify(rustDefs)}, "cargo_generator", "cargo_library", "cargo_package_env")`,
       `load(${JSON.stringify(cratesDefs)}, "crate_deps")`,
       `load("//:cargo.bzl", "CARGO", "packed_cargo_manifest_dir")`,
       'package(default_visibility = ["//visibility:public"])',
       'exports_files(["Cargo.toml"])',
-      `filegroup(name = "packed_payload", srcs = glob([${JSON.stringify(payload)}]))`,
+      `filegroup(name = "packed_payload", srcs = ${ownParts.length ? '[]' : `glob([${JSON.stringify(part ? 'payload/**' : payload)}])`})`,
       'cargo_package_env(workspace_manifest = "//:Cargo.toml")',
       '# Generated includes must refer to declared package files, not pruned build-script runfiles.',
-      'cargo_generator(srcs = ["build-support.rs"], data = [":packed_payload"], build_script_env = {"CARGO_MANIFEST_DIR": packed_cargo_manifest_dir(), "OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD": "1", "OLIPHAUNT_ARTIFACT_CRATE_EMIT_CARGO_MANIFEST": "0"}, cargo_facts = CARGO, crate_dependencies = crate_deps)',
-      'cargo_library(build_script = ":build_script", compile_data = [":packed_payload"], cargo_facts = CARGO, crate_dependencies = crate_deps)',
+      ...(part
+        ? [
+            'cargo_generator(data = [":packed_payload"], build_script_env = {"CARGO_MANIFEST_DIR": packed_cargo_manifest_dir(), "OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD": "1"}, cargo_facts = CARGO, crate_dependencies = crate_deps)',
+            'cargo_library(build_script = ":build_script", rustc_env = {"CARGO_MANIFEST_DIR": packed_cargo_manifest_dir()}, cargo_facts = CARGO, crate_dependencies = crate_deps)',
+          ]
+        : [
+            `cargo_generator(path_dependencies = ${starlark(pathDependencies)}, srcs = ${starlark(['build-support.rs', ...(ownParts.length ? ['cargo-parts.rs'] : [])])}, data = ${starlark(payloadGroups)}, build_script_env = dict(${starlark(buildScriptEnv)}, CARGO_MANIFEST_DIR = packed_cargo_manifest_dir()), cargo_facts = CARGO, crate_dependencies = crate_deps)`,
+            'cargo_library(build_script = ":build_script", compile_data = [":packed_payload"], cargo_facts = CARGO, crate_dependencies = crate_deps)',
+          ]),
       '',
     ].join('\n');
     writeFileSync(path.join(outputDirectory, memberPath, 'BUILD.bazel'), build);
   }
   rmSync(staged, { recursive: true, force: true });
   return {
-    packages: PACKAGE_NAMES.map((name) => ({
+    packages: rows.map(({ name }) => ({
       name,
-      path: PACKAGE_PATHS.get(name),
+      path: memberPaths.get(name),
       target: expectedTarget(name),
     })),
   };

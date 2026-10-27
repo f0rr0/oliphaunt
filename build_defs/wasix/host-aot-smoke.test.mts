@@ -187,7 +187,9 @@ test('resolved main and external runfiles preserve exact host envelope inputs', 
   const archiveFiles = Object.values(spec.crates).map((file, index) => {
     const directory = path.join(
       runfiles,
-      index === 0 ? '_main/generated-carriers' : '+_repo_rules32+wasix_runtime_carriers/host-smoke',
+      index === 0
+        ? '_main/generated-carriers/crate.packages'
+        : '+_repo_rules32+wasix_runtime_carriers/host-smoke',
     );
     mkdirSync(directory, { recursive: true });
     const output = path.join(directory, path.basename(file));
@@ -196,8 +198,26 @@ test('resolved main and external runfiles preserve exact host envelope inputs', 
   });
   const specification = path.join(root, 'host.inputs.json');
   const { crates: _crates, ...metadata } = spec;
-  writeFileSync(specification, JSON.stringify(metadata));
+  writeFileSync(specification, JSON.stringify({ ...metadata, workspace: '_main' }));
   const resolved = readWasixHostAotSmokeSpec(specification, archiveFiles);
+  const leaves = archiveFiles.map((file) => {
+    const relative = path.relative(runfiles, file).replaceAll('\\', '/');
+    return relative.startsWith('_main/') ? relative.slice(6) : `../${relative}`;
+  });
+  expect(readWasixHostAotSmokeSpec(specification, leaves, runfiles)).toEqual(resolved);
+  expect(() => readWasixHostAotSmokeSpec(specification, leaves.slice(1), runfiles)).toThrow(
+    /five resolved/u,
+  );
+  expect(() =>
+    readWasixHostAotSmokeSpec(specification, [...leaves, 'unrelated.crate'], runfiles),
+  ).toThrow(/five resolved/u);
+  expect(() =>
+    readWasixHostAotSmokeSpec(
+      specification,
+      [...leaves.slice(1), 'generated-carriers/foreign.crate'],
+      runfiles,
+    ),
+  ).toThrow(/exact five canonical/u);
   const packets = prepareWasixHostAotSmoke(resolved, path.join(root, 'from-runfiles'));
   const tools = JSON.parse(readFileSync(packets.toolsPacket, 'utf8'));
   expect(readFileSync(tools.pgDump.wasm)).toEqual(module);

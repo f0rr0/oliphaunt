@@ -2,6 +2,7 @@ import { test } from 'bun:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
+  copyFileSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -28,6 +29,7 @@ import {
   readPortableArchiveEntries,
   releaseZstdCompressSync,
 } from '../../tools/packaging/portable-archive.mts';
+import { releaseNoticeRows } from '../../tools/packaging/release-notices.mts';
 import {
   elfFixture,
   machoFixture,
@@ -38,7 +40,7 @@ import {
   windowsVcRuntimeProfileNames,
 } from '../../tools/packaging/windows-vc-runtime-closure.mts';
 import { packageNativeWasixNapi } from './napi.mts';
-import { stageWasixNapiInputs, type WasixNapiInputsSpec } from './napi-inputs.mts';
+import { stageWasixNapiInputs } from './napi-inputs.mts';
 
 const PRODUCT = 'oliphaunt-extension-contrib-pg18';
 const digest = (bytes: string | Uint8Array) => createHash('sha256').update(bytes).digest('hex');
@@ -78,7 +80,7 @@ function fixture(
   sqlNames = releaseSqlNames(),
   sdkVersion = '0.3.2',
   runtimeVersion = '0.3.2',
-): WasixNapiInputsSpec {
+) {
   const targetTriple = AOT_TARGET_TRIPLES[target];
   const input = path.join(root, 'inputs');
   mkdirSync(input, { recursive: true });
@@ -160,7 +162,18 @@ function fixture(
   const core = CORE_AOT_ARTIFACTS.map((name, i) =>
     artifact(name, `core-${i}-llvm-opta.bin.zst`, Buffer.from(`current core ${name}`)),
   );
+  const legal = Object.fromEntries(
+    releaseNoticeRows({ profile: 'wasix-aot' }).map((row) => [
+      row.member,
+      readFileSync(row.source),
+    ]),
+  );
   const coreAotArchive = crate(AOT_PACKAGES[target], {
+    'build.rs': Buffer.from('const PACKAGE_LOCAL: bool = true;\ninclude!("build-support.rs");\n'),
+    ...legal,
+    ...Object.fromEntries(
+      Object.entries(legal).map(([name, bytes]) => [`artifacts/${name}`, bytes]),
+    ),
     'artifacts/manifest.json': manifest(core.map(({ row }) => row)),
     ...Object.fromEntries(core.map(({ row, bytes }) => [`artifacts/${row.path}`, bytes])),
   });
@@ -263,6 +276,165 @@ function physicalFiles(root: string, prefix = ''): string[] {
     })
     .sort();
 }
+
+function splitCoreFixture(spec: ReturnType<typeof fixture>) {
+  const name = AOT_PACKAGES[spec.target];
+  const prefix = `${name}-${spec.runtimeVersion}/`;
+  const files = Object.fromEntries(
+    [...readPortableArchiveEntries(spec.coreAotArchive)]
+      .filter(([, entry]) => entry.isFile)
+      .map(([member, entry]) => [member.slice(prefix.length), Buffer.from(entry.data())]),
+  );
+  const parts = [1, 2].map((index) => `${name}-part-${String(index).padStart(3, '0')}`);
+  const payloads: Record<string, Uint8Array>[] = [{}, {}];
+  const chunks = Object.keys(files).find((member) => member.endsWith('.zst'));
+  assert(chunks);
+  const middle = Math.ceil(files[chunks].length / 2);
+  payloads[0][`payload/chunks/${chunks.slice('artifacts/'.length)}.part000`] = files[
+    chunks
+  ].subarray(0, middle);
+  payloads[1][`payload/chunks/${chunks.slice('artifacts/'.length)}.part001`] =
+    files[chunks].subarray(middle);
+  for (const [index, [member, bytes]] of Object.entries(files)
+    .filter(([member]) => member.startsWith('artifacts/'))
+    .entries()) {
+    if (member !== chunks)
+      payloads[index % 2][`payload/files/${member.slice('artifacts/'.length)}`] = bytes;
+    delete files[member];
+  }
+  files['Cargo.toml'] = Buffer.from(
+    files['Cargo.toml'].toString() +
+      '\n[build-dependencies]\n' +
+      parts
+        .map(
+          (part) =>
+            `${JSON.stringify(part)} = { version = ${JSON.stringify(`=${spec.runtimeVersion}`)} }\n`,
+        )
+        .join(''),
+  );
+  files['build.rs'] = Buffer.from(
+    'const PACKAGE_LOCAL: bool = true;\n' +
+      `const PART_ROOTS: &[&str] = &[${parts.map((part) => `${part.replaceAll('-', '_')}::PAYLOAD_ROOT`).join(', ')}];\n` +
+      'include!("build-support.rs");\n',
+  );
+  writeFileSync(
+    spec.coreAotArchive,
+    canonicalGzipSync(
+      tar(
+        Object.fromEntries(
+          Object.entries(files).map(([member, bytes]) => [prefix + member, bytes]),
+        ),
+      ),
+    ),
+  );
+  return [
+    spec.coreAotArchive,
+    ...parts.map((part, index) => {
+      const file = path.join(
+        path.dirname(spec.coreAotArchive),
+        `${part}-${spec.runtimeVersion}.crate`,
+      );
+      writeFileSync(
+        file,
+        canonicalGzipSync(
+          tar(
+            Object.fromEntries(
+              Object.entries({
+                'Cargo.toml': Buffer.from(
+                  `[package]\nname=${JSON.stringify(part)}\nversion=${JSON.stringify(spec.runtimeVersion)}\n`,
+                ),
+                ...payloads[index],
+              }).map(([member, bytes]) => [`${part}-${spec.runtimeVersion}/${member}`, bytes]),
+            ),
+          ),
+        ),
+      );
+      return file;
+    }),
+  ];
+}
+
+test('Windows core parent and exact parts preserve NAPI payloads through declared family trees', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-napi-family-'));
+  try {
+    const spec = fixture(root, 'windows-x64-msvc', releaseSqlNames().slice(0, 3));
+    const before = stageWasixNapiInputs(spec).inventory;
+    const family = splitCoreFixture(spec);
+    const portableTree = path.join(root, 'portable', 'crate.packages');
+    const coreTree = path.join(root, 'core', 'crate.packages');
+    for (const directory of [portableTree, coreTree]) mkdirSync(directory, { recursive: true });
+    const move = (file: string, directory: string) => {
+      const output = path.join(directory, path.basename(file));
+      copyFileSync(file, output);
+      return output;
+    };
+    const portable = move(spec.portableArchive, portableTree);
+    const pieces = family.map((file) => move(file, coreTree));
+    const orphanName = `${AOT_PACKAGES[spec.target]}-part-003`;
+    const orphan = path.join(root, `${orphanName}-${spec.runtimeVersion}.crate`);
+    writeFileSync(
+      orphan,
+      canonicalGzipSync(
+        tar({
+          [`${orphanName}-${spec.runtimeVersion}/Cargo.toml`]: Buffer.from(
+            `[package]\nname=${JSON.stringify(orphanName)}\nversion=${JSON.stringify(spec.runtimeVersion)}\n`,
+          ),
+        }),
+      ),
+    );
+    const declared = {
+      ...spec,
+      portableArchive: [portableTree],
+      coreAotArchive: [coreTree],
+      archiveFiles: [portable, ...pieces, spec.contribPortable, spec.contribAot],
+      output: path.join(root, 'family-output'),
+    };
+    const after = stageWasixNapiInputs(declared).inventory;
+    assert.deepEqual(after, before);
+    assert.deepEqual(physicalFiles(declared.output), physicalFiles(spec.output));
+    for (const [index, mutation] of [
+      { ...declared, archiveFiles: declared.archiveFiles.filter((file) => file !== pieces[2]) },
+      { ...declared, coreAotArchive: [...pieces, pieces[1]], archiveFiles: undefined },
+      { ...declared, coreAotArchive: [...pieces, orphan], archiveFiles: undefined },
+      { ...declared, coreAotArchive: [portableTree] },
+      {
+        ...declared,
+        coreAotArchive: [coreTree],
+        archiveFiles: [portable, spec.contribPortable, spec.contribAot],
+      },
+    ].entries())
+      assert.throws(() =>
+        stageWasixNapiInputs({ ...mutation, output: path.join(root, `invalid-${index}`) }),
+      );
+    for (const [index, file] of [pieces[0], pieces[1]].entries()) {
+      const original = readFileSync(file);
+      rewriteCrate(file, (entries) => {
+        const member = Object.keys(entries).find((name) => name.endsWith('/Cargo.toml'));
+        assert(member);
+        entries[member] = Buffer.from(
+          `${entries[member].toString()}\n[package.metadata.oliphaunt]\nqualificationOnly=true\n`,
+        );
+      });
+      assert.throws(
+        () =>
+          stageWasixNapiInputs({ ...declared, output: path.join(root, `qualification-${index}`) }),
+        /qualification/i,
+      );
+      writeFileSync(file, original);
+    }
+    rewriteCrate(pieces[1], (entries) => {
+      const member = Object.keys(entries).find((name) => name.includes('/payload/chunks/'));
+      assert(member);
+      entries[member] = Buffer.from('corrupted original part');
+    });
+    assert.throws(
+      () => stageWasixNapiInputs({ ...declared, output: path.join(root, 'corrupt') }),
+      /SHA-256 mismatch/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('current source Cargo, complete contrib and canonical carriers bind exactly on all supported hosts', async () => {
   for (const target of Object.keys(AOT_TARGET_TRIPLES)) {
@@ -588,7 +760,7 @@ test('unrelated workspace lock changes do not alter embedded source construction
 });
 
 test('rejects mismatched source versions, incomplete physical crates and incompatible target or payload identities', () => {
-  const mutations: [string, (spec: WasixNapiInputsSpec) => void][] = [
+  const mutations: [string, (spec: ReturnType<typeof fixture>) => void][] = [
     ...(
       [
         'portableArchive',
@@ -597,7 +769,7 @@ test('rejects mismatched source versions, incomplete physical crates and incompa
         'contribAot',
         'contribFrozen',
       ] as const
-    ).map((field): [string, (spec: WasixNapiInputsSpec) => void] => [
+    ).map((field): [string, (spec: ReturnType<typeof fixture>) => void] => [
       `missing original ${field}`,
       (spec) => rmSync(spec[field]),
     ]),

@@ -26,6 +26,8 @@ NAPI_NOTICES = RUNTIME_NPM_NOTICES | {
     "//src/third-party/openssl:source.toml": "src/third-party/openssl/source.toml",
 }
 NAPI_HELPERS = {label: True for label in RUNTIME_CARGO_HELPERS + [
+    "//build_defs/wasix:cargo.mts",
+    "//:tools/packaging/frozen-cargo.mts",
     "//src/wasix/runtime:toolchain.toml",
     "//src/wasix/node-addon:tools/package-platform.mts",
     "//src/wasix/node-addon:tools/workspace-runtime-contract.mts",
@@ -61,23 +63,28 @@ def _inputs_impl(ctx):
     if not ctx.file.contrib_frozen:
         fail("WASIX addon is missing its original current contrib frozen File")
     inputs = [ctx.file.sdk_manifest, ctx.file.contrib_frozen]
-    archives, suppliers = {}, []
+    archives, suppliers, archive_inputs = {}, [], []
     for target, role in ctx.attr.archives.items():
         record = json.decode(ctx.attr.archive_records[role])
-        expected = record["package"] + "-" + ctx.attr.runtime_version + ".crate"
-        files = [file for file in target[DefaultInfo].files.to_list() if file.basename == expected]
-        if len(files) != 1 or files[0].is_directory:
-            fail("WASIX addon needs one original constructed Cargo archive for " + role)
-        file = files[0]
-        archives[role] = file.path
-        origin = {"kind": "current-source"}
-        if "producer" in record.get("file", {}):
-            original = record["file"]
-            origin["producer"] = dict(original["producer"], **({"member": original["member"]} if "member" in original else {}))
-        suppliers.append({"product": "liboliphaunt-wasix", "version": ctx.attr.runtime_version,
-                          "configuration": record["configuration"], "binding": "compiled-input",
-                          "origin": origin, "files": [{"path": file.path}]})
-        inputs.append(file)
+        candidates = target[DefaultInfo].files.to_list()
+        family_tree = len(candidates) == 1 and candidates[0].is_directory and role in ["portableArchive", "coreAotArchive"]
+        originals = record.get("family", [record])
+        files = candidates if family_tree else [file for file in candidates if file.basename in [original["package"] + "-" + ctx.attr.runtime_version + ".crate" for original in originals]]
+        if not files or (not family_tree and (len(files) != len(originals) or any([file.is_directory for file in files]))):
+            fail("WASIX addon needs its exact original constructed Cargo family for " + role)
+        archives[role] = [file.path for file in files]
+        for file in files:
+            matching = [original for original in originals if file.basename == original["package"] + "-" + ctx.attr.runtime_version + ".crate"]
+            original = matching[0] if matching else record
+            origin = {"kind": "current-source"}
+            if "producer" in original.get("file", {}):
+                physical = original["file"]
+                origin["producer"] = dict(physical["producer"], **({"member": physical["member"]} if "member" in physical else {}))
+            suppliers.append({"product": "liboliphaunt-wasix", "version": ctx.attr.runtime_version,
+                              "configuration": record["configuration"], "binding": "compiled-input",
+                              "origin": origin, "files": [{"path": file.path}]})
+        archive_inputs += files
+    inputs += archive_inputs
     if sorted(archives) != ["contribAot", "contribPortable", "coreAotArchive", "portableArchive"]:
         fail("WASIX addon is missing original current portable/AOT constructor Files")
     output = ctx.actions.declare_directory(ctx.label.name)
@@ -86,7 +93,11 @@ def _inputs_impl(ctx):
         sdkManifest = ctx.file.sdk_manifest.path,
         runtimeVersion = ctx.attr.runtime_version, sdkVersion = ctx.attr.sdk_version,
         sqlNames = ctx.attr.sql_names, contribFrozen = ctx.file.contrib_frozen.path, output = output.path)))
-    bun_file_action(ctx, ctx.file._stager, arguments = [spec.path], inputs = inputs + [spec],
+    leaves = ctx.actions.args()
+    leaves.add_all(archive_inputs, expand_directories = True)
+    leaves.use_param_file("--archive-files=%s", use_always = True)
+    leaves.set_param_file_format("multiline")
+    bun_file_action(ctx, ctx.file._stager, arguments = [spec.path, leaves], inputs = inputs + [spec],
                     source_files = ctx.files._helpers, outputs = [output], mnemonic = "WasixNapiConstructedInputs")
     return [DefaultInfo(files = depset([output])), WasixNapiInputsInfo(tree = output, target = ctx.attr.target_id, triple = ctx.attr.triple, sql_names = ctx.attr.sql_names, sdk_version = ctx.attr.sdk_version),
             ShippingSupplierInfo(suppliers = suppliers, files = depset(inputs))]
@@ -101,7 +112,7 @@ _inputs = rule(implementation = _inputs_impl, toolchains = BUN_SOURCE_TOOLCHAINS
     "contrib_frozen": attr.label(allow_single_file = True, cfg = WASIX_PAYLOAD_PROFILE),
     "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
     "_stager": attr.label(default = "//build_defs/wasix:napi-inputs.mts", allow_single_file = True),
-    "_helpers": attr.label_list(default = NAPI_HELPERS, allow_files = True),
+    "_helpers": attr.label_list(default = NAPI_HELPERS + RUNTIME_NPM_NOTICES.keys(), allow_files = True),
 })
 
 def wasix_napi_inputs(name, cargo_facts):
@@ -125,6 +136,17 @@ def wasix_napi_inputs(name, cargo_facts):
                 if original:
                     source = original["file"]["path"]
                     record = dict(original, package = package)
+                    if role == "coreAotArchive":
+                        prefix = "liboliphaunt-wasix/" + runtime_version + "/cargo:" + package + "-part-"
+                        family = [dict(original, package = package)] + [
+                            dict(value, package = key.split("/cargo:")[1])
+                            for key, value in sorted(NATIVE_CURRENT_ARTIFACTS.items())
+                            if key.startswith(prefix)
+                        ]
+                        source = name + "_" + target.replace("-", "_") + "_" + role
+                        native.filegroup(name = source, srcs = [row["file"]["path"] for row in family])
+                        source = ":" + source
+                        record["family"] = family
                 else:
                     source = ""
             elif not source:

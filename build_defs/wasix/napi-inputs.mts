@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { parseArgs } from 'node:util';
 import { assertCanonicalWasixAotManifest } from '../../src/wasix/runtime/tools/wasix-aot-manifest.mts';
 import {
   AOT_PACKAGES,
@@ -14,6 +15,8 @@ import {
 import { cargoSatisfies } from '../../tools/packaging/cargo-manifest.mts';
 import { readPortableArchiveEntries } from '../../tools/packaging/portable-archive.mts';
 import { copyNativeInputFile, safeRelative } from '../../tools/release/native-file-identity.mts';
+import { ROOT } from '../../tools/release/release-graph.mts';
+import { extractRuntimeCargoFamily } from './cargo.mts';
 
 export type WasixNapiInputsSpec = {
   target: string;
@@ -22,11 +25,12 @@ export type WasixNapiInputsSpec = {
   runtimeVersion: string;
   sdkVersion: string;
   sqlNames: string[];
-  portableArchive: string;
-  coreAotArchive: string;
+  portableArchive: string | string[];
+  coreAotArchive: string | string[];
   contribFrozen: string;
-  contribPortable: string;
-  contribAot: string;
+  contribPortable: string | string[];
+  contribAot: string | string[];
+  archiveFiles?: string[];
   output: string;
 };
 type FileIdentity = { path: string; sha256: string; size: number };
@@ -109,8 +113,24 @@ export function stageWasixNapiInputs(spec: WasixNapiInputsSpec) {
       'source SDK runtime requirement excludes the constructed core',
     );
   }
-  const crate = (archive: string, name: string) => {
-    const entries = readPortableArchiveEntries(realpathSync(archive), { format: 'tar.gz' });
+  const archiveFiles = (value: string | string[]) => {
+    const roots = typeof value === 'string' ? [value] : value;
+    assert(Array.isArray(roots) && roots.length, 'Cargo family has no declared inputs');
+    const declared = spec.archiveFiles;
+    const files = declared
+      ? roots.flatMap((root) => {
+          const leaves = declared.filter((file) => file === root || file.startsWith(`${root}/`));
+          assert(leaves.length, `Cargo family has no declared leaves: ${root}`);
+          return leaves;
+        })
+      : roots;
+    assert.equal(new Set(files).size, files.length, 'Cargo family repeats a declared archive');
+    return files;
+  };
+  const crate = (archive: string | string[], name: string) => {
+    const family = archiveFiles(archive);
+    assert.equal(family.length, 1, `${name} requires its one declared Cargo archive`);
+    const entries = readPortableArchiveEntries(realpathSync(family[0]), { format: 'tar.gz' });
     const root = `${name}-${spec.runtimeVersion}`;
     const member = (relative: string) => {
       safeRelative(relative);
@@ -191,16 +211,38 @@ export function stageWasixNapiInputs(spec: WasixNapiInputsSpec) {
       'AOT inventory differs',
     );
   };
-  const core = crate(spec.coreAotArchive, AOT_PACKAGES[spec.target]);
   const aotRoot = `aot/${spec.targetTriple}`;
-  const runtimeAotManifest = write(`${aotRoot}/manifest.json`, core('artifacts/manifest.json'));
-  aot(
-    runtimeAotManifest,
-    core,
-    new Map(CORE_AOT_ARTIFACTS.map((name) => [name, undefined])),
-    aotRoot,
-    'artifacts',
-  );
+  const scratch = mkdtempSync(path.join(path.dirname(spec.output), '.wasix-napi-core-'));
+  let runtimeAotManifest: FileIdentity;
+  try {
+    const directory = extractRuntimeCargoFamily(
+      archiveFiles(spec.coreAotArchive),
+      path.join(scratch, 'family'),
+      spec.target,
+      ROOT,
+    );
+    const manifest = Bun.TOML.parse(readFileSync(path.join(directory, 'Cargo.toml'), 'utf8'));
+    assert.equal(manifest.package.name, AOT_PACKAGES[spec.target]);
+    assert.equal(
+      manifest.package.version,
+      spec.runtimeVersion,
+      'constructed Cargo version differs',
+    );
+    const core = (relative: string) => {
+      safeRelative(relative);
+      return readFileSync(path.join(directory, relative));
+    };
+    runtimeAotManifest = write(`${aotRoot}/manifest.json`, core('artifacts/manifest.json'));
+    aot(
+      runtimeAotManifest,
+      core,
+      new Map(CORE_AOT_ARTIFACTS.map((name) => [name, undefined])),
+      aotRoot,
+      'artifacts',
+    );
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
   const productRoot = `extensions/${PRODUCT}`;
   const frozen = json(copy(spec.contribFrozen, `${productRoot}/extension-artifacts.json`));
   assert.equal(
@@ -284,6 +326,19 @@ export function stageWasixNapiInputs(spec: WasixNapiInputsSpec) {
 }
 
 if (import.meta.main) {
-  const [spec] = process.argv.slice(2);
-  stageWasixNapiInputs(JSON.parse(readFileSync(spec, 'utf8')));
+  const { positionals, values } = parseArgs({
+    options: { 'archive-files': { type: 'string' } },
+    allowPositionals: true,
+    strict: true,
+  });
+  assert.equal(
+    positionals.length,
+    1,
+    'usage: napi-inputs.mts <spec> --archive-files <declared-leaves>',
+  );
+  assert(values['archive-files'], 'WASIX addon requires declared Cargo family leaves');
+  stageWasixNapiInputs({
+    ...JSON.parse(readFileSync(positionals[0], 'utf8')),
+    archiveFiles: readFileSync(values['archive-files'], 'utf8').trimEnd().split(/\r?\n/u),
+  });
 }

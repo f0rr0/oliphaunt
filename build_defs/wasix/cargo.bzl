@@ -20,6 +20,8 @@ RUNTIME_CARGO_HELPERS = [
     "//src/extensions/tools:extension-upstream-licenses.mts",
     "//src/extensions/contracts:wasix-extension-install.mts",
     "//:tools/packaging/wasix-cargo-payload.mts",
+    "//:tools/packaging/wasix-runtime-cargo-family.mts",
+    "//:tools/packaging/native-cargo-payload.mts",
     "//:tools/packaging/cargo-source-package.mts",
     "//:tools/packaging/cargo-manifest.mts",
     "//:tools/packaging/rust-build-script-sha256.mts",
@@ -60,6 +62,8 @@ def _runtime_cargo_impl(ctx):
     if identity.id != "liboliphaunt-wasix":
         fail("WASIX runtime Cargo envelope requires its canonical release owner")
     inputs = payload + [ctx.file.toolchain]
+    if ctx.attr.target_id:
+        inputs.append(ctx.file.parts_reader)
     if ctx.attr.target_id == "windows-x64-msvc":
         inputs.append(ctx.file.engine_sources)
     spec = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
@@ -72,8 +76,9 @@ def _runtime_cargo_impl(ctx):
         "notices": _source_map(ctx.attr.notices, inputs),
         "toolchain": ctx.file.toolchain.path,
         "engineSources": ctx.file.engine_sources.path if ctx.attr.target_id == "windows-x64-msvc" else None,
+        "partsReader": ctx.file.parts_reader.path if ctx.attr.target_id else None,
     }))
-    output = ctx.actions.declare_file(ctx.attr.package_name + "-" + identity.version + ".crate")
+    output = ctx.actions.declare_directory(ctx.label.name + ".packages")
     args = ctx.actions.args()
     args.add_all(["--spec", spec, "--output", output])
     leaves = ctx.actions.args()
@@ -96,6 +101,7 @@ _runtime_cargo = rule(
         "notices": attr.label_keyed_string_dict(default = RUNTIME_NPM_NOTICES, allow_files = True),
         "toolchain": attr.label(default = "//src/wasix/runtime:toolchain.toml", allow_single_file = True),
         "engine_sources": attr.label(default = "//src/wasix/runtime/engine:sources.json", allow_single_file = True),
+        "parts_reader": attr.label(default = "//build_defs/wasix:cargo-parts.rs", allow_single_file = True),
         "_packager": attr.label(default = "//build_defs/wasix:cargo.mts", allow_single_file = True),
         "_helpers": attr.label_list(default = RUNTIME_CARGO_HELPERS, allow_files = True),
     },

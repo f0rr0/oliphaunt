@@ -109,8 +109,17 @@ def _payload_profile_impl(ctx):
     for target in ctx.attr.public_archives:
         for file in target[DefaultInfo].files.to_list():
             if file.basename in ctx.attr.archive_names:
+                asserts.false(env, file.is_directory, "Cargo archive must be its original regular File")
                 asserts.false(env, file.basename in expected, "ambiguous original Cargo archive")
                 expected[file.basename] = file.path
+    for target, parent in ctx.attr.public_archive_families.items():
+        files = target[DefaultInfo].files.to_list()
+        asserts.equals(env, 1, len(files))
+        for file in files:
+            asserts.true(env, file.is_directory, "core Cargo family requires its original TreeArtifact")
+            asserts.equals(env, target.label, file.owner)
+            asserts.false(env, parent in expected, "ambiguous original Cargo family")
+            expected[parent] = file.path
     asserts.equals(env, sorted(ctx.attr.archive_names), sorted(expected))
     actual = [file["path"] for supplier in producer[ShippingSupplierInfo].suppliers
               if supplier["product"] == "liboliphaunt-wasix" for file in supplier["files"]]
@@ -147,6 +156,7 @@ def _payload_profile_impl(ctx):
 
 _payload_profile_test = analysistest.make(_payload_profile_impl, attrs = {
     "public_archives": attr.label_list(allow_files = True),
+    "public_archive_families": attr.label_keyed_string_dict(),
     "archive_names": attr.string_list(),
     "public_napi": attr.label(default = "@cargo_crates//:napi", aspects = [_napi_features], providers = [rust_common.crate_info]),
     "unit_napi": attr.label(default = "@cargo_crates//:napi_noop", aspects = [_napi_features], providers = [rust_common.crate_info]),
@@ -164,7 +174,7 @@ def napi_artifact_tests():
     _rejected_test(name = "napi_artifact_kind_test", target_under_test = ":napi_rejected")
     wasix_napi_release(name = "napi_release_rejected", library = ":napi_rejected_library", inputs = ":napi_release_inputs", sdk = "//src/wasix/sdks/rust:shipping_supplier_fixture", server = "//src/wasix/pgwire-server:shipping_supplier_fixture", testonly = True, tags = ["manual"])
     _rejected_test(name = "wasix_napi_release_kind_test", target_under_test = ":napi_release_rejected")
-    archives, names, aot_payloads = {}, {}, {}
+    archives, families, names, aot_payloads = {}, {}, {}, {}
     version = PRODUCTS["liboliphaunt-wasix"]["version"]
     for row in WASIX_ARTIFACTS:
         if row["product"] != "oliphaunt-wasix-napi" or row["kind"] != "wasix-napi-addon":
@@ -172,17 +182,24 @@ def napi_artifact_tests():
         condition = "@rules_rust//rust/platform:" + row["triple"]
         packages = ["liboliphaunt-wasix-portable", "liboliphaunt-wasix-aot-" + row["triple"],
                     "oliphaunt-extension-contrib-pg18-wasix", "oliphaunt-extension-contrib-pg18-aot-" + row["target"].removesuffix("-gnu").removesuffix("-msvc")]
+        parts = [
+            original
+            for key, original in (NATIVE_CURRENT_ARTIFACTS or {}).items()
+            if key.startswith("liboliphaunt-wasix/" + version + "/cargo:" + packages[1] + "-part-")
+        ] if WASIX_NAPI_IMPORT_FINAL_INPUTS else []
         archives[condition] = [
             original["file"]["path"]
             for package in packages
             for original in [NATIVE_CURRENT_ARTIFACTS.get("liboliphaunt-wasix/" + version + "/cargo:" + package)]
             if original
-        ] if WASIX_NAPI_IMPORT_FINAL_INPUTS else [
-            "//src/wasix/runtime/crates/assets:crate", "//src/wasix/runtime/crates/aot/" + row["triple"] + ":crate", "//build_defs/extensions/wasix:contrib",
-        ]
-        names[condition] = [package + "-" + version + ".crate" for package in packages]
+        ] + [original["file"]["path"] for original in parts] if WASIX_NAPI_IMPORT_FINAL_INPUTS else ["//build_defs/extensions/wasix:contrib"]
+        families[condition] = {} if WASIX_NAPI_IMPORT_FINAL_INPUTS else {
+            "//src/wasix/runtime/crates/assets:crate": packages[0] + "-" + version + ".crate",
+            "//src/wasix/runtime/crates/aot/" + row["triple"] + ":crate": packages[1] + "-" + version + ".crate",
+        }
+        names[condition] = [package + "-" + version + ".crate" for package in packages] + [original["artifact"].removeprefix("cargo:") + "-" + version + ".crate" for original in parts]
         if not WASIX_NAPI_IMPORT_FINAL_INPUTS:
             aot_payloads[condition] = "//src/wasix/runtime:aot_" + row["target"].replace("-", "_") + "_payload"
     _payload_profile_test(name = "napi_payload_profile_test", target_under_test = "//src/wasix/node-addon:release_addon",
-                          public_archives = select(archives), archive_names = select(names),
+                          public_archives = select(archives), public_archive_families = select(families), archive_names = select(names),
                           public_aot_payload = select(aot_payloads) if not WASIX_NAPI_IMPORT_FINAL_INPUTS else None)

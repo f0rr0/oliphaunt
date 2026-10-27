@@ -1,16 +1,25 @@
 import { afterAll, expect, test } from 'bun:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDeterministicTar } from '../../../tools/packaging/archive-directory.mts';
 import { renderCargoToml } from '../../../tools/packaging/cargo-manifest.mts';
 import { stageCargoCarrierInputs } from '../../../tools/packaging/frozen-cargo.mts';
 import { canonicalGzipSync } from '../../../tools/packaging/portable-archive.mts';
-import { cargoCandidate } from './consumer.mts';
+import { cargoCandidate, cargoPayloadInputs, cargoPayloadPool } from './consumer.mts';
 import { writeRegistryIndex } from './context.mts';
 import {
   currentPathDependencies,
+  runtimePayloadPool,
   sourceCandidates,
   sourceCompile,
   sourceLock,
@@ -23,6 +32,7 @@ async function archive(
   version: string,
   dependencies: Record<string, string> = {},
   source = '',
+  buildDependencies: Record<string, { version: string }> = {},
 ) {
   const tree = path.join(
     directory,
@@ -32,7 +42,11 @@ async function archive(
   mkdirSync(path.join(tree, 'src'), { recursive: true });
   writeFileSync(
     path.join(tree, 'Cargo.toml'),
-    renderCargoToml({ package: { name, version, edition: '2021' }, dependencies }),
+    renderCargoToml({
+      package: { name, version, edition: '2021' },
+      dependencies,
+      'build-dependencies': buildDependencies,
+    }),
   );
   writeFileSync(path.join(tree, 'src/lib.rs'), source);
   const file = `${tree}.crate`;
@@ -79,6 +93,79 @@ const minimumCandidates = (
   captured: string,
   held: (typeof child)[] = [],
 ) => sourceCandidates(root, pool, captured, held, { minimum: true, includeDev: false });
+
+test('declared runtime Cargo family leaves preserve original parent and exact parts for source compilation', async () => {
+  const name = 'liboliphaunt-wasix-aot-x86_64-pc-windows-msvc';
+  const version = '0.2.0';
+  const part = await archive(`${name}-part-001`, version);
+  const parent = await archive(name, version, {}, '', { [part.name]: { version: `=${version}` } });
+  const family = path.join(directory, '_main', 'runtime family.packages');
+  mkdirSync(family, { recursive: true });
+  const originals = [parent, part].map((row) => {
+    const destination = path.join(family, `${row.name}-${row.version}.crate`);
+    copyFileSync(row.file, destination);
+    return path.relative(directory, destination).split(path.sep).join('/');
+  });
+  const familyRow = {
+    product: 'liboliphaunt-wasix',
+    version,
+    artifact: `cargo:${name}`,
+    configuration: 'windows-x64-msvc',
+    file: { path: path.relative(directory, family).split(path.sep).join('/') },
+  };
+  const empty = { completed: [], current: [], owners: {} };
+  const file = (name: string) => path.join(directory, name);
+  const declared = originals.map((name) => name.slice('_main/'.length));
+  const specification = runtimePayloadPool(
+    empty,
+    [familyRow],
+    declared.toReversed(),
+    file,
+    '_main',
+  );
+  expect(specification.current.map((row) => row.file.path)).toEqual(originals);
+  expect(Object.keys(specification.owners).sort()).toEqual([name, part.name].sort());
+  const sdk = await archive('fixture-runtime-sdk', '1.0.0', { [name]: `=${version}` });
+  const sourceOwners = { [sdk.name]: { product: 'sdk', version: sdk.version } };
+  const candidates = cargoPayloadInputs(
+    [sdk],
+    cargoPayloadPool(specification, sourceOwners, file, directory),
+    { currentSources: [sdk], sourceOwners, selectedProducts: ['sdk', 'liboliphaunt-wasix'] },
+  );
+  expect(candidates.map((row) => row.sha256)).toEqual([parent.sha256, part.sha256]);
+  const staged = path.join(directory, 'runtime-source-staging');
+  stageCargoCarrierInputs([sdk, ...candidates], staged);
+  expect(readdirSync(path.join(staged, 'crates')).sort()).toEqual(
+    [sdk, parent, part].map((row) => `${row.name}-${row.version}`).sort(),
+  );
+  for (const leaves of [
+    [declared[0]],
+    [...declared, declared[1]],
+    [...declared, `runtime family.packages/nested/${path.basename(originals[1])}`],
+  ])
+    expect(() => runtimePayloadPool(empty, [familyRow], leaves, file, '_main')).toThrow();
+  expect(() =>
+    runtimePayloadPool(empty, [{ ...familyRow, version: '0.2.1' }], declared, file, '_main'),
+  ).toThrow('Runtime Cargo family version differs');
+  expect(() =>
+    runtimePayloadPool(
+      { ...empty, owners: { [name]: { product: 'other', version } } },
+      [familyRow],
+      declared,
+      file,
+      '_main',
+    ),
+  ).toThrow('Runtime Cargo family owner differs');
+  expect(
+    runtimePayloadPool(
+      empty,
+      [familyRow],
+      originals.map((name) => `../${name}`),
+      file,
+      'other',
+    ),
+  ).toEqual(specification);
+});
 
 test('query-only own version retargets one local row and preserves registry resolution', () => {
   const original = lock([child]);

@@ -1,6 +1,6 @@
 import { test } from 'bun:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,10 +13,13 @@ import {
   CORE_RUNTIME_ARCHIVE_FILES,
   RUNTIME_PACKAGE,
 } from '../../src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
+import { readPortableArchiveEntries } from '../../tools/packaging/portable-archive.mts';
+import { renderToml } from '../languages/cargo-metadata.mts';
 import { packageRuntimeCargo, type RuntimeCargoSpec } from './cargo.mts';
 import {
   extractWasixCargoConstructionInputs,
   wasixHostSmokeCargoIdentities,
+  wasixRuntimeCargoParent,
   writeWasixCargoConstructionReceipt,
 } from './cargo-inputs.mts';
 
@@ -31,11 +34,11 @@ function copyFile(sourceRoot: string, relative: string, source: string) {
   writeFileSync(destination, readFileSync(source));
 }
 
-async function makeInput(targetId: string | null) {
+async function makeInput(targetId: string | null, { base = root, oversized = false } = {}) {
   const packageName = targetId === null ? RUNTIME_PACKAGE : AOT_PACKAGES[targetId];
   const triple = targetId === null ? null : AOT_TARGET_TRIPLES[targetId];
   const canonical = canonicalWasixAotMetadata(undefined, triple ?? undefined);
-  const payload = path.join(root, `payload-${targetId ?? 'portable'}`);
+  const payload = path.join(base, `payload-${targetId ?? 'portable'}`);
   mkdirSync(payload, { recursive: true });
   const moduleBytes = Buffer.from('\0asm\x01\0\0\0');
   const payloadManifest =
@@ -68,7 +71,10 @@ async function makeInput(targetId: string | null) {
     writeFileSync(path.join(payload, 'bin/initdb.wasix.wasm'), moduleBytes);
   } else {
     payloadManifest.artifacts = CORE_AOT_ARTIFACTS.map((name, index) => {
-      const raw = Buffer.from(`independent serialized-image fixture ${name}`);
+      const raw =
+        oversized && index === 0
+          ? randomBytes(12 * 1024 * 1024)
+          : Buffer.from(`independent serialized-image fixture ${name}`);
       const bytes = zstdCompressSync(raw);
       const file = `${index}.bin.zst`;
       writeFileSync(path.join(payload, file), bytes);
@@ -107,7 +113,7 @@ async function makeInput(targetId: string | null) {
     'src/third-party/icu/LICENSE': path.resolve('src/third-party/icu/LICENSE'),
     'src/third-party/icu/source.toml': path.resolve('src/third-party/icu/source.toml'),
   };
-  const sourceRoot = path.join(root, `source-${targetId ?? 'portable'}`);
+  const sourceRoot = path.join(base, `source-${targetId ?? 'portable'}`);
   for (const [relative, source] of Object.entries(notices)) copyFile(sourceRoot, relative, source);
   copyFile(
     sourceRoot,
@@ -139,17 +145,20 @@ async function makeInput(targetId: string | null) {
     notices,
     toolchain: path.resolve('src/wasix/runtime/toolchain.toml'),
     engineSources: path.resolve('src/wasix/runtime/engine/sources.json'),
+    partsReader: path.resolve('build_defs/wasix/cargo-parts.rs'),
   };
-  const file = path.join(root, `${packageName}-${version}.crate`);
-  packageRuntimeCargo(spec, file);
-  return { file, name: packageName, target: targetId ?? 'portable', sourceRoot };
+  const files = packageRuntimeCargo(spec, path.join(base, `packages-${packageName}`));
+  const file = files.find((file) => path.basename(file) === `${packageName}-${version}.crate`)!;
+  return { file, files, name: packageName, target: targetId ?? 'portable', sourceRoot };
 }
 
 test('imports genuine canonical crate envelopes and rejects receipt substitutions', async () => {
   try {
     const inputDirectory = path.join(root, 'inputs');
     mkdirSync(inputDirectory);
-    const packed = await Promise.all([null, ...Object.keys(AOT_PACKAGES)].map(makeInput));
+    const packed = await Promise.all(
+      [null, ...Object.keys(AOT_PACKAGES)].map((target) => makeInput(target)),
+    );
     const inputs = packed.map((row) => {
       const file = path.join(inputDirectory, path.basename(row.file));
       writeFileSync(file, readFileSync(row.file));
@@ -406,3 +415,186 @@ test('imports genuine canonical crate envelopes and rejects receipt substitution
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('imports emitted multipart AOT as real members with an exact private lock projection', async () => {
+  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'wasix-split-construction-'));
+  try {
+    const target = 'windows-x64-msvc';
+    const parentName = AOT_PACKAGES[target];
+    const packed = await Promise.all(
+      [null, ...Object.keys(AOT_PACKAGES)].map((targetId) =>
+        makeInput(targetId, { base: fixtureRoot, oversized: targetId === target }),
+      ),
+    );
+    const inputDirectory = path.join(fixtureRoot, 'inputs');
+    mkdirSync(inputDirectory);
+    const inputs = packed.flatMap((row) =>
+      row.files.map((archive) => {
+        const file = path.join(inputDirectory, path.basename(archive));
+        writeFileSync(file, readFileSync(archive));
+        return {
+          file,
+          name: path.basename(file).slice(0, -`-${version}.crate`.length),
+          target: row.target,
+        };
+      }),
+    );
+    const parts = inputs.filter(
+      (row) => row.name !== parentName && wasixRuntimeCargoParent(row.name) === parentName,
+    );
+    assert(parts.length >= 2, 'Oversized emitted AOT must use multiple real data parts');
+    const receiptOptions = {
+      sourceCommit: '1'.repeat(40),
+      sourceTree: '2'.repeat(40),
+      releaseManifest: path.resolve('src/wasix/runtime/release.toml'),
+      toolchainManifest: path.resolve('src/wasix/runtime/toolchain.toml'),
+      cargoLock: path.resolve('Cargo.lock'),
+      versionManifest,
+    };
+    const receiptFor = (rows = inputs) => writeWasixCargoConstructionReceipt(rows, receiptOptions);
+    const receipt = receiptFor();
+    assert.equal(receipt.cargoLockSha256, sha(readFileSync(receiptOptions.cargoLock)));
+    for (const part of parts) {
+      const row = receipt.crates.find((row) => row.name === part.name)!;
+      assert.equal(row.role, 'payload-part');
+      assert.equal(row.target, target);
+      assert.equal(row.kind, 'wasix-aot');
+      assert.equal(row.version, version);
+    }
+    const output = path.join(fixtureRoot, 'repository');
+    const importReceipt = (value: unknown, destination: string) =>
+      extractWasixCargoConstructionInputs(value, inputDirectory, '1'.repeat(40), destination, {
+        ...receiptOptions,
+        rustDefs: '@@main//build_defs/languages:rust.bzl',
+        cratesDefs: '@@cargo_crates//:defs.bzl',
+        sourceRoot: packed[0].sourceRoot,
+      });
+    const imported = importReceipt(receipt, output);
+    assert.equal(imported.packages.length, inputs.length);
+    const parentPath = `src/wasix/runtime/crates/aot/${AOT_TARGET_TRIPLES[target]}`;
+    const parentDirectory = path.join(output, parentPath);
+    const manifest = Bun.TOML.parse(readFileSync(path.join(parentDirectory, 'Cargo.toml'), 'utf8'));
+    assert.equal(manifest.package.version, version);
+    assert.match(
+      readFileSync(path.join(parentDirectory, 'build.rs'), 'utf8'),
+      /const PART_ROOTS: &\[&str\]/u,
+    );
+    assert.match(
+      readFileSync(path.join(parentDirectory, 'build-support.rs'), 'utf8'),
+      /reconstruct_payload\(PART_ROOTS\)/u,
+    );
+    assert.equal(
+      readFileSync(path.join(parentDirectory, 'cargo-parts.rs'), 'utf8'),
+      readFileSync('build_defs/wasix/cargo-parts.rs', 'utf8'),
+    );
+    assert(
+      !existsSync(path.join(parentDirectory, 'artifacts')),
+      'Import must retain part readers without duplicating reconstructed payloads',
+    );
+    const parentBuild = readFileSync(path.join(parentDirectory, 'BUILD.bazel'), 'utf8');
+    assert(parentBuild.includes('"cargo-parts.rs"'));
+    assert(parentBuild.includes(`"OLIPHAUNT_BAZEL_EXEC_ROOT": "$\${pwd}"`));
+    const originalLock = Bun.TOML.parse(readFileSync(receiptOptions.cargoLock, 'utf8'));
+    const derivedLock = Bun.TOML.parse(readFileSync(path.join(output, 'Cargo.lock'), 'utf8'));
+    assert.deepEqual(
+      derivedLock.package.filter((row) => row.source),
+      originalLock.package.filter((row) => row.source),
+    );
+    const oldParent = originalLock.package.find((row) => row.name === parentName && !row.source);
+    const newParent = derivedLock.package.find((row) => row.name === parentName && !row.source);
+    assert.deepEqual(newParent, {
+      ...oldParent,
+      dependencies: [...oldParent.dependencies, ...parts.map((row) => row.name).sort()],
+    });
+    assert.deepEqual(
+      derivedLock.package.filter(
+        (row) => row.name !== parentName && !parts.some((part) => part.name === row.name),
+      ),
+      originalLock.package.filter((row) => row.name !== parentName),
+    );
+    const facts = JSON.parse(readFileSync(path.join(output, 'cargo-facts.json'), 'utf8'));
+    for (const part of parts) {
+      const memberPath = `${parentPath}/parts/${part.name}`;
+      assert.deepEqual(manifest['build-dependencies'][part.name], {
+        version: `=${version}`,
+        path: `parts/${part.name}`,
+      });
+      assert.deepEqual(
+        derivedLock.package.find((row) => row.name === part.name),
+        { name: part.name, version },
+      );
+      assert.equal(facts[memberPath].version, version);
+      assert.equal(facts[memberPath].build, 'build.rs');
+      assert(parentBuild.includes(`"${part.name}": "//${memberPath}:lib"`));
+      assert(parentBuild.includes(`//${memberPath}:packed_payload`));
+      const partBuild = readFileSync(path.join(output, memberPath, 'BUILD.bazel'), 'utf8');
+      assert(partBuild.includes('cargo_generator(data = [":packed_payload"]'));
+      assert(partBuild.includes('cargo_library(build_script = ":build_script"'));
+      assert(partBuild.includes('rustc_env = {"CARGO_MANIFEST_DIR": packed_cargo_manifest_dir()}'));
+      assert(existsSync(path.join(output, memberPath, 'payload')));
+    }
+    assert(!existsSync(path.join(output, '.staged')));
+    assert.throws(
+      () => receiptFor(inputs.filter((row) => row.name !== parts[0].name)),
+      /complete|exactly|contiguous/u,
+    );
+    const badHash = structuredClone(receipt);
+    badHash.crates.find((row) => row.name === parts[0].name)!.sha256 = '0'.repeat(64);
+    assert.throws(
+      () => importReceipt(badHash, path.join(fixtureRoot, 'bad-hash')),
+      /hash differs/u,
+    );
+
+    // Authenticate exact manifests before deriving any local dependency/lock rows.
+    for (const [name, select, change, error] of [
+      [
+        'part-dependency',
+        parts[0].name,
+        (value) => {
+          value.dependencies = { unexpected: { version: '=1.0.0' } };
+        },
+        /only data/u,
+      ],
+      [
+        'qualification-only',
+        parts[0].name,
+        (value) => {
+          value.package.metadata = { oliphaunt: { qualificationOnly: true } };
+        },
+        /qualification-only/u,
+      ],
+      [
+        'loose-parent-pin',
+        parentName,
+        (value) => {
+          value['build-dependencies'][parts[0].name].version = version;
+        },
+        /exact part version/u,
+      ],
+    ] as const) {
+      const original = inputs.find((row) => row.name === select)!;
+      const entries = readPortableArchiveEntries(original.file);
+      const changed = new Bun.Archive(
+        Object.fromEntries(
+          [...entries.values()]
+            .filter((entry) => entry.isFile)
+            .map((entry) => {
+              if (!entry.name.endsWith('/Cargo.toml')) return [entry.name, entry.data()];
+              const value = Bun.TOML.parse(entry.data().toString());
+              change(value);
+              return [entry.name, renderToml(value)];
+            }),
+        ),
+      );
+      const file = path.join(fixtureRoot, name, path.basename(original.file));
+      mkdirSync(path.dirname(file));
+      writeFileSync(file, gzipSync(Buffer.from(await changed.bytes())));
+      assert.throws(
+        () => receiptFor(inputs.map((row) => (row.name === select ? { ...row, file } : row))),
+        error,
+      );
+    }
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+}, 30_000);

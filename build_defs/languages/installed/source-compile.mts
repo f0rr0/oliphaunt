@@ -21,9 +21,15 @@ import {
   assertCargoSourceArtifacts,
   stageCargoCarrierInputs,
 } from '../../../tools/packaging/frozen-cargo.mts';
+import { readRuntimeCargoFamily } from '../../../tools/packaging/wasix-runtime-cargo-family.mts';
 import { type CargoLinkConfiguration, cargoLinkEnvironment } from '../cargo-environment.mts';
 import { cargoSatisfies } from '../cargo-metadata.mts';
-import { cargoCandidate, cargoPayloadInputs, cargoPayloadPool } from './consumer.mts';
+import {
+  type CargoPayloadRow,
+  cargoCandidate,
+  cargoPayloadInputs,
+  cargoPayloadPool,
+} from './consumer.mts';
 import { type RegistryContext, validateRegistryContext, writeRegistryIndex } from './context.mts';
 
 type Candidate = ReturnType<typeof cargoCandidate>;
@@ -243,6 +249,46 @@ export function sourceLock(lockText: string, candidates: Candidate[]) {
 }
 
 const digest = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
+
+/** Expand only Bazel-declared family leaves into original parent and part archive inputs. */
+export function runtimePayloadPool(
+  pool: Parameters<typeof cargoPayloadPool>[0],
+  families: (CargoPayloadRow & { configuration: string })[],
+  declaredLeaves: readonly string[],
+  file: (name: string) => string,
+  workspace: string,
+) {
+  const leaves = declaredLeaves.map((name) =>
+    name.startsWith('../') ? name.slice(3) : `${workspace}/${name}`,
+  );
+  const rows: CargoPayloadRow[] = [];
+  const owners = { ...pool.owners };
+  const consumed = new Set<string>();
+  assert.equal(new Set(leaves).size, leaves.length, 'Runtime Cargo family repeats a declared leaf');
+  for (const family of families) {
+    const members = leaves.filter((leaf) => path.posix.dirname(leaf) === family.file.path);
+    const originals = new Map(members.map((leaf) => [file(leaf), leaf]));
+    const { parent, parts } = readRuntimeCargoFamily(
+      [...originals.keys()],
+      family.configuration === 'portable' ? null : family.configuration,
+    );
+    assert.equal(family.artifact, `cargo:${parent.name}`, 'Runtime Cargo family parent differs');
+    assert.equal(family.version, parent.version, 'Runtime Cargo family version differs');
+    for (const archive of [parent, ...parts]) {
+      const original = originals.get(archive.file);
+      assert(original && !consumed.has(original), 'Runtime Cargo family repeats an original File');
+      consumed.add(original);
+      const owner = { product: family.product, version: family.version };
+      if (owners[archive.name])
+        assert.deepEqual(owners[archive.name], owner, 'Runtime Cargo family owner differs');
+      owners[archive.name] = owner;
+      rows.push({ ...family, artifact: `cargo:${archive.name}`, file: { path: original } });
+    }
+  }
+  assert.equal(consumed.size, leaves.length, 'Runtime Cargo family has an undeclared archive path');
+  return { ...pool, current: [...pool.current, ...rows], owners };
+}
+
 export async function sourceCompile(
   specification: string,
   runfiles: string,
@@ -295,8 +341,18 @@ export async function sourceCompile(
           .map((row: any) => row.name),
       ),
     );
-    const payloadPool = cargoPayloadPool(
+    const familyLeaves: string[] = spec.payloadFamilyFiles
+      ? readFileSync(file(spec.payloadFamilyFiles), 'utf8').split('\n').filter(Boolean)
+      : [];
+    const payloadSpecification = runtimePayloadPool(
       spec.payloadPool ?? { completed: [], current: [], owners: {} },
+      spec.payloadFamilies ?? [],
+      familyLeaves,
+      file,
+      spec.workspace,
+    );
+    const payloadPool = cargoPayloadPool(
+      payloadSpecification,
       spec.sourceOwners ?? {},
       file,
       archiveDirectory,

@@ -44,6 +44,12 @@ source_compile_selection_test(
     entry_point = "source-compile.test.mts",
     data = [
         "source-compile.mts", "consumer.mts", "context.mts",
+        "//:tools/packaging/wasix-runtime-cargo-family.mts",
+        "//src/wasix/runtime:tools/wasix-cargo-artifact-contract.mts",
+        "//tools/release:release-graph.mts",
+        "//tools/release:release-history.mts",
+        "//tools/release:compatibility-version-parser.mts",
+        "//:src/extensions/artifacts/packages/tools/contrib-carriers.mts",
         "//build_defs/languages:cargo-environment.mts",
         "//build_defs/languages:cargo-metadata.mts",
         "//:tools/packaging/cargo-manifest.mts", "//:tools/packaging/frozen-cargo.mts",

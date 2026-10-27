@@ -15,11 +15,15 @@ _RUST = "@rules_rust//rust:toolchain_type"
 def _runfile(ctx, file):
     return file.short_path[3:] if file.short_path.startswith("../") else ctx.workspace_name + "/" + file.short_path
 
+def _payload_leaf(file):
+    return file.short_path
+
 def _runtime_payload_inputs(ctx):
     if not ctx.attr.payload_export:
-        return struct(rows = [], files = [])
+        return struct(rows = [], families = [], files = [])
     canonical = {row["name"]: row for row in PUBLICATION_CARRIERS if row["product"] == "liboliphaunt-wasix" and row["ecosystem"] == "cargo"}
     rows = []
+    families = []
     files = []
     seen = {}
     for target in ctx.attr.payload_export[ShippingExportInfo].packages:
@@ -32,14 +36,20 @@ def _runtime_payload_inputs(ctx):
             fail("current WASIX payload differs from its canonical configured carrier: " + info.name)
         actual = info.files.to_list()
         defaults = target[DefaultInfo].files.to_list()
-        if len(actual) != 1 or actual != defaults or actual[0].is_directory or actual[0].basename != info.name + "-" + info.version + ".crate":
-            fail("current WASIX payload needs its one original ShippingInfo/DefaultInfo crate File")
+        if len(actual) != 1 or actual != defaults:
+            fail("current WASIX payload needs its one original ShippingInfo/DefaultInfo Cargo family")
+        if not actual[0].is_directory and actual[0].basename != info.name + "-" + info.version + ".crate":
+            fail("current WASIX payload crate differs from its canonical carrier")
         seen[info.name] = True
-        rows.append({"product": info.product, "version": info.version, "artifact": "cargo:" + info.name, "configuration": info.configuration, "file": {"path": _runfile(ctx, actual[0])}})
+        row = {"product": info.product, "version": info.version, "artifact": "cargo:" + info.name, "configuration": info.configuration, "file": {"path": _runfile(ctx, actual[0])}}
+        if actual[0].is_directory:
+            families.append(row)
+        else:
+            rows.append(row)
         files.append(actual[0])
     if sorted(seen.keys()) != sorted(canonical.keys()):
         fail("current WASIX payload export differs from the complete canonical Cargo carrier set")
-    return struct(rows = rows, files = files)
+    return struct(rows = rows, families = families, files = files)
 
 def _source_compile_tools(ctx):
     rust = ctx.toolchains[_RUST]
@@ -63,6 +73,14 @@ def _source_compile_impl(ctx):
     payloads = cargo_payload_inputs(ctx, source_owners)
     runtime_payloads = _runtime_payload_inputs(ctx)
     payload_pool = dict(payloads.specification, current = payloads.specification["current"] + runtime_payloads.rows)
+    family_files = []
+    if runtime_payloads.families:
+        manifest = ctx.actions.declare_file(ctx.label.name + ".payload-files")
+        leaves = ctx.actions.args()
+        leaves.add_all([file for file in runtime_payloads.files if file.is_directory], expand_directories = True, map_each = _payload_leaf)
+        leaves.set_param_file_format("multiline")
+        ctx.actions.write(manifest, leaves)
+        family_files.append(manifest)
     sources = {}
     source_files = []
     for target in [ctx.attr.archive] + ctx.attr.dependencies:
@@ -88,12 +106,15 @@ def _source_compile_impl(ctx):
         "selectedProducts": PREPARED_NATIVE_SELECTED_PRODUCTS,
         "sourceOwners": source_owners,
         "payloadPool": payload_pool,
+        "payloadFamilies": runtime_payloads.families,
+        "payloadFamilyFiles": _runfile(ctx, family_files[0]) if family_files else None,
+        "workspace": ctx.workspace_name,
         "cargoHome": {_runfile(ctx, file): file.short_path.split("/registry/")[-1] for file in ctx.files.cargo_home},
         "lock": _runfile(ctx, ctx.file.lock),
         "index": _runfile(ctx, ctx.file.index),
         "flags": ctx.attr.cargo_args,
     }, **tools.specification)))
-    files = [specification, ctx.file.lock, ctx.file.index, ctx.file._runner] + archives + source_files + held_files + payloads.files + runtime_payloads.files + ctx.files.cargo_home + ctx.files._helpers + tools.files
+    files = [specification, ctx.file.lock, ctx.file.index, ctx.file._runner] + family_files + archives + source_files + held_files + payloads.files + runtime_payloads.files + ctx.files.cargo_home + ctx.files._helpers + tools.files
     return bun_test_entrypoint(ctx, runner = ctx.file._runner, arguments = [specification], files = files,
                                source_files = [ctx.file._runner] + ctx.files._helpers, runfiles_argument = True)
 
@@ -122,6 +143,12 @@ _source_compile_test = rule(
             "//build_defs/languages:cargo-environment.mts",
             "//build_defs/languages:cargo-metadata.mts",
             "//:tools/packaging/frozen-cargo.mts",
+            "//:tools/packaging/wasix-runtime-cargo-family.mts",
+            "//src/wasix/runtime:tools/wasix-cargo-artifact-contract.mts",
+            "//tools/release:release-graph.mts",
+            "//tools/release:release-history.mts",
+            "//tools/release:compatibility-version-parser.mts",
+            "//:src/extensions/artifacts/packages/tools/contrib-carriers.mts",
             "//:tools/packaging/cargo-manifest.mts",
             "//:tools/packaging/portable-archive.mts",
         ], allow_files = True),
@@ -131,9 +158,10 @@ _source_compile_test = rule(
 def _source_compile_selection_impl(ctx):
     tools = _source_compile_tools(ctx)
     specification = ctx.actions.declare_file(ctx.label.name + ".tools.json")
-    ctx.actions.write(specification, json.encode(tools.specification))
+    ctx.actions.write(specification, json.encode(dict(tools.specification,
+        cargoHome = {_runfile(ctx, file): file.short_path.split("/registry/")[-1] for file in ctx.files.cargo_home})))
     return bun_test_entrypoint(ctx, runner = ctx.file.entry_point, arguments = [],
-                               files = ctx.files.data + tools.files + [specification], source_files = [ctx.file.entry_point] + ctx.files.data,
+                               files = ctx.files.data + ctx.files.cargo_home + tools.files + [specification], source_files = [ctx.file.entry_point] + ctx.files.data,
                                environment = {"OLIPHAUNT_SOURCE_COMPILE_TEST_TOOLS": _runfile(ctx, specification)}, test_runner = True)
 
 _source_compile_selection_test = rule(
@@ -144,6 +172,7 @@ _source_compile_selection_test = rule(
     attrs = dict(BUN_TEST_ENTRYPOINT_ATTRS, **{
         "entry_point": attr.label(mandatory = True, allow_single_file = True),
         "data": attr.label_list(allow_files = True),
+        "cargo_home": attr.label(),
     }),
 )
 

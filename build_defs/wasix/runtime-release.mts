@@ -1,7 +1,16 @@
 /** Canonical final core-runtime carriers from declared current payloads. */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -24,7 +33,6 @@ import {
 } from '../../src/wasix/runtime/tools/wasix-runtime-npm-payload.mts';
 import { createDeterministicTar } from '../../tools/packaging/archive-directory.mts';
 import {
-  extractPortableArchiveTree,
   readPortableArchiveEntries,
   releaseZstdCompressSync,
 } from '../../tools/packaging/portable-archive.mts';
@@ -34,8 +42,8 @@ import { writeNativeChecksums } from '../native/carriers/checksums.mts';
 import {
   copyDeclaredSources,
   copyDeclaredToolchain,
+  extractRuntimeCargoFamily,
   stageDeclaredPayload,
-  validatePackedRuntimeCargo,
 } from './cargo.mts';
 import { type RuntimePayloadSpec, sourceFacts } from './package.mts';
 
@@ -145,11 +153,30 @@ export function verifyRuntimeFinalPackages(spec: RuntimeFinalPackageSpec): void 
     expected,
     'Final runtime carrier inventory differs from its canonical owner',
   );
+  const families = new Map<string, string[]>();
   const byIdentity = new Map(
     spec.packages.map((row) => {
       assert.equal(row.version, spec.version);
       assert.equal(row.files.length, 1, 'Each final runtime carrier must own exactly one archive');
-      return [`${row.ecosystem}:${row.name}`, realpathSync(row.files[0])] as const;
+      const input = realpathSync(row.files[0]);
+      if (row.ecosystem === 'cargo') {
+        const archives = statSync(input).isDirectory()
+          ? readdirSync(input).map((name) => {
+              assert(name.endsWith('.crate'), 'Cargo family contains a non-crate file');
+              const file = path.join(input, name);
+              assert(statSync(file).isFile(), 'Cargo family member is not a regular archive');
+              return file;
+            })
+          : [input];
+        families.set(row.name, archives);
+        const parents = archives.filter(
+          (file) => path.basename(file) === `${row.name}-${row.version}.crate`,
+        );
+        assert.equal(parents.length, 1, 'Cargo family must contain its canonical parent');
+        return [`cargo:${row.name}`, parents[0]] as const;
+      }
+      assert(statSync(input).isFile(), 'Final runtime archive must be a regular file');
+      return [`${row.ecosystem}:${row.name}`, input] as const;
     }),
   );
   const scratch = mkdtempSync(
@@ -239,9 +266,14 @@ export function verifyRuntimeFinalPackages(spec: RuntimeFinalPackageSpec): void 
         const manifest = Bun.TOML.parse(cargoManifest.data().toString('utf8'));
         assert.equal(manifest.package.name, carrier.name);
         assert.equal(manifest.package.version, spec.version);
-        const extracted = path.join(scratch, carrier.name);
-        extractPortableArchiveTree(file, extracted, archiveRoot);
-        validatePackedRuntimeCargo(extracted, { packageName: carrier.name, target }, ROOT);
+        const family = families.get(carrier.name);
+        assert(family, `Missing declared Cargo family: ${carrier.name}`);
+        const extracted = extractRuntimeCargoFamily(
+          family,
+          path.join(scratch, carrier.name),
+          target,
+          ROOT,
+        );
         const payload = path.join(extracted, target === null ? 'payload' : 'artifacts');
         assert.deepEqual(
           json(path.join(payload, 'manifest.json')),

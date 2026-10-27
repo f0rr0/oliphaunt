@@ -3,6 +3,7 @@ import {
   copyFileSync,
   lstatSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -15,15 +16,22 @@ import {
 } from '../../src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import { requireSafeDirectoryChain } from '../../tools/packaging/release-directory-safety.mts';
 import { buildShippingInputView } from '../../tools/release/bazel-shipping-inputs.mts';
-import type { NativeRoot } from '../../tools/release/native-publication-artifacts.mts';
+import {
+  type NativeRoot,
+  nativeOutputPath,
+} from '../../tools/release/native-publication-artifacts.mts';
 import type { NativeCandidateCohort } from '../../tools/release/native-publication-candidate.mts';
 import { captureNativePublicationOutputs } from '../../tools/release/native-publication-staging.mts';
-import { loadPublicationCatalog } from '../../tools/release/publication-catalog.mts';
+import {
+  loadPublicationCatalog,
+  resolveActualCarrier,
+} from '../../tools/release/publication-catalog.mts';
 import { sourceIdentity } from '../../tools/release/publication-lock.mts';
 import { ROOT } from '../../tools/release/release-graph.mts';
 import {
   type CargoInput,
   wasixHostSmokeCargoIdentities,
+  wasixRuntimeCargoParent,
   writeWasixCargoConstructionReceipt,
 } from './cargo-inputs.mts';
 
@@ -44,6 +52,18 @@ function targetDirectory(relative: string) {
   )
     throw new Error('WASIX Cargo capture destination must be a safe path under target/');
   return path.join(ROOT, relative);
+}
+
+function cargoFiles(file: string): string[] {
+  const stat = lstatSync(file);
+  if (stat.isSymbolicLink()) throw new Error('WASIX Cargo output cannot contain symbolic links');
+  if (stat.isDirectory())
+    return readdirSync(file)
+      .sort()
+      .flatMap((name) => cargoFiles(path.join(file, name)));
+  if (!stat.isFile() || !file.endsWith('.crate'))
+    throw new Error(`WASIX Cargo output must contain only regular .crate files: ${file}`);
+  return [file];
 }
 
 /**
@@ -82,6 +102,19 @@ export function captureWasixCargoConstructionInputs({
     throw new Error(
       'WASIX Cargo capture must match the core and contrib/tools publication carriers',
     );
+  const identify = (file: string) => {
+    for (const parent of carriers.values()) {
+      const suffix = `-${parent.version}.crate`;
+      if (!path.basename(file).endsWith(suffix)) continue;
+      const name = path.basename(file).slice(0, -suffix.length);
+      if (name !== parent.name && !name.startsWith(`${parent.name}-part-`)) continue;
+      if (name !== parent.name && wasixRuntimeCargoParent(name) !== parent.name) continue;
+      const actual = resolveActualCarrier(catalog, 'cargo', name, 'WASIX Cargo capture');
+      if (actual.id !== parent.id && actual.parentCarrier !== parent.id) continue;
+      return { file, name, target: targets.get(parent.name)!, parent: parent.name };
+    }
+    throw new Error(`unexpected WASIX Cargo file: ${file}`);
+  };
   if (!Array.isArray(cohorts) || !cohorts.length)
     throw new Error('WASIX Cargo capture requires actual configured physical cohorts');
   const seen = new Set<string>();
@@ -101,10 +134,17 @@ export function captureWasixCargoConstructionInputs({
         pkg.version !== carrier.version ||
         pkg.role !== carrier.role ||
         pkg.configuration !== targets.get(pkg.name) ||
-        pkg.outputs?.length !== 1 ||
-        path.posix.basename(pkg.outputs[0].path) !== `${pkg.name}-${pkg.version}.crate`
+        pkg.outputs?.length !== 1
       )
         throw new Error(`WASIX Cargo root differs from its canonical final carrier: ${root.label}`);
+      const files = cargoFiles(nativeOutputPath(cohort.executionRoot, pkg.outputs[0].path)).map(
+        identify,
+      );
+      if (
+        !files.some((file) => file.name === pkg.name) ||
+        files.some((file) => file.parent !== pkg.name)
+      )
+        throw new Error(`WASIX Cargo root contains an unrelated or missing parent: ${root.label}`);
       seen.add(pkg.name);
     }
     buildShippingInputView(
@@ -120,18 +160,10 @@ export function captureWasixCargoConstructionInputs({
     throw new Error('WASIX Cargo capture is missing a canonical final carrier');
 
   const staged = captureNativePublicationOutputs(cohorts, { sourceCommit: source.commit }).stage();
-  const inputs: CargoInput[] = staged.map((file) => {
-    if (!lstatSync(file).isFile())
-      throw new Error('WASIX Cargo capture requires final regular Files');
-    const name = [...carriers.keys()].find(
-      (candidate) =>
-        path.basename(file) === `${candidate}-${carriers.get(candidate)?.version}.crate`,
-    );
-    if (!name) throw new Error(`unexpected staged WASIX Cargo file: ${file}`);
-    const target = targets.get(name);
-    if (!target) throw new Error(`staged WASIX Cargo file has no canonical target: ${file}`);
-    return { file, name, target };
-  });
+  const inputs: CargoInput[] = staged
+    .flatMap(cargoFiles)
+    .map(identify)
+    .map(({ file, name, target }) => ({ file, name, target }));
   const receiptOptions = {
     sourceCommit: source.commit,
     sourceTree: source.tree,
@@ -143,10 +175,10 @@ export function captureWasixCargoConstructionInputs({
   };
   const receiptFor = (values: CargoInput[]) =>
     writeWasixCargoConstructionReceipt(
-      values.filter((row) => TARGETS.has(row.name)),
+      values.filter((row) => wasixRuntimeCargoParent(row.name) !== undefined),
       {
         ...receiptOptions,
-        hostSmokeInputs: values.filter((row) => !TARGETS.has(row.name)),
+        hostSmokeInputs: values.filter((row) => wasixRuntimeCargoParent(row.name) === undefined),
       },
     );
   const captured = receiptFor(inputs);

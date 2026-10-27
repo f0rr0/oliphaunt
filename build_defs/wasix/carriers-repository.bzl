@@ -41,8 +41,16 @@ def _wasix_runtime_carriers_repository_impl(ctx):
         "liboliphaunt-wasix-portable",
     ]
     rows = receipt_data.get("crates", [])
-    if len(rows) != 5 or sorted([row.get("name", "") for row in rows]) != expected_names:
-        fail(_INPUTS_ENV + " receipt must identify exactly the five canonical Cargo crates")
+    names = [row.get("name", "") for row in rows]
+    if sorted([name for name in names if name in expected_names]) != expected_names or len({name: True for name in names}) != len(names):
+        fail(_INPUTS_ENV + " receipt must identify each of the five canonical Cargo parents once")
+    for name in names:
+        if name in expected_names:
+            continue
+        parents = [parent for parent in expected_names if parent != "liboliphaunt-wasix-portable" and name.startswith(parent + "-part-")]
+        suffix = name[len(parents[0]) + len("-part-"):] if len(parents) == 1 else ""
+        if len(suffix) != 3 or suffix == "000" or not all([character in "0123456789" for character in suffix.elems()]):
+            fail(_INPUTS_ENV + " receipt contains a noncanonical core AOT payload part")
     for row in rows + receipt_data.get("hostSmokeCrates", []):
         filename = row.get("path", "")
         name = row.get("name", "")

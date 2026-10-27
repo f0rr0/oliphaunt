@@ -1,9 +1,10 @@
-import { afterEach, expect, test } from 'bun:test';
-import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { afterAll, afterEach, expect, test } from 'bun:test';
+import assert from 'node:assert/strict';
+import { createHash, randomBytes } from 'node:crypto';
+import { copyFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { zstdCompressSync } from 'node:zlib';
+import { gzipSync, zstdCompressSync } from 'node:zlib';
 import { canonicalWasixAotMetadata } from '../../src/wasix/runtime/tools/wasix-aot-manifest.mts';
 import {
   AOT_PACKAGES,
@@ -13,9 +14,12 @@ import {
   RUNTIME_PACKAGE,
 } from '../../src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import { extractPortableArchiveTree } from '../../tools/packaging/portable-archive.mts';
+import { cargoLinkEnvironment } from '../languages/cargo-environment.mts';
 import {
+  extractRuntimeCargoFamily,
   packageRuntimeCargo,
   type RuntimeCargoSpec,
+  readRuntimeCargoFamily,
   validatePackedRuntimeCargo,
 } from './cargo.mts';
 
@@ -63,10 +67,10 @@ async function fixture(target: string | null = null) {
       'target-triple': AOT_TARGET_TRIPLES[target],
       'source-fingerprint': 'independent fixture',
       artifacts: await Promise.all(
-        CORE_AOT_ARTIFACTS.map(async (name, index) => {
+        CORE_AOT_ARTIFACTS.map(async (name) => {
           const raw = Buffer.from(`independent serialized-image framing fixture ${name}`);
           const bytes = zstdCompressSync(raw);
-          const file = `${index}.bin.zst`;
+          const file = `${name.split(':').at(-1)}-llvm-opta.bin.zst`;
           await writeFile(path.join(payload, file), bytes);
           return {
             name,
@@ -131,10 +135,8 @@ async function fixture(target: string | null = null) {
 
 async function verifyCanonicalEnvelope(target: string | null) {
   const { root, spec, sourceRoot } = await fixture(target);
-  const first = path.join(root, 'first.crate');
-  const second = path.join(root, 'second.crate');
-  packageRuntimeCargo(spec, first);
-  packageRuntimeCargo(spec, second);
+  const [first] = packageRuntimeCargo(spec, path.join(root, 'first'));
+  const [second] = packageRuntimeCargo(spec, path.join(root, 'second'));
   expect(await readFile(first)).toEqual(await readFile(second));
   const files = await new Bun.Archive(await readFile(first)).files();
   const read = async (name: string) => {
@@ -167,6 +169,233 @@ for (const target of [null, ...Object.keys(AOT_TARGET_TRIPLES)]) {
   test(`canonical ${target ?? 'portable'} Cargo envelope preserves sources and payload bytes`, () => {
     return verifyCanonicalEnvelope(target);
   });
+}
+
+let cargoScratch: string | undefined;
+let cargoContext: ReturnType<typeof prepareCargo> | undefined;
+afterAll(async () => {
+  if (cargoScratch) await rm(cargoScratch, { recursive: true, force: true });
+});
+
+async function prepareCargo() {
+  const runfiles = process.env.RUNFILES_DIR ?? process.env.TEST_SRCDIR;
+  assert(
+    runfiles && process.env.OLIPHAUNT_SOURCE_COMPILE_TEST_TOOLS && process.env.TEST_TMPDIR,
+    'Run runtime_cargo_test with its declared Cargo/Rust/compiler and registry inputs',
+  );
+  const tools = JSON.parse(
+    await readFile(path.join(runfiles, process.env.OLIPHAUNT_SOURCE_COMPILE_TEST_TOOLS), 'utf8'),
+  );
+  const tool = (name: string) => path.join(runfiles, tools[name]);
+  cargoScratch = await mkdtemp(path.join(process.env.TEST_TMPDIR, 'wasix-cargo-consumer-'));
+  const cargoHome = path.join(cargoScratch, 'cargo-home');
+  assert(
+    Object.keys(tools.cargoHome).length > 0,
+    'Cargo consumer needs declared offline registry inputs',
+  );
+  for (const [file, relative] of Object.entries(tools.cargoHome) as [string, string][]) {
+    const output = path.join(cargoHome, 'registry', relative);
+    await mkdir(path.dirname(output), { recursive: true });
+    await copyFile(path.join(runfiles, file), output);
+  }
+  return {
+    cargo: tool('cargo'),
+    env: {
+      ...cargoLinkEnvironment(JSON.parse(await readFile(tool('compiler'), 'utf8')), runfiles),
+      CARGO_HOME: cargoHome,
+      CARGO_TARGET_DIR: path.join(cargoScratch, 'target'),
+      CARGO_NET_OFFLINE: 'true',
+      CARGO_TERM_COLOR: 'never',
+      RUSTC: tool('rustc'),
+      RUSTDOC: tool('rustdoc'),
+      PATH: path.dirname(tool('rustc')),
+      HOME: cargoScratch,
+      TMPDIR: cargoScratch,
+    },
+  };
+}
+
+/** Compile the actual published readers and exact-version part dependencies, not a repacked facade. */
+async function verifyCargoConsumer(family: string[], spec: RuntimeCargoSpec, root: string) {
+  cargoContext ??= prepareCargo();
+  const tools = await cargoContext;
+  const { parent, parts } = readRuntimeCargoFamily(family, spec.target);
+  const extracted = path.join(root, 'cargo-consumer');
+  for (const row of [parent, ...parts]) {
+    extractPortableArchiveTree(
+      row.file,
+      path.join(extracted, row.name),
+      `${row.name}-${row.version}`,
+    );
+  }
+  const consumer = path.join(extracted, 'consumer');
+  await mkdir(path.join(consumer, 'src'), { recursive: true });
+  await mkdir(path.join(consumer, 'expected'));
+  const manifest = JSON.parse(await readFile(path.join(spec.payload, 'manifest.json'), 'utf8'));
+  for (const artifact of manifest.artifacts) {
+    await copyFile(
+      path.join(spec.payload, artifact.path),
+      path.join(consumer, 'expected', artifact.path),
+    );
+  }
+  await writeFile(
+    path.join(consumer, 'Cargo.toml'),
+    [
+      '[package]',
+      'name = "wasix-aot-installed-regression"',
+      'version = "0.0.0"',
+      'edition = "2024"',
+      '[workspace]',
+      '[dependencies]',
+      `aot = { package = "${parent.name}", version = "=${parent.version}", path = "../${parent.name}" }`,
+      '[patch.crates-io]',
+      ...parts.map(
+        (part) => `${part.name} = { version = "=${part.version}", path = "../${part.name}" }`,
+      ),
+      '',
+    ].join('\n'),
+  );
+  const metadata = `DEP_${parent.manifest.package.links.toUpperCase()}_MANIFEST`;
+  await writeFile(
+    path.join(consumer, 'build.rs'),
+    `fn main() {
+    let path = std::env::var(${JSON.stringify(metadata)}).expect("unchanged parent links metadata");
+    let manifest = std::fs::read_to_string(path).expect("installed artifact metadata");
+    assert!(manifest.contains(${JSON.stringify('kind = "wasix-aot"')}));
+    assert!(manifest.contains(${JSON.stringify(`target = "${AOT_TARGET_TRIPLES[spec.target]}"`)}));
+  }\n`,
+  );
+  await writeFile(
+    path.join(consumer, 'src/main.rs'),
+    `fn main() {
+    assert_eq!(aot::TARGET_TRIPLE, ${JSON.stringify(AOT_TARGET_TRIPLES[spec.target])});
+    assert_eq!(aot::ENGINE, ${JSON.stringify(manifest.engine)});
+    assert!(aot::HAS_EMBEDDED_AOT);
+    assert!(aot::MANIFEST_JSON.contains(${JSON.stringify(AOT_TARGET_TRIPLES[spec.target])}));
+    ${manifest.artifacts.map((artifact) => `assert_eq!(aot::artifact_bytes(${JSON.stringify(artifact.name)}).unwrap(), include_bytes!(${JSON.stringify(`../expected/${artifact.path}`)}));`).join('\n')}
+    assert!(aot::artifact_bytes("undeclared-artifact").is_none());
+  }\n`,
+  );
+  let revision = 0;
+  const run = async () => {
+    // Invalidate the real parent's build script so all adversaries exercise its reader.
+    await writeFile(
+      path.join(extracted, parent.name, 'build.rs'),
+      parent.entries.get(`${parent.name}-${parent.version}/build.rs`).data().toString() +
+        '\n'.repeat(++revision),
+    );
+    const result = Bun.spawnSync(
+      [
+        tools.cargo,
+        'run',
+        '--offline',
+        '--quiet',
+        '--manifest-path',
+        path.join(consumer, 'Cargo.toml'),
+      ],
+      { env: tools.env },
+    );
+    return { code: result.exitCode, output: result.stderr.toString() + result.stdout.toString() };
+  };
+  let result = await run();
+  assert.equal(result.code, 0, result.output);
+  const part = parts.find((row) =>
+    [...row.entries.values()].some(
+      (entry) => entry.isFile && /\/payload\/chunks\//u.test(entry.name),
+    ),
+  );
+  assert(part, 'Oversized installed fixture must contain a chunked part');
+  const payload = path.join(extracted, part.name, 'payload');
+  await rename(payload, `${payload}.absent`);
+  result = await run();
+  assert.notEqual(result.code, 0, 'Cargo must reject a missing installed payload part');
+  assert.match(result.output, /missing WASIX AOT payload part/u);
+  await rename(`${payload}.absent`, payload);
+  const chunk = [...part.entries.values()].find(
+    (entry) => entry.isFile && /\/payload\/chunks\//u.test(entry.name),
+  );
+  assert(chunk, 'Oversized installed fixture must contain a chunk');
+  const chunkPath = path.join(
+    extracted,
+    part.name,
+    chunk.name.slice(`${part.name}-${part.version}/`.length),
+  );
+  const bytes = chunk.data();
+  const corrupt = Buffer.from(bytes);
+  corrupt[0] ^= 1;
+  await writeFile(chunkPath, corrupt);
+  result = await run();
+  assert.notEqual(result.code, 0, 'Cargo must reject corrupt installed payload bytes');
+  assert.match(result.output, /WASIX AOT payload digest mismatch/u);
+  await writeFile(chunkPath, bytes);
+  result = await run();
+  assert.equal(result.code, 0, result.output);
+}
+
+for (const target of Object.keys(AOT_TARGET_TRIPLES)) {
+  test(`oversized ${target} Cargo family reconstructs and compiles exact bytes, rejects absent/corrupt parts`, async () => {
+    const { root, spec, manifest, manifestPath, sourceRoot } = await fixture(target);
+    const row = manifest.artifacts[0];
+    const raw = randomBytes(12 * 1024 * 1024);
+    const bytes = zstdCompressSync(raw);
+    await writeFile(path.join(spec.payload, row.path), bytes);
+    Object.assign(row, { sha256: sha(bytes), 'raw-sha256': sha(raw), 'raw-size': raw.length });
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    const family = packageRuntimeCargo(spec, path.join(root, 'family'));
+    expect(family.length).toBeGreaterThan(2);
+    for (const file of family)
+      expect((await readFile(file)).length).toBeLessThanOrEqual(10 * 1024 * 1024);
+    const parent = extractRuntimeCargoFamily(
+      family,
+      path.join(root, 'installed-family'),
+      target,
+      sourceRoot,
+    );
+    expect(await readFile(path.join(parent, 'artifacts', row.path))).toEqual(bytes);
+    expect(() =>
+      extractRuntimeCargoFamily(family.slice(1), path.join(root, 'missing'), target, sourceRoot),
+    ).toThrow();
+    expect(() =>
+      extractRuntimeCargoFamily(
+        [...family, family[0]],
+        path.join(root, 'duplicate'),
+        target,
+        sourceRoot,
+      ),
+    ).toThrow('repeats an archive');
+    const part = readRuntimeCargoFamily(family, target).parts.find((row) =>
+      [...row.entries.values()].some(
+        (entry) => entry.isFile && /\/payload\/chunks\//u.test(entry.name),
+      ),
+    );
+    assert(part, 'Large fixture must split an artifact into chunks');
+    const first = part.entries;
+    const member = [...first.values()].find(
+      (entry) => entry.isFile && /\/payload\/chunks\//u.test(entry.name),
+    );
+    if (!member) throw new Error('large fixture must split an artifact into chunks');
+    const damaged = Buffer.from(member.data());
+    damaged[0] ^= 1;
+    const modified = new Bun.Archive(
+      Object.fromEntries(
+        [...first.values()]
+          .filter((entry) => entry.isFile)
+          .map((entry) => [entry.name, entry === member ? damaged : entry.data()]),
+      ),
+    );
+    const damagedFile = path.join(root, 'damaged', path.basename(part.file));
+    await mkdir(path.dirname(damagedFile));
+    await writeFile(damagedFile, gzipSync(Buffer.from(await modified.bytes())));
+    expect(() =>
+      extractRuntimeCargoFamily(
+        family.map((file) => (file === part.file ? damagedFile : file)),
+        path.join(root, 'corrupt'),
+        target,
+        sourceRoot,
+      ),
+    ).toThrow('SHA-256 mismatch');
+    await verifyCargoConsumer(family, spec, root);
+  }, 120_000);
 }
 
 test('runtime Cargo rejects wrong carrier identity, unsafe sources, missing notices and stale payloads', async () => {

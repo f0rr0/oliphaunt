@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
   closeSync,
@@ -25,7 +26,6 @@ import {
   packageGeneratedCargoSource,
 } from './cargo-source-package.mts';
 import { canonicalGzipSync } from './portable-archive.mts';
-import { assertSameStringSet } from './release-carrier.mts';
 import {
   assertReleaseNoticesInArchive,
   assertReleaseNoticesInDirectory,
@@ -336,7 +336,7 @@ description = "Cargo payload part ${String(index).padStart(3, '0')} for the ${ta
 readme = "README.md"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
-license = "${NATIVE_CARGO_CARRIER_LICENSES[noticeProfile]}"
+license = "${releaseProfilePackageLicense(noticeProfile, { sourceRoot: noticeSourceRoot }).spdx}"
 links = "${links}"
 build = "build.rs"
 include = ${cargoIncludeMembers(noticeProfile, ['Cargo.toml', 'README.md', 'build.rs', 'src/**', 'payload/**'], noticeSourceRoot)}
@@ -520,10 +520,13 @@ function frozenPayloadFiles(root, executableFiles?: readonly string[]) {
     };
   });
   if (executables)
-    assertSameStringSet(
+    assert.deepEqual(
+      files
+        .filter(({ executable }) => executable)
+        .map(({ relative }) => relative)
+        .sort(compareText),
+      [...executableFiles].sort(compareText),
       'declared executable native payload files',
-      files.filter(({ executable }) => executable).map(({ relative }) => relative),
-      executableFiles,
     );
   return files;
 }
@@ -668,7 +671,7 @@ export function freezeSourceCrate(
   return { ...packageData, cratePath };
 }
 
-export function packagePayload(
+export function packagePayloadParts(
   payloadRoot,
   sourceRoot,
   outputDir,
@@ -683,7 +686,6 @@ export function packagePayload(
     artifactLabel,
     noticeProfile,
     noticeSourceRoot,
-    executableFiles,
   },
 ) {
   const partDirs = fitCargoPayloadParts(
@@ -715,19 +717,6 @@ export function packagePayload(
     },
     partBytes,
   );
-  const aggregatorDir = path.join(sourceRoot, cargoPackageName(target.target, { packageBase }));
-  writeAggregatorCrate(aggregatorDir, {
-    target,
-    version,
-    partCount: partDirs.length,
-    packageBase,
-    artifactProduct,
-    artifactKind,
-    artifactLabel,
-    payloadFiles: frozenPayloadFiles(payloadRoot, executableFiles),
-    noticeSourceRoot,
-  });
-
   const packages = [];
   for (let offset = 0; offset < partDirs.length; offset += 1) {
     const partNumber = offset + 1;
@@ -755,6 +744,33 @@ export function packagePayload(
       index: partNumber,
     });
   }
+  return packages;
+}
+
+export function packagePayload(payloadRoot, sourceRoot, outputDir, cargoTargetDir, options) {
+  const packages = packagePayloadParts(payloadRoot, sourceRoot, outputDir, cargoTargetDir, options);
+  const {
+    target,
+    version,
+    packageBase,
+    artifactProduct,
+    artifactKind,
+    artifactLabel,
+    noticeSourceRoot,
+    executableFiles,
+  } = options;
+  const aggregatorDir = path.join(sourceRoot, cargoPackageName(target.target, { packageBase }));
+  writeAggregatorCrate(aggregatorDir, {
+    target,
+    version,
+    partCount: packages.length,
+    packageBase,
+    artifactProduct,
+    artifactKind,
+    artifactLabel,
+    payloadFiles: frozenPayloadFiles(payloadRoot, executableFiles),
+    noticeSourceRoot,
+  });
   packages.push(
     freezeSourceCrate(
       {
@@ -925,10 +941,10 @@ export function validateCargoArtifactPackages(
     ...expectedAggregators,
     ...(expectedFacade ? [expectedFacade] : []),
   ]);
-  assertSameStringSet(
+  assert.deepEqual(
+    [...configuredCrates].sort(compareText),
+    [...expectedRegistryCrates].sort(compareText),
     `${product} crates.io packages must match native runtime/tool artifact packages`,
-    configuredCrates,
-    expectedRegistryCrates,
   );
   const aggregators = new Set();
   const facades = new Set();

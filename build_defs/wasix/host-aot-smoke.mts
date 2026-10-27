@@ -42,14 +42,35 @@ const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest(
 export function readWasixHostAotSmokeSpec(
   specification: string,
   crates: readonly string[],
+  runfiles?: string,
 ): HostSmokeSpec {
+  const spec = JSON.parse(readFileSync(specification, 'utf8'));
+  if (runfiles)
+    crates = crates.map((file) =>
+      path.join(runfiles, file.startsWith('../') ? file.slice(3) : `${spec.workspace}/${file}`),
+    );
   assert(
     crates.length === 5 && crates.every((file) => path.isAbsolute(file)),
     'WASIX host smoke requires five resolved declared archive Files',
   );
   const byName = Object.fromEntries(crates.map((file) => [path.basename(file), file]));
   assert.equal(Object.keys(byName).length, 5, 'WASIX host smoke archive names must be unique');
-  return { ...JSON.parse(readFileSync(specification, 'utf8')), crates: byName };
+  const targetId = Object.keys(AOT_TARGET_TRIPLES).find(
+    (key) => AOT_TARGET_TRIPLES[key] === spec.target,
+  );
+  assert(targetId, 'WASIX host smoke needs a canonical native target');
+  assert.deepEqual(
+    Object.keys(byName).sort(),
+    [
+      `${RUNTIME_PACKAGE}-${spec.runtimeVersion}.crate`,
+      `${wasixExtensionPackageName(PRODUCT)}-${spec.runtimeVersion}.crate`,
+      `${wasixExtensionAotPackageName(PRODUCT, spec.target)}-${spec.runtimeVersion}.crate`,
+      `${TOOLS_PACKAGE}-${spec.toolsVersion}.crate`,
+      `${TOOLS_AOT_PACKAGES[targetId]}-${spec.toolsVersion}.crate`,
+    ].sort(),
+    'WASIX host smoke requires its exact five canonical parent archives',
+  );
+  return { ...spec, crates: byName };
 }
 
 export function assertWasixAotSmokeHost(
@@ -220,10 +241,14 @@ export function prepareWasixHostAotSmoke(spec: HostSmokeSpec, root: string) {
 if (import.meta.main) {
   assert.equal(
     process.argv.length,
-    9,
-    'WASIX host smoke requires its configured specification, Rust test binary and five archive Files',
+    6,
+    'WASIX host smoke requires its configured specification, Rust test binary and declared archive leaves',
   );
-  const spec = readWasixHostAotSmokeSpec(process.argv[2], process.argv.slice(4));
+  const spec = readWasixHostAotSmokeSpec(
+    process.argv[2],
+    readFileSync(process.argv[4], 'utf8').split('\n').filter(Boolean),
+    process.argv[5],
+  );
   assertWasixAotSmokeHost(spec.target);
   const root = mkdtempSync(
     path.join(process.env.TEST_TMPDIR ?? os.tmpdir(), 'wasix-host-aot-smoke-'),

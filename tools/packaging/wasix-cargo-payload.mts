@@ -77,11 +77,16 @@ function copyPackageSource(spec, sourceRoot, version, transformManifest, noticeS
     recursive: true,
     filter: (source) => !['target', 'payload', 'artifacts'].includes(path.basename(source)),
   });
-  cpSync(spec.payloadRoot, path.join(crateDir, spec.payloadDirName), { recursive: true });
+  if (!spec.payloadParts?.length)
+    cpSync(spec.payloadRoot, path.join(crateDir, spec.payloadDirName), { recursive: true });
   if (existsSync(path.join(crateDir, 'build-support.rs'))) {
     writeFileSync(
       path.join(crateDir, 'build.rs'),
-      'const PACKAGE_LOCAL: bool = true;\ninclude!("build-support.rs");\n',
+      'const PACKAGE_LOCAL: bool = true;\n' +
+        (spec.payloadParts === undefined
+          ? ''
+          : `const PART_ROOTS: &[&str] = &[${spec.payloadParts.map((part) => `${part.name.replaceAll('-', '_')}::PAYLOAD_ROOT`).join(', ')}];\n`) +
+        'include!("build-support.rs");\n',
     );
   }
   const noticeProfile = noticeProfileForSpec(spec);
