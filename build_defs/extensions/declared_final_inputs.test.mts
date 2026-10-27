@@ -7,6 +7,7 @@ import {
   composeExtensionReleaseDocuments,
   writeReleaseControls,
 } from '../../src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts';
+import { buildSwiftExtensionCarrierManifest } from '../../src/native/sdks/swift/tools/ios-carrier-manifest.mts';
 import { archiveDirectory } from '../../tools/packaging/archive-directory.mts';
 import { releaseNoticeDeclaration } from '../../tools/packaging/release-notices.mts';
 import type { ExtensionFinalInput } from '../../tools/release/native-extension-final-inputs.mts';
@@ -18,6 +19,7 @@ import {
   validateDeclaredNativeAppleBase,
 } from './declared_final_inputs.mts';
 import {
+  declaredApple,
   mergeNativeFinalMembers,
   type NativeOwnerSpec,
   ownerFamilyCompleteness,
@@ -292,6 +294,115 @@ function replaceDocument(
   input[which].size = identity.size;
   input[which].sha256 = identity.sha256;
 }
+
+test('Apple final declarations retain delivered cross-owner dependencies at the frozen runtime version', () => {
+  const { root, member } = fixture();
+  const product = 'oliphaunt-extension-postgis';
+  const version = '3.6.0';
+  const runtimeVersion = compatibility.nativeRuntimeVersion;
+  const contribProduct = 'oliphaunt-extension-contrib-pg18';
+  const contribOwner = {
+    product: contribProduct,
+    versioning: 'runtime-bound' as const,
+    native: 'liboliphaunt-native',
+    wasix: 'liboliphaunt-wasix',
+  };
+  const ownerMetadata = {
+    fuzzystrmatch: contribOwner,
+    cube: contribOwner,
+    earthdistance: contribOwner,
+    vector: {
+      product: 'oliphaunt-extension-vector',
+      versioning: 'upstream-bound' as const,
+      native: 'oliphaunt-extension-vector',
+      wasix: 'oliphaunt-extension-vector',
+    },
+  };
+  const spec = {
+    product,
+    owner: product,
+    version,
+    runtimeVersion,
+    ownerMetadata,
+    members: [{ sqlName: 'postgis', selectedDependencies: [] }],
+  } as NativeOwnerSpec;
+  const delivered = [{ sqlName: 'postgis', dependencies: ['fuzzystrmatch'] }];
+  const archive = path.join(root, `${product}-${version}-native-ios-xcframework-runtime.tar.gz`);
+  writeFileSync(archive, 'metadata fixture; no Apple construction or runtime qualification');
+  const identity = fileIdentity(archive);
+  const extensionManifest = path.join(root, 'postgis.json');
+  writeFileSync(
+    extensionManifest,
+    JSON.stringify({
+      ...member,
+      schema: 'oliphaunt-extension-ci-artifacts-v1',
+      product,
+      version,
+      compatibility,
+      ...delivered[0],
+      sqlMembers: ['postgis'],
+      assets: [
+        {
+          ...member.assets[0],
+          name: path.basename(archive),
+          path: archive,
+          target: 'ios-xcframework',
+          sha256: identity.sha256,
+          bytes: identity.size,
+        },
+      ],
+    }),
+  );
+  const declared = declaredApple(spec, delivered);
+  const carrier = buildSwiftExtensionCarrierManifest({
+    extensionManifest,
+    assetRoot: root,
+    nativeRuntimeVersion: runtimeVersion,
+    ...declared,
+    verifyMembers: false,
+  });
+  expect(carrier.entries[0].dependencyCarriers).toEqual([
+    {
+      product: contribProduct,
+      releaseProduct: 'liboliphaunt-native',
+      sqlName: 'fuzzystrmatch',
+      version: runtimeVersion,
+      tag: `liboliphaunt-native-v${runtimeVersion}`,
+    },
+  ]);
+  expect(carrier.release.version).toBe(version);
+  expect(carrier.base.version).toBe(runtimeVersion);
+  expect(() =>
+    buildSwiftExtensionCarrierManifest({
+      extensionManifest,
+      assetRoot: root,
+      nativeRuntimeVersion: runtimeVersion,
+      ...declared,
+      declaredProducts: { [product]: declared.declaredProducts[product] },
+      verifyMembers: false,
+    }),
+  ).toThrow('dependency SQL name fuzzystrmatch is not in declaredProducts');
+  expect(() => declaredApple(spec, [{ sqlName: 'postgis', dependencies: ['invented'] }])).toThrow(
+    'has no declared release owner',
+  );
+  expect(() => declaredApple(spec, [{ sqlName: 'postgis', dependencies: ['vector'] }])).toThrow(
+    'requires an explicit frozen version',
+  );
+  const contrib = declaredApple(
+    {
+      ...spec,
+      product: contribProduct,
+      owner: 'liboliphaunt-native',
+      version: runtimeVersion,
+      members: [{ sqlName: 'cube' }, { sqlName: 'earthdistance' }],
+    } as NativeOwnerSpec,
+    [
+      { sqlName: 'cube', dependencies: [] },
+      { sqlName: 'earthdistance', dependencies: ['cube'] },
+    ],
+  );
+  expect(Object.keys(contrib.declaredProducts)).toEqual([contribProduct]);
+});
 
 test('checks original bytes and canonical documents without treating fixtures as runtime proof', () => {
   for (const family of ['native', 'wasix'] as const) {

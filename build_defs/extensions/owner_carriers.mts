@@ -59,7 +59,11 @@ import {
   assertReleaseNoticesInArchive,
   releaseNoticeRows,
 } from '../../tools/packaging/release-notices.mts';
-import type { ExtensionOwnerMetadata } from '../../tools/release/extension-release-metadata.mts';
+import {
+  declaredExtensionOwner,
+  type ExtensionOwnerMetadata,
+  frozenExtensionOwnerRequirements,
+} from '../../tools/release/extension-release-metadata.mts';
 import type { ExtensionFinalInput } from '../../tools/release/native-extension-final-inputs.mts';
 import { stageDeclaredExtensionReleaseFiles } from '../../tools/release/native-extension-release-files.mts';
 import { safeRelative } from '../../tools/release/native-file-identity.mts';
@@ -288,17 +292,43 @@ function expectedMember(spec: NativeCarrierSpec, target: string, selected?: any)
   };
 }
 
-function declaredApple(spec: NativeOwnerSpec) {
-  return {
-    declaredProducts: {
-      [spec.product]: {
-        product: spec.product,
-        releaseProduct: spec.owner,
-        version: spec.version,
-        sqlNames: spec.members.map((member) => member.sqlName).sort(),
-        tag: `${spec.owner}-v${spec.version}`,
-      },
+export function declaredApple(
+  spec: NativeOwnerSpec,
+  members: { sqlName: string; dependencies: string[] }[],
+) {
+  const declaredProducts = {
+    [spec.product]: {
+      product: spec.product,
+      releaseProduct: spec.owner,
+      version: spec.version,
+      sqlNames: members.map((member) => member.sqlName).sort(),
+      tag: `${spec.owner}-v${spec.version}`,
     },
+  };
+  const owners = spec.ownerMetadata ?? {};
+  for (const requirement of frozenExtensionOwnerRequirements({
+    product: spec.product,
+    releaseProduct: spec.owner,
+    members,
+    runtimeProduct: 'liboliphaunt-native',
+    runtimeVersion: spec.runtimeVersion,
+    ownerForSqlName: (sqlName) => declaredExtensionOwner(sqlName, 'native', owners),
+  }))
+    declaredProducts[requirement.product] = {
+      product: requirement.product,
+      releaseProduct: 'liboliphaunt-native',
+      version: requirement.version,
+      sqlNames: Object.entries(owners)
+        .filter(
+          ([, owner]) =>
+            owner.product === requirement.product && owner.native === 'liboliphaunt-native',
+        )
+        .map(([sqlName]) => sqlName)
+        .sort(),
+      tag: `liboliphaunt-native-v${requirement.version}`,
+    };
+  return {
+    declaredProducts,
     baseTag: `liboliphaunt-native-v${spec.runtimeVersion}`,
   };
 }
@@ -677,7 +707,7 @@ export function validateNativeFinalLeaf(spec: NativeOwnerSpec, leaf: FinalLeaf, 
       extensionManifest: path.join(productRoot, 'extension-artifacts.json'),
       assetRoot: root,
       nativeRuntimeVersion: spec.runtimeVersion,
-      ...declaredApple(spec),
+      ...declaredApple(spec, staged),
     });
   if (profile.kind === 'native-dynamic') {
     const canonical = spec.members[0];
@@ -954,7 +984,7 @@ export function composeNativeFinalCarriers(spec: NativeOwnerSpec) {
         ...documents,
         releaseMetadata: spec.releaseMetadata,
         directAssets,
-        swiftOptions: { ...declaredApple(spec), assetRoot: outputRoot },
+        swiftOptions: { ...declaredApple(spec, members), assetRoot: outputRoot },
       });
       mkdirSync(path.dirname(spec.outputs.frozen), { recursive: true });
       copyFileSync(path.join(productRoot, 'extension-artifacts.json'), spec.outputs.frozen);
@@ -974,7 +1004,7 @@ export function composeNativeFinalCarriers(spec: NativeOwnerSpec) {
             : undefined,
           baseRuntimeVersion: spec.runtimeVersion,
           extensionManifests: [path.join(productRoot, 'extension-artifacts.json')],
-          ...declaredApple(spec),
+          ...declaredApple(spec, members),
         });
         const result = { staged: [], skipped: [] };
         const facade = stageExtensionNativeNpmFacade(
