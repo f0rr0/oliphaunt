@@ -19,6 +19,7 @@ import {
   assureReviewedNativeBuildProducer,
   authenticateNativeBuildEvidence,
   createNativeBuildEvidenceAcquirer,
+  reviewedNativeProducerArtifacts,
   validateAuthenticatedNativeBuildEvidence,
   validateReviewedNativeProducerAssurance,
 } from './authenticate-native-build-evidence.mts';
@@ -300,7 +301,7 @@ test('reviewed main producer assurance preserves construction limits and accepts
     ['WASIX imported runtime (macos-arm64)', 'native-build-evidence-napi-macos-arm64'],
     ['WASIX imported runtime (windows-x64)', 'native-build-evidence-napi-windows-x64'],
     ['Linux runtime (x86_64)', 'native-build-evidence-mobile-android'],
-    ['Portable packages (macos-arm64)', 'native-build-evidence-mobile-ios'],
+    ['Apple packages', 'native-build-evidence-mobile-ios'],
   ]) {
     for (const event of ['push', 'workflow_dispatch'] as const) {
       const f = syntheticReviewedProducer(job, artifact);
@@ -339,6 +340,26 @@ test('portable matrix roles cannot authenticate the relocated NAPI producer arti
       'job/artifact role is not canonical',
     );
   }
+});
+
+test('Apple package evidence retains its artifact role only under the independent producer', async () => {
+  const roles = reviewedNativeProducerArtifacts();
+  expect(roles).toHaveLength(17);
+  expect(roles).toContainEqual({
+    job: 'Apple packages',
+    artifactName: 'native-build-evidence-mobile-ios',
+  });
+  expect(roles).toContainEqual({
+    job: 'Portable packages (macos-arm64)',
+    artifactName: 'native-build-evidence-native-macos-arm64',
+  });
+  const old = syntheticReviewedProducer(
+    'Portable packages (macos-arm64)',
+    'native-build-evidence-mobile-ios',
+  );
+  await expect(assureReviewedNativeBuildProducer('synthetic', old.request, old)).rejects.toThrow(
+    'job/artifact role is not canonical',
+  );
 });
 
 test('reviewed execution assumptions retain immutable dump readback and describe scoped capture honestly', async () => {

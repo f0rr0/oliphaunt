@@ -7,11 +7,11 @@ import path from 'node:path';
 import test from 'node:test';
 import { zipArchive } from '../packaging/testdata/zip-fixture.mts';
 import { nativeBuildMetadata } from '../release/native-build-qualification.mts';
-import { projectNativeCurrentArtifacts } from '../release/native-extension-final-inputs.mts';
 import {
   configuredRecipeGraph,
   nativeConfiguredRecipeGraph,
 } from '../release/native-configured-inputs.mts';
+import { projectNativeCurrentArtifacts } from '../release/native-extension-final-inputs.mts';
 import {
   acquireConfiguredCiBasis,
   assertConfiguredCiSource,
@@ -502,6 +502,49 @@ test('actual executable workflow inventory covers every 35 request context and a
   const actual = configuredCiWorkflowInventory(workflow);
   assert.equal(actual.requests.length, 35);
   assert.equal(new Set(actual.requests.map((row) => row.id)).size, 35);
+  const appleIds = [
+    'portable/macos-arm64/apple-packages',
+    'portable/macos-arm64/abi-ios_device_arm64',
+    'portable/macos-arm64/abi-ios_simulator_arm64',
+    'portable/macos-arm64/abi-apple_package_macos_arm64',
+  ];
+  assert.deepEqual(
+    actual.requests.filter((row) => row.job === 'apple-packages').map((row) => row.id),
+    [...appleIds].sort(),
+  );
+  for (const id of ['packages', 'native-carriers']) {
+    const native = actual.requests.find((row) => row.id === `portable/macos-arm64/${id}`);
+    assert(native);
+    assert.equal(native.job, 'portable/macos-arm64');
+  }
+  const full = selectConfiguredCiRequests({ source, requests: actual.requests, changes: [] });
+  assert.equal(full.selected_requests.length, 35);
+  assert.equal(full.selected_jobs.length, 18);
+  assert.equal(full.capture_requests.length, 15);
+  for (const id of [...appleIds, 'react-native/installed-consumer']) {
+    const selected = selectConfiguredCiRequests({
+      source,
+      requests: actual.requests,
+      basis: {
+        ...basis,
+        requests: actual.requests.map((row) => ({
+          ...request(row.id, row.id === id ? ['apple-change'] : []),
+          ...row,
+        })),
+      },
+      changes: [modified('apple-change')],
+    });
+    assert.deepEqual(
+      selected.selected_jobs,
+      id === 'react-native/installed-consumer'
+        ? ['apple-packages', 'react-native']
+        : ['apple-packages'],
+    );
+    assert.deepEqual(
+      selected.selected_requests,
+      id === 'react-native/installed-consumer' ? [appleIds[0], id] : [id],
+    );
+  }
   assert.equal(
     actual.requests.find((row) => row.id === 'release-families/checksums')!.fullOnly,
     true,

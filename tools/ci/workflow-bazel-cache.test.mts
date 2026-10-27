@@ -228,7 +228,7 @@ test('optional terminal cache saves preserve restore policy, writer bounds and s
     '$' + "{{ always() && inputs.phase == 'save' && steps.ready.outputs.disk == 'true' }}",
   );
   const saves = callers.filter((step: any) => step.with.phase === 'save');
-  assert.equal(saves.length, 10);
+  assert.equal(saves.length, 11);
   for (const step of saves) {
     assert.equal(step['timeout-minutes'], 10);
     assert.equal(step['continue-on-error'], true);
@@ -244,6 +244,8 @@ test('action keys retain source, cohort and platform separation', () => {
       { SOURCE_COMMIT: 'b'.repeat(40) },
       { COHORT: 'linux' },
       { RUNNER_OS: 'macOS', RUNNER_ARCH: 'ARM64' },
+      { RUNNER_OS: 'macOS', RUNNER_ARCH: 'ARM64', COHORT: 'portable' },
+      { RUNNER_OS: 'macOS', RUNNER_ARCH: 'ARM64', COHORT: 'apple-packages' },
     ]) {
       writeFileSync(env.GITHUB_OUTPUT, '');
       execute(directory, { ...env, ...variation }, script('identity'));
@@ -420,9 +422,10 @@ test('GC failures and logical-versus-allocated overage do not authorize transpor
   }
 });
 
-test('measured cohorts retain their observed cache population within a bounded archive', () => {
+test('configured cohorts apply their declared cache budgets', () => {
   for (const cohort of [
     { RUNNER_OS: 'macOS', RUNNER_ARCH: 'ARM64', COHORT: 'portable' },
+    { RUNNER_OS: 'macOS', RUNNER_ARCH: 'ARM64', COHORT: 'apple-packages' },
     { RUNNER_OS: 'Linux', RUNNER_ARCH: 'X64', COHORT: 'portable' },
     { RUNNER_OS: 'Linux', RUNNER_ARCH: 'X64', COHORT: 'wasix' },
     { RUNNER_OS: 'Linux', RUNNER_ARCH: 'X64', COHORT: 'linux' },

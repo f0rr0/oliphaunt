@@ -81,7 +81,7 @@ const reviewedProducerArtifacts: readonly (readonly [string, string])[] = [
   ['WASIX imported runtime (macos-arm64)', 'native-build-evidence-napi-macos-arm64'],
   ['WASIX imported runtime (windows-x64)', 'native-build-evidence-napi-windows-x64'],
   ['Linux runtime (x86_64)', 'native-build-evidence-mobile-android'],
-  ['Portable packages (macos-arm64)', 'native-build-evidence-mobile-ios'],
+  ['Apple packages', 'native-build-evidence-mobile-ios'],
   ['Native React Native consumers', 'native-build-evidence-react-native-macos-arm64'],
   ['Native release families', 'native-build-evidence-release-families'],
 ];

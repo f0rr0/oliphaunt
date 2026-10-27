@@ -151,8 +151,12 @@ or an individual platform job cannot authorize publication.
 Shared construction stays on Linux to reproduce CI locally. macOS/Windows jobs
 provide licensed SDK construction and native execution where required. Cross-host
 consumers receive exact final archives with their source, target and hash receipts
-through GitHub artifacts. The WASIX producer captures the fifteen core, contrib
-and tools Cargo files from actual shipping roots; native host jobs download that producing job's immutable
+through GitHub artifacts. Apple package exports and their macOS/iOS ABI consumers
+share one job and compiler base, running alongside the native macOS host checks
+and final carriers. Each job saves its own bounded action cache; a cache miss
+does not change its required requests or evidence. The WASIX producer captures
+complete core, contrib and tools Cargo families from actual shipping roots;
+native host jobs download that producing job's immutable
 artifact ID and require the checkout commit to match its source receipt. The importer
 verifies each archive and compiles its extracted Rust sources and build script.
 macOS, Windows and Linux ARM64 then run the same seven SDK SQL scenarios without

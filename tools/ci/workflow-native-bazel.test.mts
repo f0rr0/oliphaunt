@@ -165,8 +165,11 @@ test('NAPI shipping shares the Linux WASIX producer and imported native host lan
 
 test('native package consumers follow their producers and remain required for admission', () => {
   for (const id of Object.keys(jobs)) predecessors(id);
-  assert.ok(predecessors('react-native').has('portable'));
+  assert.ok(predecessors('react-native').has('apple-packages'));
+  assert.ok(!predecessors('react-native').has('portable'));
   assert.ok(predecessors('react-native').has('release-inputs'));
+  assert.ok(!predecessors('apple-packages').has('portable'));
+  assert.ok(!predecessors('portable').has('apple-packages'));
   assert.ok(!predecessors('release-families').has('react-native'));
   const required = predecessors('required');
   for (const [id, job] of Object.entries(jobs)) {
@@ -179,11 +182,13 @@ test('native package consumers follow their producers and remain required for ad
   for (const [subject, outcome] of [
     ['', 'success'],
     ['react-native', 'failure'],
+    ['apple-packages', 'failure'],
     ['release-families', 'failure'],
     ['wasix-host', 'failure'],
     ['wasix-modules', 'failure'],
     ['wasix-windows-aot', 'failure'],
     ['react-native', 'skipped'],
+    ['apple-packages', 'skipped'],
     ['release-families', 'skipped'],
     ['wasix-host', 'skipped'],
     ['wasix-modules', 'skipped'],
@@ -859,7 +864,8 @@ done
 }
 
 test('Apple preparation and final admission use the authenticated input phase', () => {
-  const step = jobs.portable.steps.find(
+  const job = jobs['apple-packages'];
+  const step = job.steps.find(
     (step: any) =>
       step.name === 'Qualify complete Apple runtime, resources, SDK and extension packages',
   );
@@ -875,7 +881,12 @@ test('Apple preparation and final admission use the authenticated input phase', 
     qualifierFixture((directory, env) => {
       const result = spawnSync('bash', ['-eu', '-c', step.run], {
         cwd: directory,
-        env: { ...requestEnvironment(step, env, 'macos-arm64'), NATIVE_PREPARED_INPUTS: input },
+        env: {
+          ...requestEnvironment(step, env, 'macos-arm64'),
+          CI_REQUEST_JOB: job.env.CI_REQUEST_JOB,
+          QUALIFICATION_JOB_NAME: step.env.QUALIFICATION_JOB_NAME,
+          NATIVE_PREPARED_INPUTS: input,
+        },
       });
       if (!target) {
         assert.notEqual(result.status, 0);
@@ -884,6 +895,16 @@ test('Apple preparation and final admission use the authenticated input phase', 
       assert.equal(result.status, 0, result.stderr.toString());
       const args = readFileSync(env.QUALIFIER_ARGS, 'utf8').split('\0');
       assert.equal(args[args.indexOf('--shipping-export') + 1], target);
+      assert.equal(args[args.indexOf('--ci-job') + 1], 'apple-packages');
+      assert.equal(
+        JSON.parse(readFileSync(args[args.indexOf('--github-json') + 1], 'utf8')).job,
+        job.name,
+      );
+      assert.deepEqual(JSON.parse(readFileSync(args[args.indexOf('--startup-json') + 1], 'utf8')), [
+        `--output_base=${env.RUNNER_TEMP}/native-bazel`,
+        '--host_jvm_args=-Xmx3g',
+        `--server_jvm_out=${env.RUNNER_TEMP}/native-bazel-diagnostics/server-jvm.out`,
+      ]);
     });
   }
 });
@@ -1020,6 +1041,64 @@ exit "\${AUDIT_STATUS:-0}"
   });
 });
 
+test('Apple package construction leaves cleanup time and runs independently of native macOS', () => {
+  const job = jobs['apple-packages'];
+  const steps = job.steps;
+  const qualifier = steps.find((step: any) => step.id === 'apple_qualification');
+  const abi = steps.find(
+    (step: any) => step.name === 'Construct native iOS device and simulator ABI consumers',
+  );
+  const receipts = steps.find(
+    (step: any) => step.name === 'Upload completed source request receipts',
+  );
+  const snapshot = steps.find(
+    (step: any) => step.name === 'Preserve final native Bazel command output',
+  );
+  const cache = steps.find((step: any) => step.name === 'Save bounded standard Bazel caches');
+  const diagnostics = steps.find(
+    (step: any) => step.name === 'Upload Apple package Bazel diagnostics',
+  );
+  assert.deepEqual(needs('apple-packages'), ['release-inputs']);
+  assert.equal(job['runs-on'], 'macos-26');
+  assert.equal(job.env.CI_REQUEST_JOB, 'apple-packages');
+  assert.equal(job.env.CI_PLATFORM, 'macos-arm64');
+  assert.equal(qualifier['timeout-minutes'], 210);
+  assert.equal(abi['timeout-minutes'], 120);
+  assert.equal(job['timeout-minutes'], 360);
+  assert.ok(
+    qualifier['timeout-minutes'] +
+      abi['timeout-minutes'] +
+      cache['timeout-minutes'] +
+      diagnostics['timeout-minutes'] <
+      job['timeout-minutes'],
+    'cold construction must leave time for setup, receipts and bounded cleanup',
+  );
+  for (const [before, after] of [
+    [qualifier, abi],
+    [abi, receipts],
+    [receipts, snapshot],
+    [snapshot, cache],
+    [cache, diagnostics],
+  ]) {
+    assert.ok(before && after);
+    assert.ok(steps.indexOf(before) < steps.indexOf(after));
+  }
+  assert.equal(snapshot.if, '${{ always() }}');
+  assert.equal(cache.if, '${{ always() }}');
+  assert.equal(cache.with.cohort, 'apple-packages');
+  assert.equal(cache.with['output-base'], '${{ runner.temp }}/native-bazel');
+  assert.equal(cache.with['jvm-args'], '-Xmx3g');
+  assert.equal(
+    cache.with['server-log'],
+    '${{ runner.temp }}/native-bazel-diagnostics/server-jvm.out',
+  );
+  assert.equal(diagnostics.if, '${{ always() }}');
+  assert.equal(diagnostics.with.name, 'native-bazel-apple-packages-diagnostics');
+  assert.ok(diagnostics.with.path.includes('/ios-extension-build-capture/diagnostics'));
+  assert.ok(!diagnostics.with.path.includes('/native-build-capture/'));
+  assert.ok(predecessors('source-ci').has('apple-packages'));
+});
+
 test('portable saves its checkpoint before optional diagnostics and preserves qualification output', () => {
   const job = jobs.portable;
   const diagnostics = job.steps.find((step: any) => step.name === 'Upload macOS Bazel diagnostics');
@@ -1038,14 +1117,13 @@ test('portable saves its checkpoint before optional diagnostics and preserves qu
   );
   assert.ok(diagnostics.if.includes('always()'));
   assert.ok(diagnostics.if.includes("matrix.platform == 'macos-arm64'"));
-  for (const id of ['apple_qualification', 'native_qualification']) {
-    const qualifier = job.steps.find((step: any) => step.id === id);
-    const capture = qualifier.run.match(/--output-directory "\$RUNNER_TEMP\/([^"\n]+)"/u)?.[1];
-    assert.ok(capture, 'qualification must declare its capture directory');
-    for (const file of ['diagnostics', 'build-events.jsonl', 'aquery-build-events.jsonl'])
-      assert.ok(diagnostics.with.path.includes(`/${capture}/${file}`));
-    assert.ok(job.steps.indexOf(qualifier) < job.steps.indexOf(diagnostics));
-  }
+  const qualifier = job.steps.find((step: any) => step.id === 'native_qualification');
+  const capture = qualifier.run.match(/--output-directory "\$RUNNER_TEMP\/([^"\n]+)"/u)?.[1];
+  assert.ok(capture, 'qualification must declare its capture directory');
+  for (const file of ['diagnostics', 'build-events.jsonl', 'aquery-build-events.jsonl'])
+    assert.ok(diagnostics.with.path.includes(`/${capture}/${file}`));
+  assert.ok(job.steps.indexOf(qualifier) < job.steps.indexOf(diagnostics));
+  assert.ok(!diagnostics.with.path.includes('/ios-extension-build-capture/'));
   assert.ok(diagnostics.with.path.includes('/native-bazel/command.log'));
   for (const file of ['test.log', 'test.xml'])
     assert.ok(
@@ -1511,10 +1589,10 @@ test('source producer capture is enabled only for an actual workflow handoff', (
 });
 
 test('the actual Apple ABI loop runs exactly the selected configured request and preserves full construction', () => {
-  const step = jobs.portable.steps.find(
+  const step = jobs['apple-packages'].steps.find(
     (value: any) => value.name === 'Construct native iOS device and simulator ABI consumers',
   );
-  const ids: string[] = JSON.parse(step.env.CI_REQUEST_IDS)['macos-arm64'];
+  const ids: string[] = JSON.parse(step.env.CI_REQUEST_IDS);
   qualifierFixture((directory, env) => {
     const calls = path.join(env.RUNNER_TEMP, 'abi-calls');
     writeFileSync(
@@ -1630,7 +1708,8 @@ test('macOS collects independent qualifications after sibling failures while pre
   const packages = steps.find(
     (step: any) => step.name === 'Qualify packages and native host behavior',
   );
-  const abi = steps.find(
+  const appleSteps = jobs['apple-packages'].steps;
+  const abi = appleSteps.find(
     (step: any) => step.name === 'Construct native iOS device and simulator ABI consumers',
   );
   const native = steps.find((step: any) => step.id === 'native_qualification');
@@ -1691,12 +1770,11 @@ test('macOS collects independent qualifications after sibling failures while pre
     assert.equal(evaluate(step, { platform: 'windows-x64' }), false);
     assert.equal(evaluate(step, { platform: 'windows-x64', succeeded: true }), true);
   }
-  assert.equal(evaluate(abi, { platform: 'windows-x64', succeeded: true }), false);
-  for (const name of [
-    'Upload iOS extension construction evidence',
-    'Upload native construction evidence',
+  for (const [producerSteps, name] of [
+    [appleSteps, 'Upload iOS extension construction evidence'],
+    [steps, 'Upload native construction evidence'],
   ]) {
-    const step = steps.find((step: any) => step.name === name);
+    const step = producerSteps.find((step: any) => step.name === name);
     assert.equal(evaluate(step), true, `${name}: retain a successful sibling's evidence`);
     for (const qualifierOutcome of ['failure', 'skipped'])
       assert.equal(evaluate(step, { qualifierOutcome }), false);
@@ -1744,9 +1822,10 @@ test('selected consumers reject failed producers while independent source famili
     wasix: ['wasix-modules', 'wasix-windows-aot'],
     'postmaster-host': ['postmaster'],
     'wasix-host': ['wasix'],
-    'react-native': ['portable'],
+    'react-native': ['apple-packages'],
     'release-families': [
       'portable',
+      'apple-packages',
       'linux',
       'wasix',
       'wasix-host',
