@@ -475,9 +475,16 @@ test('produces exact local and GitHub carrier envelopes ', async () => {
       'postgis_tiger_geocoder',
       'postgis_topology',
     ]);
-    assert.deepEqual(local.extensions.find((row) => row.sqlName === 'postgis').nativeModuleStems, [
-      'postgis-3',
-    ]);
+    const postgisModuleStems = ['postgis-3', 'postgis_raster-3', 'postgis_topology-3'];
+    assert.deepEqual(
+      local.extensions.find((row) => row.sqlName === 'postgis').nativeModuleStems,
+      postgisModuleStems,
+    );
+    const swiftPostgis = buildSwiftExtensionCarrierManifest({
+      extensionManifest: postgis,
+      nativeRuntimeVersion: version,
+    });
+    assert.deepEqual(swiftPostgis.entries[0].extension.nativeModuleStems, postgisModuleStems);
     assert.deepEqual(
       local.base.assets.map(({ role }) => role),
       ['base-xcframework', 'runtime-resources'],

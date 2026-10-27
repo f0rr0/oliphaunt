@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,9 +35,11 @@ import {
   validateNativeShippingModule,
 } from './native_carriers.mts';
 
-const [input, resourcesCli] = process.argv.slice(2);
+const [input, resourcesCli, mobileArchive, mobileNm, mobileComponents] = process.argv.slice(2);
 assert(input, 'expected canonical pgtap carrier metadata');
 if (process.platform !== 'win32') assert(resourcesCli, 'expected declared Rust resources CLI');
+if (process.platform === 'linux' && process.arch === 'x64')
+  assert(mobileArchive, 'expected declared mobile unit fixture archive');
 const metadata = JSON.parse(readFileSync(input, 'utf8'));
 const modes = Bun.spawnSync({
   cmd: [
@@ -358,6 +368,11 @@ try {
     splitPayload.writeUInt32LE(state >>> 0, offset);
   }
   const controls = artifacts.control_files.map((file: string) => path.posix.basename(file));
+  const sqlModules: Record<string, { stem: string; symbol: string }> = {
+    postgis: { stem: 'postgis-3', symbol: 'postgis_version' },
+    postgis_raster: { stem: 'postgis_raster-3', symbol: 'RASTER_in' },
+    postgis_topology: { stem: 'postgis_topology-3', symbol: 'Topology_LoadTopoGeometry' },
+  };
   const actual = {
     schema: 'oliphaunt-extension-member-payload-v1',
     sql_name: postgis.sqlName,
@@ -393,15 +408,21 @@ try {
       ),
       ...actual.sql_files,
       ...actual.sql_prefixes.map((prefix: string) => `${prefix}.sql`),
-    ].map((name) => ({
-      source: put(
-        `inputs/sql/${name}`,
-        name.endsWith('.control')
-          ? `default_version = '${actual.default_version}'\nrelocatable = false\n`
-          : 'SELECT 1;\n',
-      ),
-      destination: `share/postgresql/extension/${name}`,
-    })),
+    ].map((name) => {
+      const module = sqlModules[name.split('--')[0].replace(/\.control$/u, '')];
+      return {
+        source: put(
+          `inputs/sql/${name}`,
+          name.endsWith('.control')
+            ? `default_version = '${actual.default_version}'\nrelocatable = false\n` +
+                (module ? `module_pathname = '$libdir/${module.stem}'\n` : '')
+            : module
+              ? `CREATE FUNCTION ${module.symbol}() RETURNS text AS '$libdir/${module.stem}', '${module.symbol}' LANGUAGE C;\n`
+              : 'SELECT 1;\n',
+        ),
+        destination: `share/postgresql/extension/${name}`,
+      };
+    }),
     ...actual.data_files.map((name: string) => ({
       source: put(`inputs/${name}`, `fixture ${name}\n`),
       destination: name,
@@ -500,7 +521,7 @@ try {
         );
       return files;
     });
-    const run = (input: string, name: string) =>
+    const run = (input: string, name: string, target = spec.target, staticModules: string[] = []) =>
       Bun.spawnSync({
         cmd: [
           resourcesCli!,
@@ -509,9 +530,11 @@ try {
           '--prebuilt-extension',
           input,
           '--extension-target',
-          spec.target,
+          target,
           '--liboliphaunt-native-version',
           spec.runtimeVersion,
+          ...(staticModules.length ? ['--require-mobile-static-registry'] : []),
+          ...staticModules.flatMap((stem) => ['--mobile-static-module', stem]),
         ],
         env: {
           ...process.env,
@@ -563,6 +586,112 @@ try {
     const undeclared = run(artifact, 'extra');
     assert.notEqual(undeclared.exitCode, 0);
     assert.match(undeclared.stderr.toString(), /undeclared/u);
+    if (mobileArchive) {
+      assert(mobileNm && mobileComponents, 'expected declared mobile unit fixture inputs');
+      const { assemblePublicMobileMember } = await import('./mobile_carriers.mts');
+      const { deriveStaticRegistration } = await import('./mobile_registration.mts');
+      const { staticMemberAliases } = await import(
+        '../../src/extensions/artifacts/native/tools/ios-extension-registration.mts'
+      );
+      const target = 'android-x86_64';
+      const stem = 'postgis-3';
+      const aliases = staticMemberAliases('postgis', stem);
+      const nm = Bun.spawnSync([mobileNm, '-g', '--defined-only', mobileArchive]);
+      assert.equal(nm.exitCode, 0, nm.stderr.toString());
+      const registration = put(
+        'registration.json',
+        JSON.stringify(
+          deriveStaticRegistration('postgis', stem, nm.stdout.toString(), false, aliases),
+        ),
+      );
+      const components = Bun.TOML.parse(readFileSync(mobileComponents, 'utf8'));
+      const mobileSpec = {
+        ...postgis,
+        ...metadata.postgisMobile,
+        target,
+        hostArchive: archive,
+        components: mobileComponents,
+        staticArchives: [
+          {
+            sqlName: 'postgis',
+            owner: postgis.product,
+            version: postgis.version,
+            runtimeVersion: postgis.runtimeVersion,
+            source: postgis.source,
+            target,
+            archive: mobileArchive,
+            registration,
+            nm: { path: mobileNm, apple: false },
+            aliases: Object.fromEntries(aliases.map(({ name, address }) => [name, address])),
+          },
+        ],
+        // Real unit object bytes fill opaque dependency roles; this is not Android construction proof.
+        dependencyArchives: components.components.flatMap((component: any) =>
+          component['link-units']
+            .filter((unit: any) => metadata.postgisMobile.linkUnits.includes(unit.id))
+            .map((unit: any) => ({
+              target,
+              identity: unit.id,
+              archive: mobileArchive,
+              source: metadata.postgisMobile.dependencySources[component.source],
+            })),
+        ),
+      };
+      const output = path.join(
+        directory,
+        `${postgis.product}-${postgis.version}-native-${target}-runtime.tar.gz`,
+      );
+      const member = assemblePublicMobileMember(mobileSpec, output);
+      assert.deepEqual(member.metadata.sqlMembers, actual.sql_members);
+      assert.deepEqual(
+        member.metadata.nativeModuleStems,
+        Object.values(sqlModules)
+          .map(({ stem }) => stem)
+          .sort(),
+      );
+      assert.deepEqual(member.metadata.nativeDependencyModules ?? [], []);
+      const entries = readPortableArchiveEntries(output);
+      assert.deepEqual(
+        [...entries.keys()].filter((name) => name.startsWith('files/lib/')),
+        [`files/lib/postgresql/${moduleFile}`],
+      );
+      const statics = [...entries].filter(([name]) => name.startsWith('mobile-static/'));
+      assert.equal(statics.length, metadata.postgisMobile.linkUnits.length + 1);
+      assert(
+        entries.has(`mobile-static/${target}/extensions/${stem}/liboliphaunt_extension_${stem}.a`),
+      );
+      for (const [, entry] of statics) assert.deepEqual(entry.data(), readFileSync(mobileArchive));
+      for (const [sqlName, module] of Object.entries(sqlModules))
+        for (const suffix of ['.control', `--${actual.default_version}.sql`]) {
+          const sql = entries
+            .get(`files/share/postgresql/extension/${sqlName}${suffix}`)!
+            .data()
+            .toString();
+          assert(sql.includes(`'$libdir/${stem}'`));
+          if (module.stem !== stem) assert(!sql.includes(`'$libdir/${module.stem}'`));
+        }
+      assert.throws(
+        () =>
+          assemblePublicMobileMember(
+            {
+              ...mobileSpec,
+              staticArchives: [{ ...mobileSpec.staticArchives[0], version: '99.0.0' }],
+            },
+            output,
+          ),
+        /differs from canonical member/u,
+      );
+      const accepted = run(output, 'accepted-mobile', target, [stem, ...actual.dependencies]);
+      assert.equal(accepted.exitCode, 0, accepted.stderr.toString());
+      const resources = path.join(directory, 'accepted-mobile/oliphaunt');
+      const registry = readFileSync(
+        path.join(resources, 'static-registry/oliphaunt_static_registry.c'),
+        'utf8',
+      );
+      for (const { symbol } of Object.values(sqlModules)) assert(registry.includes(`"${symbol}"`));
+      for (const module of [moduleFile, ...dependencyModules])
+        assert(!existsSync(path.join(resources, 'runtime/files/lib/postgresql', module)));
+    }
   }
   console.log(
     'Native extension final envelopes preserve canonical identities, compatibility, legal files, payload layout and deterministic bytes.',

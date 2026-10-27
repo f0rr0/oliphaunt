@@ -979,8 +979,7 @@ function extensionCarrier(
       ...(declaredClosure
         ? {
             sqlMembers: manifest.sqlMembers,
-            // Mobile companion symbols share the primary host archive.
-            nativeModuleStems: nativeModuleStem === null ? [] : [nativeModuleStem],
+            nativeModuleStems: manifest.nativeModuleStems,
           }
         : {}),
       dataFiles,

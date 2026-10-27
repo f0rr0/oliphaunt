@@ -1,6 +1,6 @@
 load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_binary", "bun_test")
-load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load(":extensions.bzl", "extension_default_version", "extension_perl_runtime")
 load(":smoke.bzl", "desktop_members_sql_test")
@@ -17,6 +17,7 @@ load(":family_carriers.bzl", "native_extension_final_families")
 load(":forced_header_inputs_test.bzl", "native_forced_header_input_tests")
 load(":windows_module_test.bzl", "native_windows_module_tests")
 load(":mobile_host_profile_test.bzl", "mobile_host_profile_tests")
+load(":mobile_carriers.bzl", "mobile_carrier_helpers")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -191,6 +192,15 @@ bun_test(
 )
 
 native_extension_carrier_unit_inputs(name = "native_carrier_unit_inputs")
+cc_library(
+    name = "mobile_carrier_fixture",
+    srcs = ["mobile-carrier-fixture.c"],
+    linkstatic = True,
+    testonly = True,
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+filegroup(name = "mobile_carrier_fixture_archive", srcs = [":mobile_carrier_fixture"], output_group = "archive", testonly = True)
+_MOBILE_CARRIER_FIXTURE_INPUTS = [":mobile_carrier_fixture_archive", "@wasmer_llvm_linux_x64//:bin/llvm-nm", "//src/extensions/catalog:native-components.toml"]
 native_contrib_carrier_unit_inputs(name = "contrib_carrier_unit_inputs")
 bun_script_test(
     name = "contrib_carriers_test",
@@ -207,8 +217,8 @@ test_suite(
 bun_script_test(
     name = "native_carriers_test",
     entry_point = "native_carriers.test.mts",
-    args = ["$(location :native_carrier_unit_inputs)"] + select({"//build_defs/native:windows_x64": [], "//conditions:default": ["$(location //src/native/runtime/packaging:resources)"]}),
-    data = {label: True for label in [":native_carrier_unit_inputs", "native_carriers.mts", "member_payload.mts", "//:tools/packaging/npm-package.test.mts", "//:tools/packaging/testdata/release-fixture-utils.mts"] + native_extension_carrier_helpers() + native_extension_carrier_legal("pgtap") + native_extension_carrier_legal("postgis")}.keys() + select({"//build_defs/native:windows_x64": [], "//conditions:default": ["//src/native/runtime/packaging:resources"]}),
+    args = ["$(location :native_carrier_unit_inputs)"] + select({"//build_defs/native:windows_x64": [], "//conditions:default": ["$(location //src/native/runtime/packaging:resources)"]}) + select({"//build_defs/native:linux_x86_64": ["$(location %s)" % label for label in _MOBILE_CARRIER_FIXTURE_INPUTS], "//conditions:default": []}),
+    data = {label: True for label in [":native_carrier_unit_inputs", "member_payload.mts", "//:tools/packaging/npm-package.test.mts", "//:tools/packaging/testdata/release-fixture-utils.mts"] + mobile_carrier_helpers() + native_extension_carrier_legal("pgtap") + native_extension_carrier_legal("postgis")}.keys() + select({"//build_defs/native:windows_x64": [], "//conditions:default": ["//src/native/runtime/packaging:resources"]}) + select({"//build_defs/native:linux_x86_64": _MOBILE_CARRIER_FIXTURE_INPUTS + ["mobile_carriers.mts"], "//conditions:default": []}),
     size = "small",
 )
 

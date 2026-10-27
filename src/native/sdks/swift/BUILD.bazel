@@ -79,6 +79,7 @@ swift_compiled_inputs_test(
     size = "small",
 )
 filegroup(name = "generator_sources", srcs = ["tools/extension-resource-inventory.mts", "tools/render-extension-products.mts", "tools/swift-carrier-resolver.mts"])
+filegroup(name = "extension_contract_fixture", srcs = ["Tests/Fixtures/swiftpm-extension-selection.json"] + glob(["Tests/Fixtures/swiftpm-extension-resources/postgis/**"]))
 swift_package_consumer_test(
     name = "installed_consumer_test",
     archive = ":release_input_Oliphaunt-source_zip",

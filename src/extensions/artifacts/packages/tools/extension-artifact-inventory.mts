@@ -124,6 +124,20 @@ export function assertExtensionArtifactClosureShape(metadata, label) {
     throw inventoryError(label, 'nativeModuleStems must include nativeModuleStem');
 }
 
+/** Mobile archives merge all owned native code into the primary static module. */
+export function rewriteMobileExtensionModuleReferences(
+  sql: string,
+  nativeModuleStem: string | null,
+  nativeModuleStems: readonly string[],
+) {
+  if (!nativeModuleStem) return sql;
+  for (const stem of nativeModuleStems) {
+    if (stem !== nativeModuleStem)
+      sql = sql.replaceAll(`'$libdir/${stem}'`, `'$libdir/${nativeModuleStem}'`);
+  }
+  return sql;
+}
+
 /** Original carrier hashes authenticate these bytes; current source pins govern new carriers. */
 export function validateFrozenExtensionLegalInventory(
   { profile, licenseFiles, files, constructionLicenseFiles = [], extensionClass = undefined },

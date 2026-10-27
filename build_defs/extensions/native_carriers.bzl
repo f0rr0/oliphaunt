@@ -1,6 +1,6 @@
 """Selected desktop extension final envelopes from their typed member producers."""
 
-load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS", "EXTENSION_COMPATIBILITY", "EXTENSION_DEPENDENCIES", "EXTENSION_NATIVE_TARGETS", "EXTENSION_RECIPES", "EXTENSION_RELEASE_METADATA", "EXTENSION_SOURCES", "PRODUCTS", "PUBLICATION_CARRIERS")
+load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS", "EXTENSION_COMPATIBILITY", "EXTENSION_DEPENDENCIES", "EXTENSION_NATIVE_TARGETS", "EXTENSION_PROFILES", "EXTENSION_RECIPES", "EXTENSION_RELEASE_METADATA", "EXTENSION_SOURCES", "NATIVE_COMPONENT_SOURCES", "NATIVE_MOBILE_COMPONENT_CLOSURES", "PRODUCTS", "PUBLICATION_CARRIERS")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action", "bun_script_test")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load("//build_defs/release:supplier.bzl", "ShippingSupplierInfo")
@@ -182,6 +182,9 @@ def _unit_inputs_impl(ctx):
     metadata = native_external_carrier_metadata("pgtap", "linux-x64-gnu")
     metadata["compiledMember"] = native_external_carrier_metadata("pg_uuidv7", "linux-x64-gnu")
     metadata["postgisMember"] = native_external_carrier_metadata("postgis", "linux-x64-gnu")
+    metadata["postgisMobile"] = {"allProfiles": [target for profile in EXTENSION_PROFILES["profiles"] for target in profile["targets"]],
+                                "catalogSqlNames": sorted([row["sql-name"] for row in EXTENSIONS.values()]), "dependencySources": NATIVE_COMPONENT_SOURCES,
+                                "linkUnits": NATIVE_MOBILE_COMPONENT_CLOSURES["postgis"]["android-x86_64"]["linkUnits"]}
     products = dict(PRODUCTS)
     runtime = dict(products["liboliphaunt-native"])
     parts = runtime["version"].split(".")

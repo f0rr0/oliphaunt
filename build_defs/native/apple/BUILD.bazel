@@ -44,7 +44,7 @@ filegroup(name = "framework_helpers", srcs = native_payload_helpers() + [
 bun_binary(name = "framework_envelope", entry_point = "framework-envelope.mts", data = [":framework_helpers"])
 bun_binary(name = "seed_envelope", entry_point = "seed-envelope.mts", data = ["//build_defs/resources:helpers"])
 
-bun_test(name = "framework_contract_test", entry_point = "framework-envelope.test.mts", data = ["framework-envelope.mts", ":framework_helpers"], size = "small")
+bun_test(name = "framework_contract_test", entry_point = "framework-envelope.test.mts", data = ["framework-envelope.mts", ":framework_helpers", "//src/native/sdks/swift:generator_sources", "//src/native/sdks/swift:extension_contract_fixture", "//src/extensions/generated/sdk:metadata"], size = "small")
 bun_test(name = "swift_candidate_contract_test", entry_point = "swift-candidate-contract.test.mts", data = ["swift-candidate-contract.mts", "//src/native/sdks/swift:tools/prepare-swift-release-consumer.mts"], size = "small")
 bun_test(name = "static_carrier_consumer_contract_test", entry_point = "static-carrier-consumer.test.mts", data = ["static-carrier-consumer.mts", ":framework_helpers", "//src/native/sdks/swift:generator_sources"], size = "small")
 bun_test(

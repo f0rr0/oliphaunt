@@ -969,14 +969,13 @@ fn load_prebuilt_extension_artifact(root: &Path) -> Result<RuntimeResourceExtens
         .is_some_and(|target| target == "ios-xcframework" || target.starts_with("android-"));
     let primary_stems = native_module_stem.iter().cloned().collect::<Vec<_>>();
     if let Some(catalog) = catalog::by_sql_name(&sql_name).filter(|_| !legacy) {
-        let expected_stems = if mobile {
-            &primary_stems
-        } else {
-            &catalog.native_module_stems
-        };
+        // Current carriers declare the source-owned logical closure. Older mobile
+        // carriers declared only the one module into which that code was merged.
+        let module_closure_matches = native_module_stems == catalog.native_module_stems
+            || mobile && native_module_stems == primary_stems;
         if sql_members != catalog.sql_members
             || native_module_stem != catalog.native_module_stem
-            || native_module_stems != *expected_stems
+            || !module_closure_matches
         {
             return Err(Error::InvalidConfig(format!(
                 "manifest {} sqlMembers/nativeModuleStems must identify the owned SQL/module closure",
@@ -999,7 +998,12 @@ fn load_prebuilt_extension_artifact(root: &Path) -> Result<RuntimeResourceExtens
                 manifest_path.display()
             )));
         };
-        native_module_stems
+        let module_stems = if mobile {
+            &primary_stems
+        } else {
+            &native_module_stems
+        };
+        module_stems
             .iter()
             .map(|stem| format!("{stem}{suffix}"))
             .collect()
@@ -1343,10 +1347,11 @@ mod tests {
                 mobile,
             );
             let catalog = catalog::for_extension(Extension::POSTGIS);
-            let stems = if mobile {
+            let stems = catalog.native_module_stems.clone();
+            let module_stems = if mobile {
                 vec!["postgis-3".to_owned()]
             } else {
-                catalog.native_module_stems.clone()
+                stems.clone()
             };
             let manifest_path = artifact.join("manifest.properties");
             let manifest = fs::read_to_string(&manifest_path)
@@ -1391,7 +1396,7 @@ mod tests {
                     );
                 }
             }
-            for stem in &stems {
+            for stem in &module_stems {
                 for directory in ["postgresql", "modules"] {
                     write_file(
                         &artifact.join(format!(
@@ -1403,6 +1408,25 @@ mod tests {
                 }
             }
             let extension = load_prebuilt_extension_artifact(&artifact).unwrap();
+            assert_eq!(extension.native_module_files.len(), module_stems.len());
+            if mobile {
+                // Older mobile manifests declared only the physically merged module.
+                fs::write(
+                    &manifest_path,
+                    manifest.replace(
+                        &format!("nativeModuleStems={}\n", stems.join(",")),
+                        "nativeModuleStems=postgis-3\n",
+                    ),
+                )
+                .unwrap();
+                let historical = load_prebuilt_extension_artifact(&artifact).unwrap();
+                assert_eq!(historical.sql_members, catalog.sql_members);
+                assert_eq!(
+                    historical.native_module_files,
+                    extension.native_module_files
+                );
+                fs::write(&manifest_path, &manifest).unwrap();
+            }
             assert!(
                 extension.native_dependency_module_files.is_empty(),
                 "owned companions must not infer an absent aggregate supplier"
@@ -1438,7 +1462,7 @@ mod tests {
                         .is_file()
                 );
             }
-            for stem in &stems {
+            for stem in &module_stems {
                 assert_eq!(
                     runtime_files
                         .join(format!(

@@ -20,6 +20,7 @@ import { bundleCarrierAssets } from '../../src/extensions/artifacts/packages/too
 import {
   EXTENSION_ARTIFACT_PROPERTY_KEYS,
   nativeModuleHostTarget,
+  rewriteMobileExtensionModuleReferences,
   validateExtensionArtifactArchive,
 } from '../../src/extensions/artifacts/packages/tools/extension-artifact-inventory.mts';
 import {
@@ -247,6 +248,8 @@ export function assemblePublicMobileMember(spec: MobileCarrierSpec, output: stri
     { ...spec, archive: spec.hostArchive, target: hostTarget } as NativeCarrierSpec,
     actual,
   );
+  // Mobile dependencies come from the static component plan, not host sidecars.
+  delete metadata.nativeDependencyModules;
   assert.equal(metadata.nativeModuleStem, plan.stem);
   assert(
     plan.closure.runtimeFiles.every((file: string) => metadata.dataFiles.includes(file)),
@@ -277,11 +280,26 @@ export function assemblePublicMobileMember(spec: MobileCarrierSpec, output: stri
     const publicRoot = path.join(root, 'public');
     mkdirSync(publicRoot);
     for (const [name, entry] of readPortableArchiveEntries(realpathSync(spec.hostArchive))) {
-      if (name === 'extension.json' || name.startsWith('lib/modules/')) continue;
+      if (
+        name === 'extension.json' ||
+        (name.startsWith('lib/') && name !== `lib/postgresql/${actual.module_file}`)
+      )
+        continue;
       const destination = path.join(publicRoot, 'files', name);
       mkdirSync(path.dirname(destination), { recursive: true });
-      writeFileSync(destination, entry.data(), { mode: name.startsWith('lib/') ? 0o755 : 0o644 });
-      if (name.startsWith('lib/')) validateNativeShippingModule(entry.data(), hostTarget, name);
+      const data = entry.data();
+      const contents =
+        metadata.nativeModuleStems.length > 1 &&
+        name.startsWith('share/postgresql/extension/') &&
+        /\.(?:sql|control)$/u.test(name)
+          ? rewriteMobileExtensionModuleReferences(
+              new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(data),
+              metadata.nativeModuleStem,
+              metadata.nativeModuleStems,
+            )
+          : data;
+      writeFileSync(destination, contents, { mode: name.startsWith('lib/') ? 0o755 : 0o644 });
+      if (name.startsWith('lib/')) validateNativeShippingModule(data, hostTarget, name);
     }
     for (const row of plan.files) {
       const destination = path.join(publicRoot, row.destination);

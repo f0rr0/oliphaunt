@@ -23,6 +23,7 @@ import {
   extensionControlDefaultVersion,
   extensionNativeArtifactClosure,
   isCanonicalExtensionInstallSql,
+  rewriteMobileExtensionModuleReferences,
   validateExtensionInstallSqlReachability,
 } from '../../packages/tools/extension-artifact-inventory.mts';
 import { validateWindowsExtensionArtifactBinaryContract } from './stage-windows-binary-contract.mts';
@@ -886,12 +887,12 @@ async function copySqlFiles(args, artifactRoot, artifactFiles, extraSql) {
     const destination = path.join(targetDir, entry);
     await copyFileChecked(args.runtime, path.join(sourceDir, entry), destination);
     if (mergedModuleStems.length > 0) {
-      // Mobile artifacts use host SQL but merge companion code into one static module.
       const original = await fs.readFile(destination, 'utf8');
-      let sql = original;
-      for (const stem of mergedModuleStems) {
-        sql = sql.replaceAll(`'$libdir/${stem}'`, `'$libdir/${args.nativeModuleStem}'`);
-      }
+      const sql = rewriteMobileExtensionModuleReferences(
+        original,
+        args.nativeModuleStem,
+        mergedModuleStems,
+      );
       if (sql !== original) await fs.writeFile(destination, sql);
     }
   }

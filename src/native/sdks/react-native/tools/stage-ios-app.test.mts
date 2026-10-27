@@ -536,7 +536,7 @@ async function extensionRow(root, config) {
         ? []
         : [
             `sqlMembers=${config.sqlMembers.join(',')}`,
-            `nativeModuleStems=${config.nativeModuleStem ?? ''}`,
+            `nativeModuleStems=${config.nativeModuleStems.join(',')}`,
           ]),
       'files=files',
       '',
@@ -697,7 +697,7 @@ async function extensionRow(root, config) {
         ? {}
         : {
             sqlMembers: config.sqlMembers,
-            nativeModuleStems: config.nativeModuleStem === null ? [] : [config.nativeModuleStem],
+            nativeModuleStems: config.nativeModuleStems,
           }),
       dataFiles,
       dependencies: config.dependencies,
@@ -827,6 +827,7 @@ async function createFixture(root) {
       ...fixture,
       createsExtension: generated['creates-extension'],
       sqlMembers: generated['sql-members'],
+      nativeModuleStems: generated['native-module-stems'],
       dataFiles: generated['runtime-share-data-files'],
       dependencies: generated['selected-extension-dependencies'],
       extensionSqlFileNames: generated['extension-sql-file-names'],
@@ -1428,6 +1429,7 @@ async function main() {
       extension.version = '0.9.0';
       extension.tag = 'oliphaunt-extension-postgis-v0.9.0';
       extension.sqlMembers = ['postgis'];
+      extension.nativeModuleStems = ['postgis-3'];
       extension.dependencies = [];
       if (closureShape === 'legacy') {
         delete extension.sqlMembers;
@@ -1451,7 +1453,8 @@ async function main() {
                   if (line.startsWith('dependencies=')) return ['dependencies='];
                   if (line.startsWith('sqlMembers='))
                     return closureShape === 'legacy' ? [] : ['sqlMembers=postgis'];
-                  if (closureShape === 'legacy' && line.startsWith('nativeModuleStems=')) return [];
+                  if (line.startsWith('nativeModuleStems='))
+                    return closureShape === 'legacy' ? [] : ['nativeModuleStems=postgis-3'];
                   return [line];
                 })
                 .join('\n'),
@@ -1680,6 +1683,7 @@ async function main() {
     }
     for (const [field, value] of [
       ['sqlMembers', ['postgis']],
+      ['nativeModuleStems', ['postgis-3']],
       ['dependencies', []],
     ]) {
       const incomplete = structuredClone(carrier);
@@ -1692,17 +1696,15 @@ async function main() {
       );
     }
 
-    const unmergedPostgis = structuredClone(carrier);
-    unmergedPostgis.extensions.find(({ sqlName }) => sqlName === 'postgis').nativeModuleStems = [
-      'postgis-3',
-      'postgis_raster-3',
-      'postgis_topology-3',
-    ];
+    const missingPrimaryPostgis = structuredClone(carrier);
+    missingPrimaryPostgis.extensions.find(
+      ({ sqlName }) => sqlName === 'postgis',
+    ).nativeModuleStems = ['postgis_raster-3', 'postgis_topology-3'];
     await expectCarrierFailure(
-      'unmerged-postgis-modules',
-      unmergedPostgis,
+      'postgis-modules-missing-primary',
+      missingPrimaryPostgis,
       ['postgis'],
-      /nativeModuleStems must contain only the merged primary mobile module/u,
+      /nativeModuleStems must contain the primary module exactly when nativeModuleStem is set/u,
     );
 
     const missingFrozenContentField = structuredClone(carrier);

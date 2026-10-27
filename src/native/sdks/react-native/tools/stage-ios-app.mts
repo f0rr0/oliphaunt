@@ -759,10 +759,13 @@ function validateExtension(value, label, carriers) {
       `${label}.sqlMembers must contain the primary extension exactly when createsExtension is true`,
     );
   if (
-    JSON.stringify(nativeModuleStems) !==
-    JSON.stringify(nativeModuleStem === null ? [] : [nativeModuleStem])
+    nativeModuleStem === null
+      ? nativeModuleStems.length !== 0
+      : !nativeModuleStems.includes(nativeModuleStem)
   )
-    fail(`${label}.nativeModuleStems must contain only the merged primary mobile module`);
+    fail(
+      `${label}.nativeModuleStems must contain the primary module exactly when nativeModuleStem is set`,
+    );
   const sharedPreloadLibraries = canonicalPortableList(
     root.sharedPreloadLibraries,
     `${label}.sharedPreloadLibraries`,

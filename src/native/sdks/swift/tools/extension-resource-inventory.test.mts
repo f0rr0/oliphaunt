@@ -119,6 +119,7 @@ async function main() {
   const postgis = extensions.get('postgis');
   const postgisManifest = path.join(postgis.resourceRoot, 'manifest.properties');
   const postgisManifestText = await fs.readFile(postgisManifest, 'utf8');
+  const postgisModuleStems = ['postgis-3', 'postgis_raster-3', 'postgis_topology-3'];
   const sqlMembers = catalog.get('postgis').sqlMembers;
   assert.ok(
     sqlMembers.includes('postgis_topology') && sqlMembers.includes('postgis_tiger_geocoder'),
@@ -159,12 +160,12 @@ async function main() {
       validateSwiftExtensionResourceArtifact({
         extension: {
           ...postgis,
-          nativeModuleStems: ['postgis-3', 'postgis_raster-3', 'postgis_topology-3'],
+          nativeModuleStems: postgisModuleStems,
         },
         canonical: catalog.get('postgis'),
         nativeRuntime: document.nativeRuntime,
       }),
-    /mobile nativeModuleStems must contain only the merged primary module/u,
+    /manifest nativeModuleStems must be "postgis-3,postgis_raster-3,postgis_topology-3"/u,
   );
   const historicalPostgis = {
     ...postgis,
@@ -271,7 +272,12 @@ async function main() {
       ({ name }) => `${target}:${name}:mobile-static/${target}/dependencies/${name}/lib${name}.a`,
     ),
   );
+  const productionPostgis = { ...postgis, nativeModuleStems: postgisModuleStems };
   const productionPostgisManifest = postgisManifestText
+    .replace(
+      'nativeModuleStems=postgis-3\n',
+      `nativeModuleStems=${productionPostgis.nativeModuleStems.join(',')}\n`,
+    )
     .replace('mobileStaticArchives=\n', `mobileStaticArchives=${mobileStaticArchives.join(',')}\n`)
     .replace(
       'mobileStaticDependencyArchives=\n',
@@ -287,14 +293,14 @@ async function main() {
   await assert.rejects(
     () =>
       validateSwiftExtensionResourceArtifact({
-        extension: postgis,
+        extension: productionPostgis,
         canonical: catalog.get('postgis'),
         nativeRuntime: document.nativeRuntime,
       }),
     /mobile static archives are only valid for carrier-resolved inputs/u,
   );
   const productionResources = await validateSwiftExtensionResourceArtifact({
-    extension: postgis,
+    extension: productionPostgis,
     canonical: catalog.get('postgis'),
     nativeRuntime: document.nativeRuntime,
     allowMobileCarrierArchives: true,
@@ -315,7 +321,7 @@ async function main() {
   await assert.rejects(
     () =>
       validateSwiftExtensionResourceArtifact({
-        extension: postgis,
+        extension: productionPostgis,
         canonical: catalog.get('postgis'),
         nativeRuntime: document.nativeRuntime,
         allowMobileCarrierArchives: true,
@@ -330,7 +336,7 @@ async function main() {
   await assert.rejects(
     () =>
       validateSwiftExtensionResourceArtifact({
-        extension: postgis,
+        extension: productionPostgis,
         canonical: catalog.get('postgis'),
         nativeRuntime: document.nativeRuntime,
         allowMobileCarrierArchives: true,
@@ -351,7 +357,7 @@ async function main() {
   await assert.rejects(
     () =>
       validateSwiftExtensionResourceArtifact({
-        extension: postgis,
+        extension: productionPostgis,
         canonical: catalog.get('postgis'),
         nativeRuntime: document.nativeRuntime,
         allowMobileCarrierArchives: true,
@@ -367,7 +373,7 @@ async function main() {
   await assert.rejects(
     () =>
       validateSwiftExtensionResourceArtifact({
-        extension: postgis,
+        extension: productionPostgis,
         canonical: catalog.get('postgis'),
         nativeRuntime: document.nativeRuntime,
         allowMobileCarrierArchives: true,
