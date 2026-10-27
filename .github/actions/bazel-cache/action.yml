@@ -46,9 +46,9 @@ runs:
         [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]]
         gc_max_size=2G
         cache_limit_kib=3145728
-        # Native and Android share the Linux cohort's measured 6.2 GiB working set.
+        # Native, Android and final packaging measured up to 8.1 GiB together.
         case "$RUNNER_OS/$RUNNER_ARCH/$COHORT" in
-          Linux/X64/linux) gc_max_size=7G; cache_limit_kib=8388608 ;;
+          Linux/X64/linux) gc_max_size=9G; cache_limit_kib=10485760 ;;
           macOS/ARM64/portable|Linux/X64/portable) gc_max_size=4G; cache_limit_kib=5242880 ;;
         esac
         printf 'prefix=bazel-ci-v1-%s-%s-%s-%s\nsource=%s\n' \

@@ -427,12 +427,12 @@ test('measured cohorts retain their observed cache population within a bounded a
     { RUNNER_OS: 'Linux', RUNNER_ARCH: 'X64', COHORT: 'linux' },
   ]) {
     const linuxX64 = cohort.RUNNER_OS === 'Linux' && cohort.COHORT === 'linux';
-    const limit = linuxX64 ? 8388608 : 5242880;
+    const limit = linuxX64 ? 10485760 : 5242880;
     const overLimit = String(limit + 1);
     for (const scenario of [
       {
         name: 'working set with allocation headroom',
-        disk: linuxX64 ? '7340032' : '3774874',
+        disk: linuxX64 ? '8912896' : '3774874',
         gc: false,
         saved: true,
       },
@@ -441,7 +441,7 @@ test('measured cohorts retain their observed cache population within a bounded a
         name: 'completed collection',
         disk: overLimit,
         gc: true,
-        collected: linuxX64 ? '7549747' : '4404019',
+        collected: linuxX64 ? '9646899' : '4404019',
         saved: true,
       },
       {
@@ -477,7 +477,7 @@ test('measured cohorts retain their observed cache population within a bounded a
           assert.ok(commands.startsWith('shutdown\nbuild\ncquery\nshutdown\ngc begin\n'), label);
           assert.equal(
             readFileSync(env.GC_ARGS, 'utf8').trim().split('\n').at(-1),
-            linuxX64 ? '--max_size=7G' : '--max_size=4G',
+            linuxX64 ? '--max_size=9G' : '--max_size=4G',
           );
         } else {
           assert.equal(commands, 'shutdown\n', label);
