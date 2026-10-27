@@ -2830,6 +2830,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oliphaunt-wasix-binding-generator"
+version = "0.0.0"
+dependencies = [
+ "bindgen",
+]
+
+[[package]]
 name = "oliphaunt-wasix-napi"
 version = "0.2.1"
 dependencies = [

@@ -183,12 +183,6 @@ cargo_crates.from_cargo(
 use_repo(cargo_crates, cargo_crates = "n")
 
 cargo_crates.annotation(
-    crate = "bindgen",
-    version = "0.72.1",
-    repositories = ["n"],
-    extra_aliased_targets = {"v8_bindgen": "bindgen"},
-)
-cargo_crates.annotation(
     crate = "oliphaunt-wasmer",
     repositories = ["n", "a", "s", "m"],
     override_target_build_script = "@oliphaunt//src/wasix/runtime/engine:api_build_script",

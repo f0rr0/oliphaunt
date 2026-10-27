@@ -1,0 +1,14 @@
+[package]
+name = "oliphaunt-wasix-binding-generator"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.96"
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "binding-generator"
+path = "binding-generator.rs"
+
+[dependencies]
+bindgen = "0.72.1"

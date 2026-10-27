@@ -297,7 +297,7 @@ def cargo_binary(name, source, path_dependencies = {}, features = [], default_fe
     deps, macros = _dependencies(facts, enabled, "dependencies", path_dependencies, proc_macro_names, crate_dependencies, package_name = package_name)
     rust_binary(
         name = name,
-        srcs = native.glob([prefix + "src/**/*.rs"]),
+        srcs = [source] + native.glob([prefix + "src/**/*.rs"], exclude = [source], allow_empty = True),
         crate_root = source,
         crate_name = binaries[0]["name"].replace("-", "_"),
         edition = facts["edition"],

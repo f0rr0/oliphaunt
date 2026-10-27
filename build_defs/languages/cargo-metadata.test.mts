@@ -151,6 +151,43 @@ test('preserves resolver, feature, optional, target/dev, generator and exact ext
   expect(result.watched).toContain('sdk/tests');
 });
 
+test('a private tool without a src directory retains its explicit binary and direct dependency', () => {
+  const { workspace, manifests, lock } = fixture();
+  workspace.workspace.members.push('tools/generator');
+  manifests['tools/generator/Cargo.toml'] = {
+    package: {
+      name: 'generator',
+      version: '0.0.0',
+      edition: { workspace: true },
+      'rust-version': '1.96',
+      publish: false,
+    },
+    bin: [{ name: 'bindings', path: 'bindings.rs' }],
+    dependencies: { serde: '1' },
+  };
+  lock.package.push({ name: 'generator', version: '0.0.0', dependencies: ['serde'] });
+  const result = projectCargoWorkspace(
+    workspace,
+    lock,
+    ['tools/generator'],
+    (relative) => manifests[relative],
+    (relative) => relative === 'tools/generator/bindings.rs',
+  );
+  expect(result.facts['tools/generator']).toMatchObject({
+    library: null,
+    minimum: '1.96',
+    binaries: [{ name: 'bindings', path: 'bindings.rs' }],
+    dependencies: { serde: '1' },
+  });
+  expect(result.files['tools/generator/bindings.rs']).toBe('fn main() {}\n');
+  expect(result.files['tools/generator/src/lib.rs']).toBeUndefined();
+  expect(Bun.TOML.parse(result.files['Cargo.lock']).package.map((item) => item.name)).toEqual([
+    'generator',
+    'serde',
+    'serde_derive',
+  ]);
+});
+
 test('coherent public version and package metadata edits do not change acquisition files', () => {
   const { project, manifests, lock } = fixture();
   const before = project();

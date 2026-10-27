@@ -29,8 +29,16 @@ bun_test(name = "configure_headers_test", entry_point = "configure_headers.test.
 bun_script_test(
     name = "gpp_test",
     entry_point = "gpp.test.mts",
-    args = ["$(location @postgis_gpp//:gpp)"],
-    data = ["@postgis_gpp//:gpp"],
+    args = [
+        "$(location @postgis_gpp//:gpp)",
+        "$(rootpath @postgis_gdal//:gcore/rasterio.cpp)",
+        "$(rootpath //build_defs/extensions/gdal:cpl_config.h)",
+    ],
+    data = [
+        "@postgis_gpp//:gpp",
+        "@postgis_gdal//:gcore/rasterio.cpp",
+        "//build_defs/extensions/gdal:cpl_config.h",
+    ],
     size = "small",
 )
 bun_binary(name = "proj_db", entry_point = "proj_db.mts")

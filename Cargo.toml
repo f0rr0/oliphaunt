@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "build_defs/wasix/engine",
   "src/native/node-addon",
   "src/native/rust-bindings",
   "src/native/mobile-bindings",

@@ -1,18 +1,18 @@
 load("//build_defs/foundation:bun.bzl", "bun_test")
+load("//build_defs/languages:rust.bzl", "cargo_binary", "cargo_package_env")
 load("//build_defs/quality:sources.bzl", "rust_quality_files", "source_quality_files")
 load(":carriers-repository.bzl", "ENGINE_CARRIER_HELPERS")
 load(":packages.bzl", "ENGINE_PACKAGE_HELPERS")
-load("@rules_rust//rust:defs.bzl", "rust_binary")
 
 package(default_visibility = ["//visibility:public"])
 
 exports_files(["defs.bzl", "binding-generator.bzl", "repositories.bzl", "extension.bzl", "acquisition.bzl", "acquisition.mts", "construction.bzl", "packages.bzl", "relink.bzl", "relink-package.mts", "relink-smoke.mts", "generate.mts", "bridge.cc", "embedded-engine.rs", "build.rs.tpl", "build-script-regression.mts", "README.md", "carriers-repository.bzl", "carriers.mts"])
 
-rust_binary(
+cargo_package_env()
+
+cargo_binary(
     name = "binding_generator",
-    srcs = ["binding-generator.rs"],
-    edition = "2024",
-    deps = ["@cargo_crates//:v8_bindgen"],
+    source = "binding-generator.rs",
     tags = ["manual"],
 )
 
