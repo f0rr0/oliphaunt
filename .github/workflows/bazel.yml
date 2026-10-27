@@ -353,6 +353,11 @@ jobs:
               //build_defs/extensions:member_payload_test
               //build_defs/extensions:mobile_carriers_test
               //build_defs/resources:resource_contract_test
+              //build_defs/native/apple:framework_contract_test
+              //build_defs/native/apple:swift_candidate_contract_test
+              //build_defs/native/apple:mobile_seed_contract_test
+              //build_defs/native/apple:static_carrier_consumer_contract_test
+              //build_defs/android:app_action_test
               //build_defs/resources:desktop_seed_profile_test
               //build_defs/resources:desktop_seed_consumer_profile_test
               //build_defs/resources:desktop_payload_macos_profile_test
@@ -846,9 +851,6 @@ jobs:
             //src/extensions/external/pgtap:wasix_carriers_test
             //build_defs/extensions:contrib_carriers_test
             //src/extensions/contrib:native_carriers_test
-            //build_defs/native/apple:framework_contract_test
-            //build_defs/native/apple:swift_candidate_contract_test
-            //build_defs/native/apple:mobile_seed_contract_test
             //src/native/runtime:npm
             //src/native/postgres-tools:cargo_facade
             //src/database-resources:android_datum64_standard_carriers
