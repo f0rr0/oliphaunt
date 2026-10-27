@@ -121,7 +121,10 @@ function fixture(t): {
       renderCargoToml({
         package: { name, version: name === 'wasmer' ? '7.5.0' : '0.705.0' },
         lib: { path: 'src/lib.rs' },
-        features: name === 'wasmer' ? { v8: [] } : {},
+        features: name === 'wasmer' ? { v8: ['dep:tempfile'] } : {},
+        ...(name === 'wasmer'
+          ? { 'build-dependencies': { tempfile: { version: '3.6.0', optional: true } } }
+          : {}),
       }),
     );
     file(`source-crates/${name}/src/lib.rs`, `// patched ${name} fixture\n`);

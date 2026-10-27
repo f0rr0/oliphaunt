@@ -34,8 +34,11 @@ function fixture() {
         },
         ...(name === 'wasmer'
           ? {
-              features: { v8: ['std', 'dep:ureq'], std: [] },
-              'build-dependencies': { ureq: { version: '3.4.2', optional: true } },
+              features: { v8: ['std', 'dep:ureq', 'dep:tempfile'], std: [] },
+              'build-dependencies': {
+                ureq: { version: '3.4.2', optional: true },
+                tempfile: { version: '3.6.0', optional: true },
+              },
               example: [{ name: 'example', path: 'examples/example.rs' }],
             }
           : {}),

@@ -120,11 +120,15 @@ export function normalizeEngineManifest(
     }
   }
   if (upstreamName === 'wasmer') {
+    // The generated DLL loader uses the upstream tempfile requirement at runtime.
+    manifest.dependencies ??= {};
+    manifest.dependencies.tempfile = manifest['build-dependencies'].tempfile;
     const removed = new Set<string>();
     for (const table of [manifest, ...Object.values(manifest.target ?? {})] as Manifest[]) {
       for (const name of Object.keys(table['build-dependencies'] ?? {})) removed.add(name);
       delete table['build-dependencies'];
     }
+    removed.delete('tempfile');
     for (const [name, members] of Object.entries(manifest.features ?? {}) as [string, string[]][]) {
       manifest.features[name] = members.filter(
         (member) => !removed.has(member.replace(/^dep:/u, '').split(/[/?]/u, 1)[0]),

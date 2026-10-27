@@ -45,9 +45,14 @@ function fixture(t): EnginePackageInputs {
             : {
                 runtime: { package: 'wasmer', version: '=7.5.0', 'default-features': false },
               },
-        features: original === 'wasmer' ? { v8: ['std', 'dep:ureq'], std: [] } : {},
+        features: original === 'wasmer' ? { v8: ['std', 'dep:ureq', 'dep:tempfile'], std: [] } : {},
         ...(original === 'wasmer'
-          ? { 'build-dependencies': { ureq: { version: '3.4.2', optional: true } } }
+          ? {
+              'build-dependencies': {
+                ureq: { version: '3.4.2', optional: true },
+                tempfile: { version: '3.6.0', optional: true },
+              },
+            }
           : {}),
       }),
     );
@@ -156,13 +161,21 @@ test('normalization changes only the four family registry identities and keeps a
   assert.deepEqual(actual.workspace, {});
 });
 
-test('the API build script has only its optional exact facade dependency and a complete V8 feature closure', () => {
+test('the API retains the V8 runtime tempfile requirement and only its optional exact facade at build time', () => {
   const source = renderCargoToml({
     package: { name: 'wasmer', version: '7.5.0', build: 'old/build.rs' },
     dependencies: { 'wasm-types-polyfill': { version: '1', optional: true } },
-    'build-dependencies': { ureq: { version: '3.4.2', optional: true }, cmake: '0.1.50' },
+    'build-dependencies': {
+      ureq: { version: '3.4.2', optional: true },
+      cmake: '0.1.50',
+      tempfile: { version: '3.6.0', optional: true },
+    },
     target: { 'cfg(windows)': { 'build-dependencies': { bindgen: '0.72.1' } } },
-    features: { v8: ['std', 'dep:ureq', 'wasm-types-polyfill'], std: [], other: ['cmake'] },
+    features: {
+      v8: ['std', 'dep:ureq', 'dep:tempfile', 'wasm-types-polyfill'],
+      std: [],
+      other: ['cmake'],
+    },
   });
   const actual = Bun.TOML.parse(
     normalizeEngineManifest(source, { version, facadeVersion: '0.0.0' }),
@@ -173,7 +186,13 @@ test('the API build script has only its optional exact facade dependency and a c
     [ENGINE_DLL_PACKAGE]: { version: '=0.0.0', optional: true },
   });
   assert.equal(actual.target['cfg(windows)']['build-dependencies'], undefined);
-  assert.deepEqual(actual.features.v8, ['std', 'wasm-types-polyfill', `dep:${ENGINE_DLL_PACKAGE}`]);
+  assert.deepEqual(actual.dependencies.tempfile, { version: '3.6.0', optional: true });
+  assert.deepEqual(actual.features.v8, [
+    'std',
+    'dep:tempfile',
+    'wasm-types-polyfill',
+    `dep:${ENGINE_DLL_PACKAGE}`,
+  ]);
   assert.deepEqual(actual.features.other, []);
   assert.throws(
     () => normalizeEngineManifest('[package]\nname="other"\nversion="1.0.0"', { version }),
@@ -250,6 +269,8 @@ test('seven deterministic archives have exact coherent versions and reconstruct 
     assert.equal(entries.has(`${prefix}Cargo.toml.orig`), false);
     assert.equal(entries.has(`${prefix}Cargo.lock`), false);
     if (packaged.name === 'oliphaunt-wasmer') {
+      assert.deepEqual(manifest.dependencies.tempfile, { version: '3.6.0', optional: true });
+      assert.ok(manifest.features.v8.includes('dep:tempfile'));
       assert.equal(
         entries.get(`${prefix}build.rs`).data().toString(),
         readFileSync(inputs.buildScriptTemplate, 'utf8'),

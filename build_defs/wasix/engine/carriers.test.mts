@@ -54,7 +54,10 @@ function fixture(t) {
         package: { name: original, version: original === 'wasmer' ? '7.5.0' : '0.705.0' },
         dependencies:
           original === 'wasmer' ? {} : { engine: { package: 'wasmer', version: '=7.5.0' } },
-        features: original === 'wasmer' ? { v8: [], std: [] } : {},
+        features: original === 'wasmer' ? { v8: ['dep:tempfile'], std: [] } : {},
+        ...(original === 'wasmer'
+          ? { 'build-dependencies': { tempfile: { version: '3.6.0', optional: true } } }
+          : {}),
       }),
     );
     file(`${original}/src/lib.rs`, `// upstream ${original}\n`);

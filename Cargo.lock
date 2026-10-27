@@ -2933,6 +2933,7 @@ dependencies = [
  "serde-wasm-bindgen",
  "shared-buffer",
  "target-lexicon",
+ "tempfile",
  "thiserror",
  "tracing",
  "wasm-bindgen",
